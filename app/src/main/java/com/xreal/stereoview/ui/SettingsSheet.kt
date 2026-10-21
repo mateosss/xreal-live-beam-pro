@@ -76,7 +76,14 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
             val rig = host.rig
             val values = rig?.availableFps ?: listOf(30)
             val labels = values.map { fps -> if (rig != null && fps !in rig.autoExposureFps) "$fps fps (manual exposure only)" else "$fps fps" }
-            choose("Frame rate (lower resolution if needed)", labels, values.indexOf(s.targetFps)) { i ->
+            // Say what limits the list: the AE ranges, manual control, and the streams' speed.
+            val fastest = rig?.maxFps?.maxByOrNull { it.value }
+            val why = if (rig == null) "" else buildString {
+                append("\nAuto exposure up to ${rig.autoExposureFps.maxOrNull() ?: "?"} fps")
+                append(if (rig.manualSensor) "; manual exposure supported" else "; manual exposure not supported, so no faster rates")
+                fastest?.let { append("; fastest stream ${it.key} at %.0f fps".format(it.value)) }
+            }
+            choose("Frame rate (lower resolution if needed)$why", labels, values.indexOf(s.targetFps)) { i ->
                 viewModel.update { it.copy(targetFps = values[i]) }
             }
         }

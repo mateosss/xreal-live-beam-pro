@@ -364,9 +364,51 @@ object CameraUtils {
                 CameraMetadata.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME -> "realtime"
                 else -> "unknown source"
             })
+            append(frameRateReport(c))
         }
         val concurrent = manager.concurrentCameraIds
         appendLine("Concurrent sets: " + if (concurrent.isEmpty()) "none" else concurrent.joinToString())
+    }
+
+    /** What limits the frame rate: capabilities, AE ranges, and the fastest rate per stream size. */
+    private fun frameRateReport(c: CameraCharacteristics): String = buildString {
+        val caps = c.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)?.map(::capabilityName).orEmpty()
+        appendLine("  capabilities: ${caps.joinToString()}")
+        appendLine("  AE fps ranges: ${c.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.joinToString() ?: "n/a"}")
+        c.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)?.let {
+            appendLine("  exposure time: %.3f–%.1f ms, max frame duration %.1f ms".format(
+                it.lower / 1e6, it.upper / 1e6, (c.get(CameraCharacteristics.SENSOR_INFO_MAX_FRAME_DURATION) ?: 0L) / 1e6,
+            ))
+        }
+        val map = c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return@buildString
+        val sizes = map.getOutputSizes(SurfaceTexture::class.java).orEmpty().sortedByDescending { it.width * it.height }
+        appendLine("  max fps per preview size: " + sizes.joinToString { size ->
+            val ns = runCatching { map.getOutputMinFrameDuration(SurfaceTexture::class.java, size) }.getOrDefault(0L)
+            if (ns > 0) "$size %.0f".format(1e9 / ns) else "$size ?"
+        })
+        val highSpeed = map.highSpeedVideoSizes.orEmpty()
+        if (highSpeed.isNotEmpty()) {
+            appendLine("  high-speed video: " + highSpeed.joinToString { "$it ${map.getHighSpeedVideoFpsRangesFor(it).joinToString()}" })
+        }
+    }
+
+    private fun capabilityName(cap: Int): String = when (cap) {
+        CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_BACKWARD_COMPATIBLE -> "backward-compatible"
+        CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR -> "MANUAL_SENSOR"
+        CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_POST_PROCESSING -> "manual post-processing"
+        CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_RAW -> "RAW"
+        CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_READ_SENSOR_SETTINGS -> "read sensor settings"
+        CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_BURST_CAPTURE -> "burst"
+        CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_DEPTH_OUTPUT -> "depth"
+        CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_CONSTRAINED_HIGH_SPEED_VIDEO -> "CONSTRAINED_HIGH_SPEED_VIDEO"
+        CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MOTION_TRACKING -> "motion tracking"
+        CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA -> "logical multi-camera"
+        CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MONOCHROME -> "monochrome"
+        CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_SECURE_IMAGE_DATA -> "secure"
+        CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_SYSTEM_CAMERA -> "system camera"
+        CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_ULTRA_HIGH_RESOLUTION_SENSOR -> "ultra high resolution"
+        CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_STREAM_USE_CASE -> "stream use case"
+        else -> cap.toString()
     }
 
     /** Camera-related system properties, e.g. vendor lists of apps allowed to see extra cameras. */
