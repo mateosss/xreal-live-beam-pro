@@ -234,7 +234,12 @@ saves the raw frame (plus a PGM if it is 8-bit) under
 can be shared; **Info** includes the USB listing too.
 
 On a Beam Pro with Air 2 Ultra glasses, the glasses appear to apps as `3318:0426` with HID
-interfaces (IMU and controls) and a UVC camera streaming over a bulk endpoint.
+interfaces (IMU and controls) and a UVC camera streaming "YUY2 640×241" at 60 fps over a bulk
+endpoint, but every interface is held by the system. With your confirmation the probe can
+take over just the two camera interfaces (detaching their kernel driver) to capture a test
+frame; the camera then returns to the system only after replugging the glasses. Frames are
+also saved as 8-bit grayscale guesses (1280×241 and 640×482), since the stream likely packs
+the grayscale tracking cameras.
 
 ## Debugging without adb
 

@@ -183,13 +183,22 @@ object Uvc {
         File(dir, "$name.bin").writeBytes(picked)
         appendLine("frame: ${picked.size} bytes (expected $frameBytes), first bytes ${picked.take(16).joinToString(" ") { "%02x".format(it) }}")
         appendLine("saved ${File(dir, "$name.bin")}")
-        // 8-bit grayscale (or one byte per pixel): also write a PGM anyone can open.
-        if (size != null && picked.size == size.width * size.height) {
-            File(dir, "$name.pgm").outputStream().use {
-                it.write("P5\n${size.width} ${size.height}\n255\n".toByteArray())
-                it.write(picked)
+        // Also write the bytes as 8-bit grayscale images anyone can open. A "YUY2" stream may
+        // really be packed grayscale (e.g. tracking cameras), so try both plausible layouts.
+        if (size != null) {
+            val layouts = when (picked.size) {
+                size.width * size.height -> listOf(size.width to size.height)
+                size.width * size.height * 2 -> listOf(size.width * 2 to size.height, size.width to size.height * 2)
+                else -> emptyList()
             }
-            appendLine("saved ${File(dir, "$name.pgm")} (8-bit image)")
+            for ((w, h) in layouts) {
+                val pgm = File(dir, "${name}_as_gray_${w}x$h.pgm")
+                pgm.outputStream().use {
+                    it.write("P5\n$w $h\n255\n".toByteArray())
+                    it.write(picked)
+                }
+                appendLine("saved $pgm")
+            }
         }
     }
 

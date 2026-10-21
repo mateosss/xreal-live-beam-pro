@@ -427,6 +427,30 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             probe.requestAndProbe(device) { result ->
                 controls.setStatus("USB probe finished")
                 val report = "${result.report}\n\n--- all USB devices ---\n${probe.describe()}"
+                val dir = java.io.File(getExternalFilesDir(null), "glasses_probe")
+                fun capture(force: Boolean) {
+                    controls.setStatus("Capturing a frame from the glasses camera…")
+                    probe.grabFrame(device, dir, force) { grab ->
+                        controls.setStatus("Glasses camera capture finished")
+                        val note = if (force) "\n\nThe camera now stays detached from the system until the glasses are replugged." else ""
+                        show("--- frame capture${if (force) " (forced)" else ""} ---\n$grab$note\n\n--- probe ---\n$report")
+                    }
+                }
+                if (result.cameraHeldBySystem) {
+                    // Offer to take the camera (only the video interfaces) from its current owner.
+                    MaterialAlertDialogBuilder(this)
+                        .setTitle("Glasses camera is held by the system")
+                        .setMessage(
+                            "The app can take over only the camera's two USB video interfaces to capture one test frame. " +
+                                "The display, head tracking (IMU) and audio are not touched. The camera then stays " +
+                                "detached from the system until you unplug and replug the glasses; until then, " +
+                                "features that use the glasses' camera (such as 6DoF in Nebula) won't work.",
+                        )
+                        .setPositiveButton("Take over and capture") { _, _ -> capture(force = true) }
+                        .setNegativeButton("Just the report") { _, _ -> show(report) }
+                        .show()
+                    return@requestAndProbe
+                }
                 if (!result.canGrab) {
                     show(report)
                     return@requestAndProbe
@@ -438,14 +462,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
                         "Capture one frame from it? This starts the camera with standard USB video commands, " +
                             "reads for up to 3 seconds and stops it again. The frame is saved for inspection.",
                     )
-                    .setPositiveButton("Capture") { _, _ ->
-                        controls.setStatus("Capturing a frame from the glasses camera…")
-                        val dir = java.io.File(getExternalFilesDir(null), "glasses_probe")
-                        probe.grabFrame(device, dir) { grab ->
-                            controls.setStatus("Glasses camera capture finished")
-                            show("--- frame capture ---\n$grab\n\n--- probe ---\n$report")
-                        }
-                    }
+                    .setPositiveButton("Capture") { _, _ -> capture(force = false) }
                     .setNegativeButton("Just the report") { _, _ -> show(report) }
                     .show()
             }
