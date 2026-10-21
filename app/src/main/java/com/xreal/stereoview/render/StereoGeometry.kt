@@ -40,7 +40,8 @@ class StereoGeometry(
         val sensorOrientation = if (rotationOverride >= 0) (rotationOverride + displayDegrees) % 360 else camera.sensorOrientation
         camera.deviceToCamera(sensorOrientation, useFactoryCalibration)
     }
-    private val deviceToCamera = orientations.map { it.first }
+    /** Device → camera rotation of each camera (x right, y down, z forward in its raw image). */
+    val deviceToCamera = orientations.map { it.first }
 
     /** Rectified frame ← left camera frame. */
     private val rectFromLeft: DoubleArray
@@ -52,7 +53,10 @@ class StereoGeometry(
     private val rectFromDevice: DoubleArray
 
     /** Whether camera image x runs along the display's horizontal axis (else the image is turned 90°). */
-    private val imageXIsHorizontal: Boolean
+    val imageXIsHorizontal: Boolean
+
+    /** Right lens position minus left lens position in the rectified frame, meters, if known. */
+    val baselineInRect: DoubleArray?
 
     val summary: String
 
@@ -101,6 +105,11 @@ class StereoGeometry(
         cameraFromRect = listOf(leftFromRect, Mat3.mul(right, Mat3.transpose(left), leftFromRect))
         rectFromDevice = Mat3.mul(rectFromLeft, left)
         imageXIsHorizontal = abs(e1[0]) >= abs(e1[1])
+        baselineInRect = if (pl != null && pr != null && cameras[0] !== cameras[1]) {
+            Mat3.mulVec(rectFromDevice, doubleArrayOf(pr[0] - pl[0], pr[1] - pl[1], pr[2] - pl[2]))
+        } else {
+            null
+        }
 
         summary = buildString {
             append("L: ${orientations[0].second}; R: ${orientations[1].second}")
@@ -155,9 +164,27 @@ class StereoGeometry(
             0.0, -sy, sy / 2,
             0.0, 0.0, 1.0,
         )
+        return Mat3.mul(cameraFromVirtual(camera, pitchDeg, rollDeg), stabilization, fromOutput)
+    }
+
+    /**
+     * Rotation from the eye's virtual (rectified, aligned) camera to the real camera [camera],
+     * both with x right, y down, z forward: a ray in the rectified image maps to this times it.
+     */
+    fun cameraFromVirtual(camera: Int, pitchDeg: Double, rollDeg: Double): DoubleArray {
         val sign = if (camera == 0) -0.5 else 0.5
         val align = Mat3.mul(Mat3.rotX(Math.toRadians(sign * pitchDeg)), Mat3.rotZ(Math.toRadians(sign * rollDeg)))
-        return Mat3.mul(cameraFromRect[camera], align, stabilization, fromOutput)
+        return Mat3.mul(cameraFromRect[camera], align)
+    }
+
+    /**
+     * Pinhole intrinsics (fx, fy, cx, cy) in pixels, row 0 at the top, of an eye image of
+     * [width]×[height] drawn by [rayMatrix] with the same tangents, shift and zoom.
+     */
+    fun rectifiedIntrinsics(width: Int, height: Int, tanH: Double, tanV: Double, shift: Double, zoom: Double): DoubleArray {
+        val sx = 2 * tanH / zoom
+        val sy = 2 * tanV / zoom
+        return doubleArrayOf(width / sx, height / sy, width * (0.5 - shift), height / 2.0)
     }
 
     private fun screenRightInDevice(rotation: Int): DoubleArray = when (rotation) {

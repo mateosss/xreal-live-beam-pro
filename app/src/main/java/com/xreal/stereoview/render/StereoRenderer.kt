@@ -11,6 +11,8 @@ import android.util.Log
 import android.util.Size
 import com.xreal.stereoview.camera.CameraModel
 import com.xreal.stereoview.camera.FrameSynchronizer
+import com.xreal.stereoview.record.Recording
+import com.xreal.stereoview.ui.RecordView
 import com.xreal.stereoview.ui.SbsLayout
 import com.xreal.stereoview.ui.StereoSettings
 import com.xreal.stereoview.util.Mat3
@@ -56,6 +58,7 @@ class StereoRenderer(
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var requestRender: () -> Unit = {}
+    private var queueEvent: (Runnable) -> Unit = {}
     private val sync = FrameSynchronizer { requestRender() }
 
     @Volatile
@@ -89,6 +92,11 @@ class StereoRenderer(
     private var geometryKey: Any? = null
     private var viewDescription = ""
 
+    // Recording: set from the main thread, the GL side is created and released on the GL thread.
+    @Volatile
+    private var recording: Recording? = null
+    private var glRecorder: GlRecorder? = null
+
     // Auto-alignment, GL thread
     @Volatile
     private var alignmentCallback: ((AlignmentResult?) -> Unit)? = null
@@ -109,6 +117,31 @@ class StereoRenderer(
     /** Binds the renderer to its view; draws are only requested when frames arrive. */
     fun attach(view: GLSurfaceView) {
         requestRender = view::requestRender
+        queueEvent = view::queueEvent
+    }
+
+    /** Starts storing every new camera frame into [recording]'s outputs. */
+    fun startRecording(recording: Recording) {
+        this.recording = recording
+    }
+
+    /** Stops storing frames and releases the encoder surfaces on the GL thread, then runs [onReleased] there. */
+    fun stopRecording(onReleased: () -> Unit) {
+        queueEvent(Runnable {
+            recording = null
+            releaseRecorder()
+            onReleased()
+        })
+        requestRender()
+    }
+
+    private fun releaseRecorder() {
+        try {
+            glRecorder?.release()
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "Releasing recording surfaces failed", e)
+        }
+        glRecorder = null
     }
 
     /**
@@ -123,6 +156,7 @@ class StereoRenderer(
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         // A new context invalidates any previous textures; replace the SurfaceTextures too.
         surfaceTextures.forEach { it.release() }
+        glRecorder = null // belonged to the previous context
         shader = StereoShader()
         alignmentFramebuffer = 0
         surfaceTextures = List(2) { eye ->
@@ -186,6 +220,8 @@ class StereoRenderer(
                 s.scaleMode.label, if (halfSbs) "half SBS" else "full SBS",
             )
 
+            recording?.let { record(it, shader, geometry, models, s, fresh, stabilization) }
+
             if (alignmentCallback != null && fresh[0] && fresh[1]) {
                 measureAlignment(shader, geometry, models, tanH, tanV, zoom, s, stabilization)
                 GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
@@ -207,6 +243,50 @@ class StereoRenderer(
         draws++
         drawNanos += SystemClock.elapsedRealtimeNanos() - start
         maybeReportStats()
+    }
+
+    /** Stores each fresh camera frame into its recording output, raw or rectified. */
+    private fun record(
+        rec: Recording,
+        shader: StereoShader,
+        geometry: StereoGeometry,
+        models: List<CameraModel>,
+        s: StereoSettings,
+        fresh: BooleanArray,
+        stabilization: DoubleArray,
+    ) {
+        val gl = glRecorder ?: try {
+            GlRecorder(rec).also { glRecorder = it }
+        } catch (e: RuntimeException) {
+            Log.e(TAG, "Cannot start recording", e)
+            rec.error = e.message ?: e.toString()
+            recording = null
+            return
+        }
+        for ((index, output) in rec.outputs.withIndex()) {
+            val camera = output.camera
+            if (!fresh[camera]) continue
+            val timestamp = surfaceTextures[camera].timestamp
+            if (rec.view == RecordView.RAW) {
+                if (gl.capture(index, timestamp) { flip -> shader.drawRaw(textureIds[camera], stMatrices[camera], flip) }) {
+                    rec.onFrameStored(output, timestamp, null, null)
+                }
+            } else {
+                val v = rec.eyeView(geometry, s, output)
+                val ray = geometry.rayMatrix(
+                    camera, v.tanH, v.tanV, v.shift, v.zoom,
+                    s.alignPitchDeg.toDouble(), s.alignRollDeg.toDouble(), stabilization,
+                )
+                val stored = gl.capture(index, timestamp) { flip ->
+                    shader.draw(textureIds[camera], if (flip) Mat3.mul(ray, FLIP_Y) else ray, models[camera], stMatrices[camera])
+                }
+                if (stored) {
+                    val k = geometry.rectifiedIntrinsics(output.size.width, output.size.height, v.tanH, v.tanV, v.shift, v.zoom)
+                    rec.onFrameStored(output, timestamp, k, stabilization)
+                }
+            }
+        }
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
     }
 
     private fun geometryFor(cams: Cameras, s: StereoSettings): StereoGeometry {
@@ -328,6 +408,7 @@ class StereoRenderer(
 
     /** Call from the main thread after the GLSurfaceView is paused or detached. */
     fun release() {
+        recording = null
         surfaceTextures.forEach { it.release() }
         surfaceTextures = emptyList()
         sync.release()
@@ -341,5 +422,7 @@ class StereoRenderer(
         const val ALIGN_MAX_SHIFT = 30
         const val ALIGN_SAMPLES = 9
         const val ALIGN_MAX_ATTEMPTS = 40
+        /** Maps output (u, v, 1) to (u, 1 − v, 1): renders upside down, for glReadPixels. */
+        val FLIP_Y = doubleArrayOf(1.0, 0.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0, 1.0)
     }
 }

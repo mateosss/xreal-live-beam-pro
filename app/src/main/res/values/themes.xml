@@ -1,8 +1,34 @@
 <resources>
-    <style name="Theme.StereoView" parent="Theme.AppCompat.NoActionBar">
+    <style name="Theme.StereoView" parent="Theme.Material3.Dark.NoActionBar">
         <item name="android:windowBackground">@android:color/black</item>
         <item name="android:windowFullscreen">true</item>
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
-        <item name="colorAccent">#4FC3F7</item>
+        <item name="colorPrimary">@color/accent</item>
+        <item name="colorOnPrimary">#00222E</item>
+        <item name="colorPrimaryContainer">#004D64</item>
+        <item name="colorOnPrimaryContainer">#BDEBFF</item>
+        <item name="colorSecondaryContainer">#2A3A44</item>
+        <item name="colorOnSecondaryContainer">#D2E5F2</item>
+        <item name="colorSurface">#14191D</item>
+        <item name="colorSurfaceContainerHigh">#1E252A</item>
+        <item name="colorError">@color/record</item>
+    </style>
+
+    <!-- Compact buttons for the control panel's toolbar. -->
+    <style name="Widget.StereoView.ToolButton" parent="Widget.Material3.Button.TextButton">
+        <item name="android:minWidth">0dp</item>
+        <item name="android:paddingStart">10dp</item>
+        <item name="android:paddingEnd">10dp</item>
+        <item name="android:insetTop">2dp</item>
+        <item name="android:insetBottom">2dp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textColor">@color/panel_text</item>
+        <item name="iconTint">@color/panel_text</item>
+        <item name="iconPadding">6dp</item>
+        <item name="iconSize">20dp</item>
+    </style>
+
+    <style name="TextAppearance.StereoView.Label" parent="TextAppearance.Material3.LabelMedium">
+        <item name="android:textColor">@color/panel_text_secondary</item>
     </style>
 </resources>

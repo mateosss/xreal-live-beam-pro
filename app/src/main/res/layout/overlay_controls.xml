@@ -1,195 +1,293 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="@color/panel_background"
+    android:background="@drawable/bg_panel"
     android:orientation="vertical"
-    android:paddingHorizontal="16dp"
-    android:paddingVertical="8dp">
+    android:paddingHorizontal="12dp"
+    android:paddingTop="6dp"
+    android:paddingBottom="6dp">
 
+    <!-- Toolbar: profile on the left, actions in the middle, record on the right. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:gravity="center_vertical"
         android:orientation="horizontal">
 
-        <Button
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/profileButton"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:maxWidth="220dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textAllCaps="false"
+            app:icon="@drawable/ic_profile"
+            app:iconSize="18dp" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/playButton"
-            style="?android:attr/buttonBarButtonStyle"
-            android:layout_width="0dp"
+            style="@style/Widget.StereoView.ToolButton"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/pause" />
+            android:text="@string/pause"
+            app:icon="@drawable/ic_pause" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/swapButton"
-            style="?android:attr/buttonBarButtonStyle"
-            android:layout_width="0dp"
+            style="@style/Widget.StereoView.ToolButton"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/swap" />
+            android:text="@string/swap"
+            app:icon="@drawable/ic_swap" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/scaleButton"
-            style="?android:attr/buttonBarButtonStyle"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1" />
+            style="@style/Widget.StereoView.ToolButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/alignButton"
-            style="?android:attr/buttonBarButtonStyle"
-            android:layout_width="0dp"
+            style="@style/Widget.StereoView.ToolButton"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/align" />
+            android:text="@string/align"
+            app:icon="@drawable/ic_align" />
 
-        <Button
-            android:id="@+id/exposureModeButton"
-            style="?android:attr/buttonBarButtonStyle"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1" />
-
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/hudButton"
-            style="?android:attr/buttonBarButtonStyle"
-            android:layout_width="0dp"
+            style="@style/Widget.StereoView.ToolButton"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
             android:text="@string/hud" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/infoButton"
-            style="?android:attr/buttonBarButtonStyle"
-            android:layout_width="0dp"
+            style="@style/Widget.StereoView.ToolButton"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/info" />
+            android:contentDescription="@string/info"
+            app:icon="@drawable/ic_info" />
 
-        <Button
-            android:id="@+id/moreButton"
-            style="?android:attr/buttonBarButtonStyle"
-            android:layout_width="0dp"
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/settingsButton"
+            style="@style/Widget.StereoView.ToolButton"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/more" />
+            android:contentDescription="@string/settings"
+            app:icon="@drawable/ic_settings" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/collapseButton"
+            style="@style/Widget.StereoView.ToolButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:contentDescription="@string/collapse"
+            app:icon="@drawable/ic_expand_more" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/recordButton"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:minWidth="104dp"
+            android:text="@string/record"
+            android:textColor="@color/record"
+            app:icon="@drawable/ic_record"
+            app:iconTint="@color/record"
+            app:strokeColor="@color/record" />
     </LinearLayout>
 
+    <!-- Sliders; hidden when the panel is collapsed. -->
     <LinearLayout
+        android:id="@+id/sliders"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
+        android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/convergenceLabel"
-            android:layout_width="150dp"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textColor="#FFFFFF" />
+            android:baselineAligned="false"
+            android:orientation="horizontal">
 
-        <SeekBar
-            android:id="@+id/convergenceSeek"
-            android:layout_width="0dp"
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/convergenceLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="16dp"
+                    android:textAppearance="@style/TextAppearance.StereoView.Label" />
+
+                <com.google.android.material.slider.Slider
+                    android:id="@+id/convergenceSlider"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:stepSize="1"
+                    android:valueFrom="-200"
+                    android:valueTo="200"
+                    app:labelBehavior="gone"
+                    app:tickVisible="false" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/depthLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="16dp"
+                    android:textAppearance="@style/TextAppearance.StereoView.Label" />
+
+                <com.google.android.material.slider.Slider
+                    android:id="@+id/depthSlider"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:stepSize="1"
+                    android:valueFrom="0"
+                    android:valueTo="100"
+                    app:labelBehavior="gone"
+                    app:tickVisible="false" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:max="100"
-            android:paddingVertical="10dp" />
-    </LinearLayout>
+            android:baselineAligned="false"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
+            <com.google.android.material.button.MaterialButtonToggleGroup
+                android:id="@+id/exposureModeGroup"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                app:selectionRequired="true"
+                app:singleSelection="true">
 
-        <TextView
-            android:id="@+id/depthLabel"
-            android:layout_width="150dp"
-            android:layout_height="wrap_content"
-            android:textColor="#FFFFFF" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/exposureAutoButton"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="0dp"
+                    android:text="@string/exposure_auto"
+                    android:textAllCaps="false" />
 
-        <SeekBar
-            android:id="@+id/depthSeek"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:max="100"
-            android:paddingVertical="10dp" />
-    </LinearLayout>
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/exposureManualButton"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="0dp"
+                    android:text="@string/exposure_manual"
+                    android:textAllCaps="false" />
+            </com.google.android.material.button.MaterialButtonToggleGroup>
 
-    <LinearLayout
-        android:id="@+id/brightnessRow"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
+            <LinearLayout
+                android:id="@+id/brightnessColumn"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="2"
+                android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/brightnessLabel"
-            android:layout_width="150dp"
-            android:layout_height="wrap_content"
-            android:textColor="#FFFFFF" />
+                <TextView
+                    android:id="@+id/brightnessLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="16dp"
+                    android:textAppearance="@style/TextAppearance.StereoView.Label" />
 
-        <SeekBar
-            android:id="@+id/brightnessSeek"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:paddingVertical="10dp" />
-    </LinearLayout>
+                <com.google.android.material.slider.Slider
+                    android:id="@+id/brightnessSlider"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:stepSize="1"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    app:labelBehavior="gone"
+                    app:tickVisible="false" />
+            </LinearLayout>
 
-    <LinearLayout
-        android:id="@+id/shutterRow"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:visibility="gone">
+            <LinearLayout
+                android:id="@+id/shutterColumn"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/shutterLabel"
-            android:layout_width="150dp"
-            android:layout_height="wrap_content"
-            android:textColor="#FFFFFF" />
+                <TextView
+                    android:id="@+id/shutterLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="16dp"
+                    android:textAppearance="@style/TextAppearance.StereoView.Label" />
 
-        <SeekBar
-            android:id="@+id/shutterSeek"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:max="1000"
-            android:paddingVertical="10dp" />
-    </LinearLayout>
+                <com.google.android.material.slider.Slider
+                    android:id="@+id/shutterSlider"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:stepSize="1"
+                    android:valueFrom="0"
+                    android:valueTo="1000"
+                    app:labelBehavior="gone"
+                    app:tickVisible="false" />
+            </LinearLayout>
 
-    <LinearLayout
-        android:id="@+id/isoRow"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:visibility="gone">
+            <LinearLayout
+                android:id="@+id/isoColumn"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/isoLabel"
-            android:layout_width="150dp"
-            android:layout_height="wrap_content"
-            android:textColor="#FFFFFF" />
+                <TextView
+                    android:id="@+id/isoLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="16dp"
+                    android:textAppearance="@style/TextAppearance.StereoView.Label" />
 
-        <SeekBar
-            android:id="@+id/isoSeek"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:max="1000"
-            android:paddingVertical="10dp" />
+                <com.google.android.material.slider.Slider
+                    android:id="@+id/isoSlider"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:stepSize="1"
+                    android:valueFrom="0"
+                    android:valueTo="1000"
+                    app:labelBehavior="gone"
+                    app:tickVisible="false" />
+            </LinearLayout>
+        </LinearLayout>
     </LinearLayout>
 
     <TextView
         android:id="@+id/statusText"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_marginHorizontal="4dp"
         android:ellipsize="end"
         android:maxLines="2"
-        android:textColor="#B0BEC5"
-        android:textSize="12sp" />
+        android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+        android:textColor="@color/panel_text_secondary" />
 </LinearLayout>

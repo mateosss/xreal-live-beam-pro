@@ -1,4 +1,10 @@
 <resources>
     <color name="ic_launcher_background">#101418</color>
     <color name="panel_background">#B0000000</color>
+    <color name="panel_surface">#E6101418</color>
+    <color name="panel_text">#ECEFF1</color>
+    <color name="panel_text_secondary">#9FB0BA</color>
+    <color name="accent">#4FC3F7</color>
+    <color name="accent_container">#334FC3F7</color>
+    <color name="record">#FF5252</color>
 </resources>

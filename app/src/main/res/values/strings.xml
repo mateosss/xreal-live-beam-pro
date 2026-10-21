@@ -2,11 +2,15 @@
     <string name="app_name">Stereo Passthrough</string>
     <string name="play">Play</string>
     <string name="pause">Pause</string>
-    <string name="swap">Swap L/R</string>
+    <string name="swap">L/R</string>
     <string name="hud">HUD</string>
     <string name="info">Info</string>
     <string name="align">Align</string>
-    <string name="more">More</string>
+    <string name="record">Rec</string>
+    <string name="settings">Settings</string>
+    <string name="collapse">Collapse controls</string>
+    <string name="exposure_auto">Auto</string>
+    <string name="exposure_manual">Manual</string>
     <string name="convergence">Convergence</string>
     <string name="depth">Depth</string>
     <string name="brightness">Brightness</string>

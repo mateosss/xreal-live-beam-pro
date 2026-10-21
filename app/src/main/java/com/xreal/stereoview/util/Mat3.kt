@@ -56,6 +56,30 @@ object Mat3 {
         )
     }
 
+    /** Unit quaternion (w, x, y, z) of the rotation matrix [m]. */
+    fun toQuaternion(m: DoubleArray): DoubleArray {
+        val trace = m[0] + m[4] + m[8]
+        val q = when {
+            trace > 0 -> {
+                val s = 2 * sqrt(trace + 1)
+                doubleArrayOf(s / 4, (m[7] - m[5]) / s, (m[2] - m[6]) / s, (m[3] - m[1]) / s)
+            }
+            m[0] > m[4] && m[0] > m[8] -> {
+                val s = 2 * sqrt(1 + m[0] - m[4] - m[8])
+                doubleArrayOf((m[7] - m[5]) / s, s / 4, (m[1] + m[3]) / s, (m[2] + m[6]) / s)
+            }
+            m[4] > m[8] -> {
+                val s = 2 * sqrt(1 + m[4] - m[0] - m[8])
+                doubleArrayOf((m[2] - m[6]) / s, (m[1] + m[3]) / s, s / 4, (m[5] + m[7]) / s)
+            }
+            else -> {
+                val s = 2 * sqrt(1 + m[8] - m[0] - m[4])
+                doubleArrayOf((m[3] - m[1]) / s, (m[2] + m[6]) / s, (m[5] + m[7]) / s, s / 4)
+            }
+        }
+        return if (q[0] < 0) DoubleArray(4) { -q[it] } else q
+    }
+
     /** Rotation angle of the rotation matrix [m], in degrees. */
     fun angleDegrees(m: DoubleArray): Double {
         val c = ((m[0] + m[4] + m[8] - 1) / 2).coerceIn(-1.0, 1.0)

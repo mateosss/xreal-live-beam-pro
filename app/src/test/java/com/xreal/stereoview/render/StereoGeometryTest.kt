@@ -36,4 +36,30 @@ class StereoGeometryTest {
             assertEquals("override $override", 5.0, Mat3.angleDegrees(rect), 1e-6)
         }
     }
+
+    /** The exported pinhole intrinsics must reproduce where [StereoGeometry.rayMatrix] samples each pixel. */
+    @Test
+    fun rectifiedIntrinsicsMatchTheRayMapping() {
+        val cam = camera(sensorOrientation = 90)
+        val geometry = StereoGeometry(listOf(cam, cam), useFactoryCalibration = true, Surface.ROTATION_90, 270)
+        val (w, h) = 1280 to 720
+        val (tanH, tanV, shift, zoom) = listOf(0.6, 0.35, 0.04, 1.3)
+        val k = geometry.rectifiedIntrinsics(w, h, tanH, tanV, shift, zoom)
+        val virtualFromCamera = Mat3.transpose(geometry.cameraFromVirtual(0, 0.0, 0.0))
+        for ((u, v) in listOf(0.1 to 0.2, 0.5 to 0.5, 0.9 to 0.75)) {
+            val ray = geometry.rayMatrix(0, tanH, tanV, shift, zoom, 0.0, 0.0, Mat3.identity())
+            val virtual = Mat3.mulVec(virtualFromCamera, Mat3.mulVec(ray, doubleArrayOf(u, v, 1.0)))
+            // Pixel of output (u, v): column u·w, row (1 − v)·h from the top.
+            assertEquals(u * w, k[0] * virtual[0] / virtual[2] + k[2], 1e-6)
+            assertEquals((1 - v) * h, k[1] * virtual[1] / virtual[2] + k[3], 1e-6)
+        }
+    }
+
+    @Test
+    fun quaternionRoundTrips() {
+        val m = Mat3.mul(Mat3.rotX(0.3), Mat3.rotZ(-1.1))
+        val q = Mat3.toQuaternion(m)
+        val back = Mat3.fromQuaternion(q[1], q[2], q[3], q[0])
+        for (i in 0 until 9) assertEquals(m[i], back[i], 1e-9)
+    }
 }

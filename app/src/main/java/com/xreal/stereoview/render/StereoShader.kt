@@ -29,6 +29,14 @@ class StereoShader {
     private val uTexture: Int
     private val rayGl = FloatArray(9)
 
+    // Pass-through program for raw recordings: the stream image exactly as delivered.
+    private val rawProgram: Int
+    private val rawPosition: Int
+    private val rawTexCoord: Int
+    private val rawStMatrix: Int
+    private val rawFlip: Int
+    private val rawTexture: Int
+
     private val quad: FloatBuffer = floatBuffer(
         // x, y, u, v
         -1f, -1f, 0f, 0f,
@@ -48,17 +56,44 @@ class StereoShader {
         uMaxRadius2 = GLES20.glGetUniformLocation(program, "uMaxRadius2")
         uStMatrix = GLES20.glGetUniformLocation(program, "uStMatrix")
         uTexture = GLES20.glGetUniformLocation(program, "uTexture")
+
+        rawProgram = linkProgram(VERTEX_SHADER, RAW_FRAGMENT_SHADER)
+        rawPosition = GLES20.glGetAttribLocation(rawProgram, "aPosition")
+        rawTexCoord = GLES20.glGetAttribLocation(rawProgram, "aTexCoord")
+        rawStMatrix = GLES20.glGetUniformLocation(rawProgram, "uStMatrix")
+        rawFlip = GLES20.glGetUniformLocation(rawProgram, "uFlip")
+        rawTexture = GLES20.glGetUniformLocation(rawProgram, "uTexture")
+    }
+
+    /**
+     * Draws the stream image unchanged into the viewport, top row at the top; with [flipY] the
+     * top row lands at the bottom instead (row 0 of a glReadPixels).
+     */
+    fun drawRaw(texture: Int, stMatrix: FloatArray, flipY: Boolean) {
+        GLES20.glUseProgram(rawProgram)
+        bindQuad(rawPosition, rawTexCoord)
+        GLES20.glUniformMatrix4fv(rawStMatrix, 1, false, stMatrix, 0)
+        GLES20.glUniform1f(rawFlip, if (flipY) 1f else 0f)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, texture)
+        GLES20.glUniform1i(rawTexture, 0)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+        GLES20.glDisableVertexAttribArray(rawPosition)
+        GLES20.glDisableVertexAttribArray(rawTexCoord)
+    }
+
+    private fun bindQuad(position: Int, texCoord: Int) {
+        quad.position(0)
+        GLES20.glVertexAttribPointer(position, 2, GLES20.GL_FLOAT, false, STRIDE, quad)
+        GLES20.glEnableVertexAttribArray(position)
+        quad.position(2)
+        GLES20.glVertexAttribPointer(texCoord, 2, GLES20.GL_FLOAT, false, STRIDE, quad)
+        GLES20.glEnableVertexAttribArray(texCoord)
     }
 
     fun draw(texture: Int, rayMatrix: DoubleArray, camera: CameraModel, stMatrix: FloatArray) {
         GLES20.glUseProgram(program)
-
-        quad.position(0)
-        GLES20.glVertexAttribPointer(aPosition, 2, GLES20.GL_FLOAT, false, STRIDE, quad)
-        GLES20.glEnableVertexAttribArray(aPosition)
-        quad.position(2)
-        GLES20.glVertexAttribPointer(aTexCoord, 2, GLES20.GL_FLOAT, false, STRIDE, quad)
-        GLES20.glEnableVertexAttribArray(aTexCoord)
+        bindQuad(aPosition, aTexCoord)
 
         GLES20.glUniformMatrix3fv(uRay, 1, false, Mat3.toGl(rayMatrix, rayGl), 0)
         GLES20.glUniform4f(uIntrinsics, camera.fx.toFloat(), camera.fy.toFloat(), camera.cx.toFloat(), camera.cy.toFloat())
@@ -123,6 +158,19 @@ class StereoShader {
                 }
                 vec2 tex = (uStMatrix * vec4(image.x, 1.0 - image.y, 0.0, 1.0)).xy;
                 gl_FragColor = texture2D(uTexture, tex);
+            }
+        """
+
+        private const val RAW_FRAGMENT_SHADER = """
+            #extension GL_OES_EGL_image_external : require
+            precision mediump float;
+            uniform samplerExternalOES uTexture;
+            uniform mat4 uStMatrix;
+            uniform float uFlip;
+            varying vec2 vUv;
+            void main() {
+                vec2 uv = vec2(vUv.x, mix(vUv.y, 1.0 - vUv.y, uFlip));
+                gl_FragColor = texture2D(uTexture, (uStMatrix * vec4(uv, 0.0, 1.0)).xy);
             }
         """
 

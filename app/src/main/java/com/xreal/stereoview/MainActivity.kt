@@ -33,16 +33,24 @@ import com.xreal.stereoview.camera.CameraTarget
 import com.xreal.stereoview.camera.CameraUtils
 import com.xreal.stereoview.camera.StereoRig
 import com.xreal.stereoview.databinding.ActivityMainBinding
+import com.xreal.stereoview.record.Recording
+import com.xreal.stereoview.render.GlRecorder
 import com.xreal.stereoview.render.StereoPresentation
 import com.xreal.stereoview.render.StereoRenderer
 import com.xreal.stereoview.render.Stabilizer
 import com.xreal.stereoview.ui.ControlsOverlay
+import com.xreal.stereoview.ui.FocusMode
 import com.xreal.stereoview.ui.OutputMode
 import com.xreal.stereoview.ui.SettingsViewModel
 import com.xreal.stereoview.ui.StereoSettings
 import com.xreal.stereoview.util.CrashReporter
 import com.xreal.stereoview.util.DisplayUtils
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 /**
  * Wires the cameras, the stereo renderer and the controls together.
@@ -72,6 +80,8 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     private var outputActive = false
     private var lastSettings: StereoSettings? = null
     private var permissionRequested = false
+    private var recording: Recording? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val requestPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -101,6 +111,11 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.settings.collect(::applySettings)
+            }
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.profiles.collect { controls.render(viewModel.settings.value) }
             }
         }
         CrashReporter.showPendingReport(this)
@@ -145,6 +160,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         val renderer = StereoRenderer(this, stabilizer).also { it.settings = settings }
         val view = GLSurfaceView(this).apply {
             setEGLContextClientVersion(2)
+            setEGLConfigChooser(GlRecorder.ConfigChooser())
             setRenderer(renderer)
             renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
         }
@@ -167,6 +183,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
 
     private fun teardownOutput() {
         if (!outputActive) return
+        stopRecording("Recording stopped: app paused", waitForGl = true)
         outputActive = false
         camera.stopBlocking()
         stabilizer.stop()
@@ -291,6 +308,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     }
 
     override fun onPlayPause() {
+        if (playing) stopRecording("Recording stopped: cameras paused")
         playing = !playing
         controls.setPlaying(playing)
         if (playing) startCamera() else camera.pause()
@@ -309,11 +327,13 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         binding.hudText.visibility = if (s.showHud) View.VISIBLE else View.GONE
         if (previous == null) return
 
+        if (s != previous) recording?.onSettingsChanged(s)
         if (s.outputMode != previous.outputMode) {
             rebuildOutput()
         } else if ((s.maxResolution != previous.maxResolution || s.cameraPair != previous.cameraPair ||
                 s.targetFps != previous.targetFps) && playing
         ) {
+            stopRecording("Recording stopped: camera settings changed")
             startCamera()
         } else if (exposureOf(s) != exposureOf(previous)) {
             camera.setExposure(exposureOf(s))
@@ -321,7 +341,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     }
 
     private fun exposureOf(s: StereoSettings) =
-        CameraController.Exposure(s.exposure, s.manualExposure, s.exposureTimeNs, s.iso)
+        CameraController.Exposure(s.exposure, s.manualExposure, s.exposureTimeNs, s.iso, s.focusMode == FocusMode.INFINITY)
 
     private var captureStats = ""
 
@@ -397,6 +417,113 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
 
     // endregion
 
+    // region Recording
+
+    override fun isRecording() = recording != null
+
+    override fun onRecord() {
+        if (recording != null) stopRecording(null) else startRecording()
+    }
+
+    private fun startRecording() {
+        val renderer = renderer
+        val rig = rig
+        val size = streamSize
+        val cams = renderer?.cameras
+        if (renderer == null || rig == null || size == null || cams == null || !playing) {
+            controls.setStatus("Recording needs the cameras running")
+            return
+        }
+        val root = Recording.root(this).apply { mkdirs() }
+        if (root.usableSpace < MIN_FREE_BYTES) {
+            controls.setStatus("⚠ Not enough free space to record (%.1f GB left)".format(root.usableSpace / 1e9))
+            return
+        }
+        val rec = try {
+            Recording.start(this, viewModel.settings.value, rig, size, cams, cameraManager, recordingInfo())
+        } catch (e: Exception) {
+            Log.e(TAG, "Cannot start recording", e)
+            controls.setStatus("⚠ Cannot record: ${e.message}")
+            return
+        }
+        recording = rec
+        camera.resultListener = rec
+        renderer.startRecording(rec)
+        controls.setStatus("Recording to ${rec.dir.name}")
+        Log.i(TAG, "Recording to ${rec.dir}")
+        updateRecordingTimer()
+    }
+
+    /** Elapsed time on the button; also stops the recording if the renderer reported an error. */
+    private fun updateRecordingTimer() {
+        val rec = recording
+        if (rec == null) {
+            controls.setRecording(null)
+            return
+        }
+        rec.error?.let {
+            stopRecording("⚠ Recording failed: $it")
+            return
+        }
+        controls.setRecording((android.os.SystemClock.elapsedRealtimeNanos() - rec.startBoottimeNs) / 1_000_000_000)
+        mainHandler.postDelayed(::updateRecordingTimer, 500)
+    }
+
+    /**
+     * Detaches the recording from the camera and renderer, then finalizes its files in the
+     * background. With [waitForGl], waits for the encoder surfaces to be released first (the
+     * GL context is about to go away).
+     */
+    private fun stopRecording(reason: String?, waitForGl: Boolean = false) {
+        val rec = recording ?: return
+        recording = null
+        camera.resultListener = null
+        controls.setRecording(null)
+        controls.setStatus((reason?.let { "$it. " } ?: "") + "Saving ${rec.dir.name}…")
+        fun finish() = thread(name = "RecordingFinish") {
+            val summary = try {
+                rec.finish()
+            } catch (e: Exception) {
+                Log.e(TAG, "Finishing recording failed", e)
+                "⚠ Saving ${rec.dir.name} failed: ${e.message}"
+            }
+            Log.i(TAG, summary)
+            runOnUiThread { controls.setStatus(summary) }
+        }
+        val renderer = renderer
+        if (renderer == null) {
+            finish()
+            return
+        }
+        val released = CountDownLatch(1)
+        renderer.stopRecording {
+            released.countDown()
+            if (!waitForGl) finish()
+        }
+        if (waitForGl) {
+            if (!released.await(1, TimeUnit.SECONDS)) Log.w(TAG, "GL thread did not release the recording in time")
+            finish()
+        }
+    }
+
+    /** Context for metadata.json that only the activity knows. */
+    private fun recordingInfo() = JSONObject().apply {
+        viewModel.profiles.value.activeProfile?.let { p ->
+            put("profile", p.name)
+            put("profile_edited", p.differsFrom(viewModel.settings.value))
+        } ?: put("profile", JSONObject.NULL)
+        put("display_rotation_deg", CameraUtils.rotationDegrees(displayRotation()))
+        put("output_display", outputDisplay?.let(DisplayUtils::describe) ?: "main screen")
+        put("displays", JSONArray(displayManager.displays.map { DisplayUtils.describe(it) }))
+        put("gyro_stabilizer_available", stabilizer.available)
+        renderer?.cameras?.let { cams ->
+            put("camera_models", JSONArray(listOf(cams.left, cams.right).distinct().map { it.describe() }))
+        }
+        put("camera_report", runCatching { CameraUtils.describeCameras(cameraManager) }.getOrElse { it.toString() })
+    }
+
+    // endregion
+
     // region Touch: pinch adjusts depth, tap toggles the panel when it covers the stereo view
     // (lazy: the detectors read resources, which aren't available before onCreate)
 
@@ -431,6 +558,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
 
     private companion object {
         const val TAG = "StereoView"
+        const val MIN_FREE_BYTES = 500_000_000L
     }
 
     private fun displayRotation(): Int = display?.rotation ?: 0

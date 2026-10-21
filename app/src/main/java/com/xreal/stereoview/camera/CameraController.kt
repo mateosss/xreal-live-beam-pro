@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCaptureSession
+import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
@@ -38,13 +39,25 @@ class CameraController(context: Context, private val listener: Listener) {
         fun onCaptureStats(exposureTimeNs: Long, iso: Int, frameDurationNs: Long) = Unit
     }
 
-    /** Auto exposure with [compensation] steps, or a fixed [exposureTimeNs] and [iso]. */
+    /**
+     * Auto exposure with [compensation] steps, or a fixed [exposureTimeNs] and [iso]; and
+     * autofocus, or focus locked at infinity.
+     */
     data class Exposure(
         val compensation: Int = 0,
         val manual: Boolean = false,
         val exposureTimeNs: Long = 4_000_000,
         val iso: Int = 400,
+        val focusInfinity: Boolean = false,
     )
+
+    /** Receives every capture result of every open device, on the camera thread. */
+    fun interface ResultListener {
+        fun onCaptureResult(deviceId: String, result: TotalCaptureResult)
+    }
+
+    @Volatile
+    var resultListener: ResultListener? = null
 
     private val manager = context.getSystemService(CameraManager::class.java)
     private val thread = HandlerThread("StereoCamera").apply { start() }
@@ -275,10 +288,13 @@ class CameraController(context: Context, private val listener: Listener) {
                 if (rig.undistortInShader) {
                     set(CaptureRequest.DISTORTION_CORRECTION_MODE, CaptureRequest.DISTORTION_CORRECTION_MODE_OFF)
                 }
+                val minFocus = manager.getCameraCharacteristics(deviceId).get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f
+                if (exposure.focusInfinity && minFocus > 0f) {
+                    set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+                    set(CaptureRequest.LENS_FOCUS_DISTANCE, 0f)
+                }
             }
-            // Only the first device reports stats; with two devices both run the same settings.
-            val callback = if (deviceId == rig.deviceIds.first()) statsCallback else null
-            session.setRepeatingRequest(request.build(), callback, handler)
+            session.setRepeatingRequest(request.build(), resultCallback(deviceId, rig), handler)
         } catch (e: Exception) {
             when (e) {
                 is CameraAccessException, is IllegalStateException, is IllegalArgumentException ->
@@ -288,8 +304,11 @@ class CameraController(context: Context, private val listener: Listener) {
         }
     }
 
-    private val statsCallback = object : CameraCaptureSession.CaptureCallback() {
+    /** Forwards results to [resultListener]; only the first device reports stats, as both run the same settings. */
+    private fun resultCallback(deviceId: String, rig: StereoRig) = object : CameraCaptureSession.CaptureCallback() {
         override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+            resultListener?.onCaptureResult(deviceId, result)
+            if (deviceId != rig.deviceIds.first()) return
             val now = SystemClock.elapsedRealtime()
             if (now - lastStatsMs < 500) return
             lastStatsMs = now

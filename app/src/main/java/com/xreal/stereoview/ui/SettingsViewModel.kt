@@ -44,6 +44,38 @@ enum class Stabilization(val label: String, val timeConstantSec: Double) {
     HIGH("High", 0.8),
 }
 
+/** Camera focus: continuous autofocus, or locked at infinity so the intrinsics stay fixed. */
+enum class FocusMode(val label: String) {
+    AUTO("Continuous autofocus"),
+    INFINITY("Locked at infinity (fixed intrinsics, for SLAM)"),
+}
+
+/** Which image a recording stores per camera. */
+enum class RecordView(val label: String) {
+    RAW("Raw: camera images as streamed (distorted, unrotated)"),
+    RECTIFIED("Rectified: what each eye sees (undistorted, aligned)"),
+}
+
+/** How recorded frames are encoded. */
+enum class RecordFormat(val label: String, val mime: String?) {
+    H264("H.264 video", "video/avc"),
+    HEVC("H.265 video", "video/hevc"),
+    JPEG("JPEG images (one file per frame, may drop frames)", null),
+}
+
+/**
+ * IMU sampling: [periodUs] for a regular listener (0 = as fast as the sensor allows), or a
+ * [directRate] level (SensorDirectChannel.RATE_*) to read through a shared-memory direct channel.
+ */
+enum class ImuRate(val label: String, val periodUs: Int, val directRate: Int = 0) {
+    FASTEST("Fastest the sensors allow (listener)", 0),
+    HZ_500("500 Hz (listener)", 2_000),
+    HZ_200("200 Hz (listener)", 5_000),
+    HZ_100("100 Hz (listener)", 10_000),
+    DIRECT_VERY_FAST("Direct channel, ~800 Hz", 0, 3),
+    DIRECT_FAST("Direct channel, ~200 Hz", 0, 2),
+}
+
 /** Where the SBS frame is rendered. */
 enum class OutputMode(val label: String) {
     AUTO("Glasses display if detected"),
@@ -85,6 +117,13 @@ data class StereoSettings(
     val manualExposure: Boolean = false,
     val exposureTimeNs: Long = 4_000_000L,
     val iso: Int = 400,
+    val focusMode: FocusMode = FocusMode.AUTO,
+    val recordView: RecordView = RecordView.RAW,
+    val recordFormat: RecordFormat = RecordFormat.H264,
+    val recordBitrateMbps: Int = 40,
+    val imuRate: ImuRate = ImuRate.FASTEST,
+    /** Comma-separated [com.xreal.stereoview.record.ImuStream] names to record. */
+    val imuStreams: String = "ACCELEROMETER,GYROSCOPE,ACCELEROMETER_UNCALIBRATED,GYROSCOPE_UNCALIBRATED,GAME_ROTATION_VECTOR",
 ) {
     companion object {
         const val CONVERGENCE_RANGE = 200f
@@ -119,6 +158,27 @@ class SettingsRepository(private val context: Context) {
         val MANUAL_EXPOSURE = booleanPreferencesKey("manual_exposure")
         val EXPOSURE_TIME = longPreferencesKey("exposure_time_ns")
         val ISO = intPreferencesKey("iso")
+        val FOCUS_MODE = stringPreferencesKey("focus_mode")
+        val RECORD_VIEW = stringPreferencesKey("record_view")
+        val RECORD_FORMAT = stringPreferencesKey("record_format")
+        val RECORD_BITRATE = intPreferencesKey("record_bitrate_mbps")
+        val IMU_RATE = stringPreferencesKey("imu_rate")
+        val IMU_STREAMS = stringPreferencesKey("imu_streams")
+        val PROFILES = stringPreferencesKey("profiles")
+        val ACTIVE_PROFILE = stringPreferencesKey("active_profile")
+    }
+
+    /** Saved profiles (the built-in ones until anything is saved) and the active one's name. */
+    val profiles = context.dataStore.data.map { p ->
+        val list = p[Keys.PROFILES]?.let { runCatching { Profile.fromJson(it) }.getOrNull() } ?: Profile.defaults
+        ProfileState(list, p[Keys.ACTIVE_PROFILE] ?: Profile.PASSTHROUGH)
+    }
+
+    suspend fun saveProfiles(state: ProfileState) {
+        context.dataStore.edit { p ->
+            p[Keys.PROFILES] = Profile.toJson(state.profiles)
+            p[Keys.ACTIVE_PROFILE] = state.active
+        }
     }
 
     val settings = context.dataStore.data.map { p ->
@@ -145,6 +205,12 @@ class SettingsRepository(private val context: Context) {
             manualExposure = p[Keys.MANUAL_EXPOSURE] ?: defaults.manualExposure,
             exposureTimeNs = p[Keys.EXPOSURE_TIME] ?: defaults.exposureTimeNs,
             iso = p[Keys.ISO] ?: defaults.iso,
+            focusMode = enumOrDefault(p[Keys.FOCUS_MODE], defaults.focusMode),
+            recordView = enumOrDefault(p[Keys.RECORD_VIEW], defaults.recordView),
+            recordFormat = enumOrDefault(p[Keys.RECORD_FORMAT], defaults.recordFormat),
+            recordBitrateMbps = p[Keys.RECORD_BITRATE] ?: defaults.recordBitrateMbps,
+            imuRate = enumOrDefault(p[Keys.IMU_RATE], defaults.imuRate),
+            imuStreams = p[Keys.IMU_STREAMS] ?: defaults.imuStreams,
         )
     }
 
@@ -171,6 +237,12 @@ class SettingsRepository(private val context: Context) {
             p[Keys.MANUAL_EXPOSURE] = s.manualExposure
             p[Keys.EXPOSURE_TIME] = s.exposureTimeNs
             p[Keys.ISO] = s.iso
+            p[Keys.FOCUS_MODE] = s.focusMode.name
+            p[Keys.RECORD_VIEW] = s.recordView.name
+            p[Keys.RECORD_FORMAT] = s.recordFormat.name
+            p[Keys.RECORD_BITRATE] = s.recordBitrateMbps
+            p[Keys.IMU_RATE] = s.imuRate.name
+            p[Keys.IMU_STREAMS] = s.imuStreams
         }
     }
 
@@ -186,13 +258,69 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val repository = SettingsRepository(application)
     private val _settings = MutableStateFlow(StereoSettings())
     val settings: StateFlow<StereoSettings> = _settings.asStateFlow()
+    private val _profiles = MutableStateFlow(ProfileState(Profile.defaults, Profile.PASSTHROUGH))
+    val profiles: StateFlow<ProfileState> = _profiles.asStateFlow()
     private var loaded = false
 
     init {
         viewModelScope.launch {
+            _profiles.value = repository.profiles.first()
             _settings.value = repository.settings.first()
             loaded = true
         }
+    }
+
+    /** Switches to profile [name], replacing every profile setting. */
+    fun selectProfile(name: String) {
+        val profile = _profiles.value.find(name) ?: return
+        update { it.withProfile(profile.settings) }
+        setProfiles(_profiles.value.copy(active = name))
+    }
+
+    /** Stores the current settings as profile [name] (new or overwritten) and makes it active. */
+    fun saveProfile(name: String) {
+        val state = _profiles.value
+        val profile = Profile(name, _settings.value)
+        val list = if (state.find(name) != null) state.profiles.map { if (it.name == name) profile else it } else state.profiles + profile
+        setProfiles(ProfileState(list, name))
+    }
+
+    fun renameProfile(from: String, to: String) {
+        val state = _profiles.value
+        if (to.isBlank() || state.find(to) != null) return
+        setProfiles(ProfileState(
+            state.profiles.map { if (it.name == from) it.copy(name = to) else it },
+            if (state.active == from) to else state.active,
+        ))
+    }
+
+    /** Adds a copy of profile [from] named [to], after it in the list. */
+    fun duplicateProfile(from: String, to: String) {
+        val state = _profiles.value
+        val source = state.find(from) ?: return
+        if (state.find(to) != null) return
+        val list = state.profiles.toMutableList().apply { add(indexOf(source) + 1, source.copy(name = to)) }
+        setProfiles(state.copy(profiles = list))
+    }
+
+    fun deleteProfile(name: String) {
+        val state = _profiles.value
+        setProfiles(ProfileState(state.profiles.filter { it.name != name }, if (state.active == name) "" else state.active))
+    }
+
+    /** Resets the built-in profiles (re-adding deleted ones) and keeps custom ones. */
+    fun restoreDefaultProfiles() {
+        val state = _profiles.value
+        val defaults = Profile.defaults
+        val custom = state.profiles.filter { p -> defaults.none { it.name == p.name } }
+        setProfiles(ProfileState(defaults + custom, state.active))
+        state.find(state.active)?.let { selectProfile(it.name) }
+    }
+
+    private fun setProfiles(state: ProfileState) {
+        if (!loaded) return
+        _profiles.value = state
+        viewModelScope.launch { repository.saveProfiles(state) }
     }
 
     fun update(transform: (StereoSettings) -> StereoSettings) {
@@ -202,4 +330,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         val snapshot = _settings.value
         viewModelScope.launch { repository.save(snapshot) }
     }
+}
+
+data class ProfileState(val profiles: List<Profile>, val active: String) {
+    fun find(name: String): Profile? = profiles.firstOrNull { it.name == name }
+    val activeProfile: Profile? get() = find(active)
 }
