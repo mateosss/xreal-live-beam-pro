@@ -37,14 +37,14 @@ import java.util.Locale
  * the encoders' input surfaces.
  */
 class Recording private constructor(
-    val dir: File,
+    override val dir: File,
     val view: RecordView,
     val format: RecordFormat,
     val outputs: List<Output>,
     private val imu: ImuRecorder,
     private val settingsLog: LineWriter,
     private val metadata: JSONObject,
-) : CameraController.ResultListener {
+) : CameraController.ResultListener, ActiveRecording {
 
     /** One recorded camera. [camera] is the renderer's camera index (0 = rig's left, 1 = right). */
     class Output(
@@ -68,12 +68,12 @@ class Recording private constructor(
     /** What a rectified eye shows: half-FOV tangents, horizontal shift (eye widths) and zoom. */
     data class EyeView(val tanH: Double, val tanV: Double, val shift: Double, val zoom: Double)
 
-    val startBoottimeNs: Long = SystemClock.elapsedRealtimeNanos()
+    override val startBoottimeNs: Long = SystemClock.elapsedRealtimeNanos()
     val mono: Boolean get() = outputs.size == 1
 
     /** Set when something fails mid-recording; the UI stops the recording and shows it. */
     @Volatile
-    var error: String? = null
+    override var error: String? = null
 
     fun eyeView(geometry: StereoGeometry, s: StereoSettings, output: Output): EyeView =
         eyeView(geometry, s, output.index, output.size, mono)
@@ -141,7 +141,7 @@ class Recording private constructor(
         return readoutKey
     }
 
-    fun onSettingsChanged(s: StereoSettings) {
+    override fun onSettingsChanged(s: StereoSettings) {
         settingsLog.line(JSONObject().apply {
             put("boottime_ns", SystemClock.elapsedRealtimeNanos())
             put("settings", Metadata.settings(s))
@@ -149,7 +149,7 @@ class Recording private constructor(
     }
 
     /** Closes encoders and files and completes metadata.json. Blocking; call off the main thread. */
-    fun finish(): String {
+    override fun finish(): String {
         val end = Metadata.clocks()
         val imuSummary = imu.stop()
         for (o in outputs) {

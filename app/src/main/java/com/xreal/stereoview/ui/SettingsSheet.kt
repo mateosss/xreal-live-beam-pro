@@ -72,6 +72,28 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
         profileHeader(content, s)
 
         section(content, "Capture", "saved in profiles")
+        row(content, "Camera source", s.cameraSource.label, locked = recording) {
+            choose("Camera source (one at a time)", CameraSource.entries.map { it.label }, s.cameraSource.ordinal) { i ->
+                viewModel.update { it.copy(cameraSource = CameraSource.entries[i]) }
+            }
+        }
+        val glassesSource = s.cameraSource == CameraSource.GLASSES
+        if (glassesSource) {
+            row(
+                content, "Glasses IMU",
+                if (s.glassesImu) "Taken over and recorded (XREAL head tracking stops until replug)" else "Left to the system",
+                locked = recording,
+            ) {
+                choose(
+                    "Glasses IMU",
+                    listOf(
+                        "Leave to the system (head tracking keeps working)",
+                        "Take over and record it, with the factory calibration (head tracking stops until the glasses are replugged)",
+                    ),
+                    if (s.glassesImu) 1 else 0,
+                ) { i -> viewModel.update { it.copy(glassesImu = i == 1) } }
+            }
+        }
         row(content, "Frame rate", "${s.targetFps} fps", locked = recording) {
             val rig = host.rig
             val values = rig?.availableFps ?: listOf(30)
@@ -116,6 +138,9 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
         }
 
         section(content, "Recording", "saved in profiles")
+        if (glassesSource) {
+            row(content, "Glasses images", "Raw 480×640 grayscale PNG per frame (lossless), 30 fps per camera; the options below apply to the Beam Pro cameras") {}
+        }
         row(content, "Images", s.recordView.label, locked = recording) {
             choose("Recorded images", RecordView.entries.map { it.label }, s.recordView.ordinal) { i ->
                 viewModel.update { it.copy(recordView = RecordView.entries[i]) }

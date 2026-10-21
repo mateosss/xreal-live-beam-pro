@@ -50,6 +50,12 @@ enum class FocusMode(val label: String) {
     INFINITY("Locked at infinity (fixed intrinsics, for SLAM)"),
 }
 
+/** Where the stereo images come from. Only one source runs at a time. */
+enum class CameraSource(val label: String) {
+    BEAM_PRO("Beam Pro rear cameras"),
+    GLASSES("Glasses tracking cameras (Air 2 Ultra, over USB)"),
+}
+
 /** Which image a recording stores per camera. */
 enum class RecordView(val label: String) {
     RAW("Raw: camera images as streamed (distorted, unrotated)"),
@@ -124,6 +130,9 @@ data class StereoSettings(
     val imuRate: ImuRate = ImuRate.FASTEST,
     /** Comma-separated [com.xreal.stereoview.record.ImuStream] names to record. */
     val imuStreams: String = "ACCELEROMETER,GYROSCOPE,ACCELEROMETER_UNCALIBRATED,GYROSCOPE_UNCALIBRATED,GAME_ROTATION_VECTOR",
+    val cameraSource: CameraSource = CameraSource.BEAM_PRO,
+    /** With the glasses cameras: also take over the glasses' IMU (stops XREAL's head tracking until replugged). */
+    val glassesImu: Boolean = false,
 ) {
     companion object {
         const val CONVERGENCE_RANGE = 200f
@@ -164,13 +173,20 @@ class SettingsRepository(private val context: Context) {
         val RECORD_BITRATE = intPreferencesKey("record_bitrate_mbps")
         val IMU_RATE = stringPreferencesKey("imu_rate")
         val IMU_STREAMS = stringPreferencesKey("imu_streams")
+        val CAMERA_SOURCE = stringPreferencesKey("camera_source")
+        val GLASSES_IMU = booleanPreferencesKey("glasses_imu")
         val PROFILES = stringPreferencesKey("profiles")
         val ACTIVE_PROFILE = stringPreferencesKey("active_profile")
+        val BUILTINS_SEEN = stringPreferencesKey("builtin_profiles_seen")
     }
 
     /** Saved profiles (the built-in ones until anything is saved) and the active one's name. */
+    /** Built-in profiles added in later versions are appended once; deleted ones stay deleted. */
     val profiles = context.dataStore.data.map { p ->
-        val list = p[Keys.PROFILES]?.let { runCatching { Profile.fromJson(it) }.getOrNull() } ?: Profile.defaults
+        val stored = p[Keys.PROFILES]?.let { runCatching { Profile.fromJson(it) }.getOrNull() }
+        val seen = p[Keys.BUILTINS_SEEN]?.split('\n')?.toSet()
+            ?: if (stored != null) setOf(Profile.PASSTHROUGH, Profile.EUROC) else emptySet()
+        val list = (stored ?: emptyList()) + Profile.defaults.filter { d -> d.name !in seen && stored?.none { it.name == d.name } != false }
         ProfileState(list, p[Keys.ACTIVE_PROFILE] ?: Profile.PASSTHROUGH)
     }
 
@@ -178,6 +194,7 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { p ->
             p[Keys.PROFILES] = Profile.toJson(state.profiles)
             p[Keys.ACTIVE_PROFILE] = state.active
+            p[Keys.BUILTINS_SEEN] = Profile.defaults.joinToString("\n") { it.name }
         }
     }
 
@@ -211,6 +228,8 @@ class SettingsRepository(private val context: Context) {
             recordBitrateMbps = p[Keys.RECORD_BITRATE] ?: defaults.recordBitrateMbps,
             imuRate = enumOrDefault(p[Keys.IMU_RATE], defaults.imuRate),
             imuStreams = p[Keys.IMU_STREAMS] ?: defaults.imuStreams,
+            cameraSource = enumOrDefault(p[Keys.CAMERA_SOURCE], defaults.cameraSource),
+            glassesImu = p[Keys.GLASSES_IMU] ?: defaults.glassesImu,
         )
     }
 
@@ -243,6 +262,8 @@ class SettingsRepository(private val context: Context) {
             p[Keys.RECORD_BITRATE] = s.recordBitrateMbps
             p[Keys.IMU_RATE] = s.imuRate.name
             p[Keys.IMU_STREAMS] = s.imuStreams
+            p[Keys.CAMERA_SOURCE] = s.cameraSource.name
+            p[Keys.GLASSES_IMU] = s.glassesImu
         }
     }
 
@@ -260,13 +281,16 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val settings: StateFlow<StereoSettings> = _settings.asStateFlow()
     private val _profiles = MutableStateFlow(ProfileState(Profile.defaults, Profile.PASSTHROUGH))
     val profiles: StateFlow<ProfileState> = _profiles.asStateFlow()
-    private var loaded = false
+    /** Whether the stored settings are in; until then [settings] holds the defaults. */
+    var loaded = false
+        private set
 
     init {
         viewModelScope.launch {
             _profiles.value = repository.profiles.first()
-            _settings.value = repository.settings.first()
+            val stored = repository.settings.first()
             loaded = true
+            _settings.value = stored
         }
     }
 

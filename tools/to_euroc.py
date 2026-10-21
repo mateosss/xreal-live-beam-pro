@@ -151,6 +151,88 @@ def convert_imu(rec, out, uncalibrated):
     print(f"imu0: {rows} samples at {rate:.1f} Hz ({gyro_path.name} + {accel_path.name})")
 
 
+def convert_glasses(rec, meta, mav, uncalibrated):
+    """Glasses recordings: PNGs and timestamps are on the glasses' clock already."""
+    if uncalibrated:
+        print("note: --uncalibrated-imu does not apply to the glasses IMU (it is always uncalibrated)", file=sys.stderr)
+    ref = meta.get("reference_calibration", {})
+    for cam in meta["cameras"]:
+        name = cam["name"]
+        src = rec / name
+        out = mav / name
+        (out / "data").mkdir(parents=True, exist_ok=True)
+        rows = read_csv(src / "frames.csv")
+        written = 0
+        with open(out / "data.csv", "w") as f:
+            f.write("#timestamp [ns],filename\n")
+            for r in sorted(rows, key=lambda r: int(r["timestamp_ns"])):
+                image = src / "data" / r["file"]
+                if not image.exists():
+                    continue
+                shutil.copyfile(image, out / "data" / r["file"])
+                f.write(f"{r['timestamp_ns']},{r['file']}\n")
+                written += 1
+        c = ref.get(name, {})
+        q = c.get("imu_q_cam_xyzw", [0, 0, 0, 1])
+        n = sum(v * v for v in q) ** 0.5 or 1.0
+        x, y, z, w = (v / n for v in q)
+        rot = [[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+               [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+               [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]]
+        (out / "sensor.yaml").write_text("\n".join([
+            "%YAML:1.0",
+            f"# {name} ({cam['eye']}) of XREAL Air 2 Ultra glasses, upright 480x640 grayscale.",
+            "# Intrinsics and T_BS are Monado's reference Basalt calibration of ANOTHER unit:",
+            "# a starting point only. Calibrate your glasses (e.g. Kalibr, model pinhole-equi).",
+            "sensor_type: camera",
+            f"comment: {name}",
+            "T_BS:",
+            "  cols: 4",
+            "  rows: 4",
+            "  data: [" + ", ".join(f"{v:.9f}" for v in transform(rot, c.get("imu_p_cam"))) + "]",
+            "rate_hz: 30",
+            "resolution: [480, 640]",
+            "camera_model: pinhole",
+            "intrinsics: [" + ", ".join(f"{c.get(k, 0.0):.6f}" for k in ("fx", "fy", "cx", "cy")) + "]",
+            "distortion_model: equidistant",
+            "distortion_coefficients: [" + ", ".join(f"{c.get(k, 0.0):.9f}" for k in ("k1", "k2", "k3", "k4")) + "]",
+        ]) + "\n")
+        print(f"{name}: {written} frames")
+
+    imu_path = rec / "imu" / "glasses_imu.csv"
+    out = mav / "imu0"
+    out.mkdir(parents=True, exist_ok=True)
+    if not imu_path.exists():
+        print("warning: no glasses IMU in this recording (it was left to the system); imu0 not written. "
+              "The Beam Pro's IMU does not move with the glasses, so it cannot stand in.", file=sys.stderr)
+        return
+    rows = read_csv(imu_path)
+    with open(out / "data.csv", "w") as f:
+        f.write("#timestamp [ns],w_RS_S_x [rad s^-1],w_RS_S_y [rad s^-1],w_RS_S_z [rad s^-1],"
+                "a_RS_S_x [m s^-2],a_RS_S_y [m s^-2],a_RS_S_z [m s^-2]\n")
+        for r in rows:
+            f.write(f"{r['timestamp_ns']},{r['wx']},{r['wy']},{r['wz']},{r['ax']},{r['ay']},{r['az']}\n")
+    t = [int(r["timestamp_ns"]) for r in rows]
+    rate = (len(t) - 1) * 1e9 / (t[-1] - t[0]) if len(t) > 1 else 0
+    (out / "sensor.yaml").write_text("\n".join([
+        "%YAML:1.0",
+        "# XREAL Air 2 Ultra IMU in its own axes, uncalibrated (see glasses_calibration.json for biases/scales).",
+        "# Monado flips y and z (diag(1,-1,-1)) to get x right, y up, z forward; check against your calibration.",
+        "sensor_type: imu",
+        "comment: glasses IMU",
+        "T_BS:",
+        "  cols: 4",
+        "  rows: 4",
+        "  data: [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]",
+        f"rate_hz: {rate:.1f}",
+        "gyroscope_noise_density: 1.0e-3",
+        "gyroscope_random_walk: 1.0e-5",
+        "accelerometer_noise_density: 1.0e-2",
+        "accelerometer_random_walk: 1.0e-4",
+    ]) + "\n")
+    print(f"imu0: {len(rows)} samples at {rate:.1f} Hz (glasses IMU, same clock as the cameras)")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("recording", type=Path)
@@ -163,6 +245,9 @@ def main():
 
     rec = args.recording
     meta = json.loads((rec / "metadata.json").read_text())
+    if meta.get("source") == "GLASSES":
+        convert_glasses(rec, meta, args.output / "mav0", args.uncalibrated_imu)
+        return
     rectified = meta["recording"]["view"] == "RECTIFIED"
     if rectified and meta["recording"]["stabilization"] != "OFF":
         print("warning: recorded with stabilization on; each frame is rotated by its stab_q in frames.csv", file=sys.stderr)

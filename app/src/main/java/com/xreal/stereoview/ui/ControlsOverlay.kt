@@ -114,10 +114,13 @@ class ControlsOverlay(
         binding.depthLabel.text = context.getString(R.string.depth) + "  %.2f×".format(s.depth)
 
         val manual = s.manualExposure && rig?.manualSensor != false
+        // The glasses cameras run their own exposure; these controls only drive the Beam Pro's.
+        val beamPro = s.cameraSource == CameraSource.BEAM_PRO
         binding.exposureModeGroup.check(if (manual) R.id.exposureManualButton else R.id.exposureAutoButton)
-        binding.brightnessColumn.visibility = if (manual) View.GONE else View.VISIBLE
-        binding.shutterColumn.visibility = if (manual) View.VISIBLE else View.GONE
-        binding.isoColumn.visibility = if (manual) View.VISIBLE else View.GONE
+        binding.exposureModeGroup.visibility = if (beamPro) View.VISIBLE else View.GONE
+        binding.brightnessColumn.visibility = if (beamPro && !manual) View.VISIBLE else View.GONE
+        binding.shutterColumn.visibility = if (beamPro && manual) View.VISIBLE else View.GONE
+        binding.isoColumn.visibility = if (beamPro && manual) View.VISIBLE else View.GONE
         binding.brightnessSlider.setSafe(s.exposure.toFloat())
         binding.brightnessLabel.text = context.getString(R.string.brightness) + "  %+d".format(s.exposure)
         val (tMin, tMax) = shutterRange(s)

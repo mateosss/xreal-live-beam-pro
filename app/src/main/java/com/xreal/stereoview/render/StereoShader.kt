@@ -205,7 +205,7 @@ class StereoShader {
             return shader
         }
 
-        private fun linkProgram(vertexSource: String, fragmentSource: String): Int {
+        fun linkProgram(vertexSource: String, fragmentSource: String): Int {
             val program = GLES20.glCreateProgram()
             GLES20.glAttachShader(program, compile(GLES20.GL_VERTEX_SHADER, vertexSource))
             GLES20.glAttachShader(program, compile(GLES20.GL_FRAGMENT_SHADER, fragmentSource))

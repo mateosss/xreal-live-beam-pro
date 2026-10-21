@@ -11,8 +11,10 @@ import android.util.Log
 import android.util.Size
 import com.xreal.stereoview.camera.CameraModel
 import com.xreal.stereoview.camera.FrameSynchronizer
+import com.xreal.stereoview.glasses.GlassesDevice
 import com.xreal.stereoview.record.Recording
 import com.xreal.stereoview.ui.RecordView
+import com.xreal.stereoview.ui.ScaleMode
 import com.xreal.stereoview.ui.SbsLayout
 import com.xreal.stereoview.ui.StereoSettings
 import com.xreal.stereoview.util.Mat3
@@ -76,6 +78,14 @@ class StereoRenderer(
             requestRender()
         }
 
+    /** With the glasses cameras as source: the newest left/right pair to show. */
+    @Volatile
+    var glassesFrame: GlassesDevice.StereoFrame? = null
+        set(value) {
+            field = value
+            requestRender()
+        }
+
     /** Description of the current rectification, for the Info dialog. */
     @Volatile
     var geometrySummary: String = "not streaming"
@@ -83,6 +93,8 @@ class StereoRenderer(
 
     // GL thread state
     private var shader: StereoShader? = null
+    private var grayShader: GrayShader? = null
+    private var shownGlassesFrame: GlassesDevice.StereoFrame? = null
     private val textureIds = IntArray(2)
     private var surfaceTextures: List<SurfaceTexture> = emptyList()
     private val stMatrices = Array(2) { FloatArray(16).also { Matrix.setIdentityM(it, 0) } }
@@ -158,6 +170,8 @@ class StereoRenderer(
         surfaceTextures.forEach { it.release() }
         glRecorder = null // belonged to the previous context
         shader = StereoShader()
+        grayShader = GrayShader(2)
+        shownGlassesFrame = null
         alignmentFramebuffer = 0
         surfaceTextures = List(2) { eye ->
             textureIds[eye] = StereoShader.createExternalTexture()
@@ -176,6 +190,13 @@ class StereoRenderer(
 
     override fun onDrawFrame(gl: GL10?) {
         val start = SystemClock.elapsedRealtimeNanos()
+        if (settings.cameraSource == com.xreal.stereoview.ui.CameraSource.GLASSES) {
+            drawGlasses()
+            draws++
+            drawNanos += SystemClock.elapsedRealtimeNanos() - start
+            maybeReportStats()
+            return
+        }
         val fresh = sync.consume()
         for (eye in 0..1) {
             if (!fresh[eye]) continue
@@ -243,6 +264,47 @@ class StereoRenderer(
         draws++
         drawNanos += SystemClock.elapsedRealtimeNanos() - start
         maybeReportStats()
+    }
+
+    /**
+     * Shows the glasses' left and right tracking-camera images in the two eyes, fitted
+     * according to the scale mode (1:1 behaves like Fit, as their angles are unknown here).
+     */
+    private fun drawGlasses() {
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+        GLES20.glViewport(0, 0, width, height)
+        GLES20.glClearColor(0f, 0f, 0f, 1f)
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+        val gray = grayShader ?: return
+        val frame = glassesFrame ?: return
+        if (frame !== shownGlassesFrame) {
+            gray.upload(0, frame.left.image, IMAGE_W, IMAGE_H)
+            gray.upload(1, frame.right.image, IMAGE_W, IMAGE_H)
+            shownGlassesFrame = frame
+            newFrames[0]++
+            newFrames[1]++
+        }
+        val s = settings
+        val eyeWidth = width / 2
+        val halfSbs = when (s.sbsLayout) {
+            SbsLayout.FULL -> false
+            SbsLayout.HALF -> true
+            SbsLayout.AUTO -> width.toFloat() / height < 3f
+        }
+        val eyeAspect = eyeWidth.toFloat() * (if (halfSbs) 2 else 1) / height
+        val imageAspect = IMAGE_W.toFloat() / IMAGE_H
+        val zoom = s.depth.coerceIn(StereoSettings.DEPTH_MIN, StereoSettings.DEPTH_MAX)
+        val (sx, sy) = when (s.scaleMode) {
+            ScaleMode.STRETCH -> 1f to 1f
+            ScaleMode.FILL -> if (imageAspect > eyeAspect) imageAspect / eyeAspect to 1f else 1f to eyeAspect / imageAspect
+            ScaleMode.FIT, ScaleMode.REAL -> if (imageAspect > eyeAspect) 1f to eyeAspect / imageAspect else imageAspect / eyeAspect to 1f
+        }
+        viewDescription = "glasses cameras ${IMAGE_W}×$IMAGE_H, ${s.scaleMode.label}, ${if (halfSbs) "half SBS" else "full SBS"}"
+        for (viewport in 0..1) {
+            val slot = if (s.swapEyes) 1 - viewport else viewport
+            GLES20.glViewport(viewport * eyeWidth, 0, eyeWidth, height)
+            gray.draw(slot, sx * zoom, sy * zoom)
+        }
     }
 
     /** Stores each fresh camera frame into its recording output, raw or rectified. */
@@ -422,6 +484,8 @@ class StereoRenderer(
         const val ALIGN_MAX_SHIFT = 30
         const val ALIGN_SAMPLES = 9
         const val ALIGN_MAX_ATTEMPTS = 40
+        const val IMAGE_W = 480 // upright glasses camera images
+        const val IMAGE_H = 640
         /** Maps output (u, v, 1) to (u, 1 − v, 1): renders upside down, for glReadPixels. */
         val FLIP_Y = doubleArrayOf(1.0, 0.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0, 1.0)
     }

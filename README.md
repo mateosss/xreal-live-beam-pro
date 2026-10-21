@@ -127,6 +127,7 @@ lens calibration and output. Two profiles are built in:
 | Profile | For |
 |---|---|
 | **Passthrough** | Live 3D viewing: 1:1 scale, medium stabilization, autofocus, up to 1080p |
+| **Glasses EuRoC dataset** | SLAM recordings from the Air 2 Ultra's own tracking cameras and IMU (see below) |
 | **EuRoC dataset** | SLAM recordings: raw images, focus locked at infinity, no stabilization, ≤720p at 30 fps, 60 Mbit/s H.264, IMU through the direct channel (fastest listener where unsupported) with calibrated and raw accelerometer/gyroscope, raw magnetometer and game rotation vector |
 
 To edit a profile, switch to it and change settings: the panel shows *Name •* while they
@@ -218,6 +219,36 @@ resolution drops automatically to the largest size both cameras can deliver at t
 Rates beyond auto exposure's ranges need manual exposure, which sets the frame duration
 directly. The HUD shows the exposure time, ISO and frame duration the sensor actually used.
 
+## Glasses cameras (Air 2 Ultra)
+
+*Settings → Camera source* switches between the Beam Pro's rear cameras and the **Air 2
+Ultra's two grayscale tracking cameras**, streamed directly over USB; only one source runs at a
+time, and the source is part of each profile. With the glasses as source:
+
+- **Live preview** of both cameras, side by side (left camera in the left eye; *L/R* swaps,
+  the scale button fits, fills or stretches, *Depth* zooms).
+- **Recording** writes `cam0` (left) and `cam1` (right) as lossless 480×640 grayscale PNGs at
+  30 fps per camera, named by the glasses' own timestamps, with each frame's sequence number
+  and its arrival time on the Beam Pro clock, plus the Beam Pro's IMU streams.
+- **Glasses IMU** (*Settings → Glasses IMU*, on in the *Glasses EuRoC dataset* profile): the
+  glasses' IMU is taken over too and recorded in `imu/glasses_imu.csv` (same clock as the
+  cameras), and its factory calibration JSON is saved with the recording.
+- `metadata.json` estimates the offset between the glasses' clock and the Beam Pro's, and
+  includes Monado's reference Basalt calibration (KB4) as a starting point;
+  `tools/to_euroc.py` turns the recording into EuRoC with glasses IMU as `imu0`.
+
+The glasses stream "YUY2 640×241" UVC frames that really carry one 640×480 image of the left
+or right camera, cut into 128 shuffled 2400-byte chunks, plus a metadata row with timestamp,
+sequence number and camera side. Descrambling, the metadata layout, the IMU protocol and the
+reference calibration come from [Monado's xreal_air driver](https://gitlab.freedesktop.org/mateosss/monado/-/tree/mateosss/xreal/src/xrt/drivers/xreal_air)
+(BSL-1.0; camera support by Luka Panio, packet parsing by Tobias Frisch).
+
+**Taking over.** On the Beam Pro the system holds the glasses' interfaces, so the app claims
+the camera interfaces (and, for the IMU, the sensor HID interface) with force after asking
+once per session. They stay detached from the system until the glasses are unplugged and
+replugged: XREAL features using the glasses' cameras, and with the IMU its head tracking,
+stop working meanwhile. The display is unaffected.
+
 ## Glasses USB probe
 
 *Settings → Glasses USB probe* checks whether the app can talk to the glasses directly over
@@ -257,6 +288,9 @@ that aren't crashes, **Info** shares the camera setup together with the app's re
   (presentation mode) or on a hideable panel. This is why the app requests only the `CAMERA`
   permission.
 - Stretch goals from the spec are not built: automatic convergence and L/R color matching.
+- The glasses-camera source is built from Monado's driver and a captured frame, but streaming
+  and the IMU handshake have not yet been run on the device; the HUD shows frame, pair and
+  IMU rates for checking.
 - Recording was tested on the emulator (one camera). On the Beam Pro, check `metadata.json`
   first: the camera timestamp source, whether the direct IMU channel was used, and dropped
   frames (`stats`).
@@ -264,3 +298,5 @@ that aren't crashes, **Info** shares the camera setup together with the app's re
 ## License
 
 MIT, see [LICENSE](LICENSE), except for `docs/xreal_beampro_stereo_passthrough_spec.md`.
+Parts of the glasses support derive from Monado's xreal_air driver under the Boost Software
+License 1.0, see [docs/licenses/monado-xreal_air-BSL-1.0.txt](docs/licenses/monado-xreal_air-BSL-1.0.txt).

@@ -99,44 +99,13 @@ object Uvc {
         formats: List<Format>,
         dir: File,
     ): String = buildString {
-        val index = streaming.id
-        val probe = ByteArray(48)
-        val length = connection.controlTransfer(GET_REQUEST, GET_CUR, VS_PROBE_CONTROL shl 8, index, probe, probe.size, 1000)
-        if (length < 26) {
-            appendLine("GET_CUR probe failed ($length)")
-            return@buildString
-        }
-        appendLine("probe control: $length bytes (UVC ${if (length >= 34) "1.1+" else "1.0"})")
-        val format = formats.firstOrNull { it.interfaceNumber == index } ?: formats.firstOrNull()
-        val frame = format?.frames?.firstOrNull()
-        val request = probe.copyOf(length)
-        if (format != null && frame != null) {
-            request[2] = format.index.toByte()
-            request[3] = frame.index.toByte()
-            request.putU32(4, frame.defaultInterval)
-        }
-        if (connection.controlTransfer(SET_REQUEST, SET_CUR, VS_PROBE_CONTROL shl 8, index, request, length, 1000) < 0) {
-            appendLine("SET_CUR probe failed")
-            return@buildString
-        }
-        val negotiated = ByteArray(length)
-        connection.controlTransfer(GET_REQUEST, GET_CUR, VS_PROBE_CONTROL shl 8, index, negotiated, length, 1000)
-        val formatIndex = negotiated[2].u8()
-        val frameIndex = negotiated[3].u8()
-        val chosen = formats.firstOrNull { it.interfaceNumber == index && it.index == formatIndex }
-        val size = chosen?.frames?.firstOrNull { it.index == frameIndex }
-        val frameBytes = negotiated.u32(18)
-        val payload = negotiated.u32(22).coerceIn(512, 4 * 1024 * 1024)
-        appendLine(
-            "negotiated: format $formatIndex frame $frameIndex (${size?.let { "${it.width}×${it.height}" } ?: "?"}), " +
-                "%.1f fps, frame %d bytes, payload %d bytes".format(
-                    negotiated.u32(4).takeIf { it > 0 }?.let { 1e7 / it } ?: 0.0, frameBytes, payload,
-                ),
-        )
-        if (connection.controlTransfer(SET_REQUEST, SET_CUR, VS_COMMIT_CONTROL shl 8, index, negotiated, length, 1000) < 0) {
-            appendLine("SET_CUR commit failed")
-            return@buildString
-        }
+        val n = negotiate(connection, streaming, formats)
+        appendLine(n.log)
+        if (!n.ok) return@buildString
+        val size = n.frame
+        val chosen = n.format
+        val frameBytes = n.frameBytes
+        val payload = n.payloadBytes
 
         dir.mkdirs()
         val base = "glasses_stream_${size?.width ?: 0}x${size?.height ?: 0}_${chosen?.fourcc ?: "unknown"}"
@@ -168,6 +137,58 @@ object Uvc {
                 appendLine("saved $pgm")
             }
         }
+    }
+
+    /** Result of [negotiate]: the stream parameters the camera committed to. */
+    class Negotiation(
+        val ok: Boolean,
+        val format: Format?,
+        val frame: Frame?,
+        val frameBytes: Int,
+        val payloadBytes: Int,
+        val fps: Double,
+        val log: String,
+    )
+
+    /**
+     * Probe/commit exchange on [streaming] for the first format and frame size: reads the
+     * camera's defaults, requests that mode, reads back what it settled on and commits it.
+     * For a bulk endpoint the stream starts with the commit.
+     */
+    fun negotiate(connection: UsbDeviceConnection, streaming: UsbInterface, formats: List<Format>): Negotiation {
+        val log = StringBuilder()
+        fun fail(message: String) = Negotiation(false, null, null, 0, 0, 0.0, log.append(message).toString())
+        val index = streaming.id
+        val probe = ByteArray(48)
+        val length = connection.controlTransfer(GET_REQUEST, GET_CUR, VS_PROBE_CONTROL shl 8, index, probe, probe.size, 1000)
+        if (length < 26) return fail("GET_CUR probe failed ($length)")
+        log.appendLine("probe control: $length bytes (UVC ${if (length >= 34) "1.1+" else "1.0"})")
+        val format = formats.firstOrNull { it.interfaceNumber == index } ?: formats.firstOrNull()
+        val frame = format?.frames?.firstOrNull()
+        val request = probe.copyOf(length)
+        if (format != null && frame != null) {
+            request[2] = format.index.toByte()
+            request[3] = frame.index.toByte()
+            request.putU32(4, frame.defaultInterval)
+        }
+        if (connection.controlTransfer(SET_REQUEST, SET_CUR, VS_PROBE_CONTROL shl 8, index, request, length, 1000) < 0) {
+            return fail("SET_CUR probe failed")
+        }
+        val negotiated = ByteArray(length)
+        connection.controlTransfer(GET_REQUEST, GET_CUR, VS_PROBE_CONTROL shl 8, index, negotiated, length, 1000)
+        val chosen = formats.firstOrNull { it.interfaceNumber == index && it.index == negotiated[2].u8() }
+        val size = chosen?.frames?.firstOrNull { it.index == negotiated[3].u8() }
+        val frameBytes = negotiated.u32(18)
+        val payload = negotiated.u32(22).coerceIn(512, 4 * 1024 * 1024)
+        val fps = negotiated.u32(4).takeIf { it > 0 }?.let { 1e7 / it } ?: 0.0
+        log.append(
+            "negotiated: format ${negotiated[2].u8()} frame ${negotiated[3].u8()} (${size?.let { "${it.width}×${it.height}" } ?: "?"}), " +
+                "%.1f fps, frame %d bytes, payload %d bytes".format(fps, frameBytes, payload),
+        )
+        if (connection.controlTransfer(SET_REQUEST, SET_CUR, VS_COMMIT_CONTROL shl 8, index, negotiated, length, 1000) < 0) {
+            return fail("\nSET_CUR commit failed")
+        }
+        return Negotiation(true, chosen, size, frameBytes, payload, fps, log.toString())
     }
 
     /** What a raw capture contained. */

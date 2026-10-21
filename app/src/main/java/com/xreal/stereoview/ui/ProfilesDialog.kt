@@ -44,7 +44,8 @@ class ProfilesDialog(
             .setNeutralButton("Restore built-ins") { _, _ ->
                 Dialogs.confirm(
                     context,
-                    "Reset “${Profile.PASSTHROUGH}” and “${Profile.EUROC}” to their original settings? Your own profiles are kept.",
+                    "Reset the built-in profiles (" + Profile.defaults.joinToString { "“${it.name}”" } +
+                        ") to their original settings? Your own profiles are kept.",
                     "Restore",
                 ) { viewModel.restoreDefaultProfiles() }
             }
@@ -121,8 +122,9 @@ class ProfilesDialog(
         }
         val activeEdited = state.activeProfile?.takeIf { it.differsFrom(current) }
         val apply = {
-            viewModel.selectProfile(profile.name)
+            // Status first: switching may start a camera source that reports its own status.
             setStatus("Profile: ${profile.name}")
+            viewModel.selectProfile(profile.name)
         }
         if (activeEdited != null) {
             val verb = if (profile.name == state.active) "Revert to" else "Switch to"

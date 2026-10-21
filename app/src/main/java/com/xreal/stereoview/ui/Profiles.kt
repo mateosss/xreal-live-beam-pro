@@ -15,6 +15,13 @@ data class Profile(val name: String, val settings: StereoSettings) {
     /** One line describing the profile, for lists. */
     val summary: String
         get() = with(settings) {
+            if (cameraSource == CameraSource.GLASSES) {
+                return@with listOf(
+                    "glasses cameras 30 fps per eye",
+                    if (glassesImu) "glasses IMU taken over" else "glasses IMU left to the system",
+                    "IMU ${imuRate.label.substringBefore(" (").replaceFirstChar { it.lowercase() }}",
+                ).joinToString(" · ")
+            }
             listOf(
                 if (manualExposure) "manual exposure 1/${(1e9 / exposureTimeNs).toInt()} s ISO $iso" else "auto exposure",
                 "$targetFps fps ≤${maxResolution}p",
@@ -50,11 +57,24 @@ data class Profile(val name: String, val settings: StereoSettings) {
                             ).joinToString(","),
                         ),
                     ),
+                    Profile(
+                        GLASSES_EUROC,
+                        base.copy(
+                            cameraSource = CameraSource.GLASSES,
+                            glassesImu = true,
+                            scaleMode = ScaleMode.FIT,
+                            stabilization = Stabilization.OFF,
+                            imuRate = ImuRate.DIRECT_VERY_FAST,
+                            imuStreams = listOf("ACCELEROMETER", "GYROSCOPE", "ACCELEROMETER_UNCALIBRATED", "GYROSCOPE_UNCALIBRATED")
+                                .joinToString(","),
+                        ),
+                    ),
                 )
             }
 
         const val PASSTHROUGH = "Passthrough"
         const val EUROC = "EuRoC dataset"
+        const val GLASSES_EUROC = "Glasses EuRoC dataset"
 
         fun toJson(profiles: List<Profile>): String = JSONArray(profiles.map { p ->
             JSONObject().put("name", p.name).put("settings", JSONObject().apply {
@@ -76,6 +96,8 @@ data class Profile(val name: String, val settings: StereoSettings) {
                 put("recordBitrateMbps", s.recordBitrateMbps)
                 put("imuRate", s.imuRate.name)
                 put("imuStreams", s.imuStreams)
+                put("cameraSource", s.cameraSource.name)
+                put("glassesImu", s.glassesImu)
             })
         }).toString()
 
@@ -106,6 +128,8 @@ data class Profile(val name: String, val settings: StereoSettings) {
                         recordBitrateMbps = j.optInt("recordBitrateMbps", d.recordBitrateMbps),
                         imuRate = enumOr(j.optString("imuRate"), d.imuRate),
                         imuStreams = j.optString("imuStreams", d.imuStreams),
+                        cameraSource = enumOr(j.optString("cameraSource"), d.cameraSource),
+                        glassesImu = j.optBoolean("glassesImu", d.glassesImu),
                     ),
                 )
             }
@@ -135,4 +159,6 @@ fun StereoSettings.withProfile(profile: StereoSettings) = copy(
     recordBitrateMbps = profile.recordBitrateMbps,
     imuRate = profile.imuRate,
     imuStreams = profile.imuStreams,
+    cameraSource = profile.cameraSource,
+    glassesImu = profile.glassesImu,
 )
