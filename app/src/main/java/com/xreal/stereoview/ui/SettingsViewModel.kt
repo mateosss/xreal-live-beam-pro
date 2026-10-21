@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.AndroidViewModel
@@ -51,16 +52,16 @@ enum class OutputMode(val label: String) {
 
 data class StereoSettings(
     /** Horizontal image shift per eye in render pixels, ±[CONVERGENCE_RANGE]. */
-    val convergencePx: Float = 0f,
+    val convergencePx: Float = -50f,
     /** Magnification about each eye's center, 1..2. Scales disparity along with the image. */
     val depth: Float = 1f,
-    val swapEyes: Boolean = false,
+    val swapEyes: Boolean = true,
     /** Exposure compensation in camera steps (see CONTROL_AE_COMPENSATION_RANGE). */
     val exposure: Int = 0,
     val scaleMode: ScaleMode = ScaleMode.REAL,
     val showHud: Boolean = false,
     /** Image rotation in degrees, or -1 to derive it from sensor and display orientation. */
-    val rotationOverride: Int = -1,
+    val rotationOverride: Int = 270,
     /** How long to wait for the partner eye's frame before drawing anyway. */
     val syncThresholdMs: Int = 33,
     /** Maximum stream height; the largest shared size up to this is used. */
@@ -78,6 +79,12 @@ data class StereoSettings(
     val alignPitchDeg: Float = 0f,
     /** Rotational alignment correction between the eyes, degrees. */
     val alignRollDeg: Float = 0f,
+    /** Requested camera frame rate; stream sizes that can't sustain it are skipped. */
+    val targetFps: Int = 30,
+    /** Fixed exposure time and ISO instead of auto exposure. */
+    val manualExposure: Boolean = false,
+    val exposureTimeNs: Long = 4_000_000L,
+    val iso: Int = 400,
 ) {
     companion object {
         const val CONVERGENCE_RANGE = 200f
@@ -108,6 +115,10 @@ class SettingsRepository(private val context: Context) {
         val FACTORY_CALIBRATION = booleanPreferencesKey("use_factory_calibration")
         val ALIGN_PITCH = floatPreferencesKey("align_pitch_deg")
         val ALIGN_ROLL = floatPreferencesKey("align_roll_deg")
+        val TARGET_FPS = intPreferencesKey("target_fps")
+        val MANUAL_EXPOSURE = booleanPreferencesKey("manual_exposure")
+        val EXPOSURE_TIME = longPreferencesKey("exposure_time_ns")
+        val ISO = intPreferencesKey("iso")
     }
 
     val settings = context.dataStore.data.map { p ->
@@ -130,6 +141,10 @@ class SettingsRepository(private val context: Context) {
             useFactoryCalibration = p[Keys.FACTORY_CALIBRATION] ?: defaults.useFactoryCalibration,
             alignPitchDeg = p[Keys.ALIGN_PITCH] ?: defaults.alignPitchDeg,
             alignRollDeg = p[Keys.ALIGN_ROLL] ?: defaults.alignRollDeg,
+            targetFps = p[Keys.TARGET_FPS] ?: defaults.targetFps,
+            manualExposure = p[Keys.MANUAL_EXPOSURE] ?: defaults.manualExposure,
+            exposureTimeNs = p[Keys.EXPOSURE_TIME] ?: defaults.exposureTimeNs,
+            iso = p[Keys.ISO] ?: defaults.iso,
         )
     }
 
@@ -152,6 +167,10 @@ class SettingsRepository(private val context: Context) {
             p[Keys.FACTORY_CALIBRATION] = s.useFactoryCalibration
             p[Keys.ALIGN_PITCH] = s.alignPitchDeg
             p[Keys.ALIGN_ROLL] = s.alignRollDeg
+            p[Keys.TARGET_FPS] = s.targetFps
+            p[Keys.MANUAL_EXPOSURE] = s.manualExposure
+            p[Keys.EXPOSURE_TIME] = s.exposureTimeNs
+            p[Keys.ISO] = s.iso
         }
     }
 

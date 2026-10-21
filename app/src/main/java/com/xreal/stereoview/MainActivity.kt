@@ -207,14 +207,16 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     private fun startCamera() {
         val (left, right) = surfaces ?: return
         val settings = viewModel.settings.value
-        val rig = CameraUtils.selectRig(cameraManager, displayRotation(), settings.maxResolution, settings.cameraPair)
+        val rig = CameraUtils.selectRig(
+            cameraManager, displayRotation(), settings.maxResolution, settings.cameraPair, settings.targetFps,
+        )
         if (rig == null) {
             onCameraError("No rear camera found")
             return
         }
         this.rig = rig
-        controls.setExposureRange(rig.exposureRange)
-        camera.start(rig, left, right, settings.exposure)
+        controls.setRig(rig)
+        camera.start(rig, left, right, exposureOf(settings))
     }
 
     override fun onCameraStatus(message: String) {
@@ -227,7 +229,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             Log.i(TAG, "Streaming ${rig.description} at $size")
             this.rig = rig
             streamSize = size
-            controls.setExposureRange(rig.exposureRange)
+            controls.setRig(rig)
             renderer?.cameras = cameraModels(rig, size)
             updateStatus()
         }
@@ -309,11 +311,25 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
 
         if (s.outputMode != previous.outputMode) {
             rebuildOutput()
-        } else if ((s.maxResolution != previous.maxResolution || s.cameraPair != previous.cameraPair) && playing) {
+        } else if ((s.maxResolution != previous.maxResolution || s.cameraPair != previous.cameraPair ||
+                s.targetFps != previous.targetFps) && playing
+        ) {
             startCamera()
-        } else if (s.exposure != previous.exposure) {
-            camera.setExposure(s.exposure)
+        } else if (exposureOf(s) != exposureOf(previous)) {
+            camera.setExposure(exposureOf(s))
         }
+    }
+
+    private fun exposureOf(s: StereoSettings) =
+        CameraController.Exposure(s.exposure, s.manualExposure, s.exposureTimeNs, s.iso)
+
+    private var captureStats = ""
+
+    override fun onCaptureStats(exposureTimeNs: Long, iso: Int, frameDurationNs: Long) {
+        val text = "sensor: exposure 1/%d s, ISO %d, frame %.1f ms".format(
+            if (exposureTimeNs > 0) (1e9 / exposureTimeNs).toInt() else 0, iso, frameDurationNs / 1e6,
+        )
+        runOnUiThread { captureStats = text }
     }
 
     override fun onRenderStats(stats: StereoRenderer.RenderStats) {
@@ -322,7 +338,12 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         binding.hudText.text = buildString {
             appendLine("L %.1f fps  R %.1f fps  draw %.1f fps (%.2f ms)".format(stats.leftFps, stats.rightFps, stats.drawFps, stats.drawMs))
             appendLine("L/R Δ mean %.2f ms  max %.2f ms  over threshold %d/%d".format(sync.meanDeltaMs, sync.maxDeltaMs, sync.unsyncedPairs, sync.pairs))
-            appendLine("stream ${streamSize ?: "-"}  output ${stats.outputSize.width}×${stats.outputSize.height}")
+            appendLine(
+                "stream ${streamSize ?: "-"} (max %.0f fps)  output %d×%d".format(
+                    streamSize?.let { rig?.maxFps?.get(it) } ?: 0.0, stats.outputSize.width, stats.outputSize.height,
+                )
+            )
+            appendLine(captureStats)
             append(stats.view)
         }
     }

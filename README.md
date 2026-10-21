@@ -93,12 +93,19 @@ how many frame pairs exceeded the threshold.
 | Auto-align | Measures and corrects vertical offset and roll between the eyes; point at a detailed scene and hold still |
 | Convergence | ±200 px horizontal shift per eye, in opposite directions |
 | Depth | Zooms each eye 1–2× about its center, which also scales disparity. Pinch on the touchscreen does the same |
+| Exp: auto / manual | Auto exposure with a Brightness (EV) slider, or manual Shutter (down to 1/20000 s) and ISO sliders. Short shutter times cut motion blur at the cost of a darker, noisier image |
 | Brightness | Exposure compensation, using the camera's own range |
 | HUD | Frame-rate and sync statistics |
 | Info | Report of every camera (including hidden ones), the displays, camera system properties and the app log, with Share/Copy |
-| More | Camera pair, output mode, image rotation override, max resolution, sync wait, stabilization, glasses field of view, SBS layout, lens calibration source, manual alignment, reset adjustments |
+| More | Camera pair, frame rate, output mode, image rotation override, max resolution, sync wait, stabilization, glasses field of view, SBS layout, lens calibration source, manual alignment, reset adjustments |
 
-All settings persist through DataStore.
+All settings persist through DataStore. The defaults (Swap L/R on, image rotation 270°,
+convergence −50 px) are the ones that work on the Beam Pro.
+
+**Frame rate.** *More → Frame rate* lists the rates the camera supports. The stream
+resolution drops automatically to the largest size both cameras can deliver at that rate.
+Rates beyond auto exposure's ranges need manual exposure, which sets the frame duration
+directly. The HUD shows the exposure time, ISO and frame duration the sensor actually used.
 
 ## Debugging without adb
 

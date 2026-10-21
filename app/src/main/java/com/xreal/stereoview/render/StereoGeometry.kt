@@ -5,6 +5,7 @@ import com.xreal.stereoview.camera.CameraModel
 import com.xreal.stereoview.ui.ScaleMode
 import com.xreal.stereoview.util.Mat3
 import kotlin.math.abs
+import kotlin.math.acos
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
@@ -25,7 +26,21 @@ class StereoGeometry(
     displayRotation: Int,
     rotationOverride: Int,
 ) {
-    private val deviceToCamera = cameras.map { if (useFactoryCalibration) it.deviceToCamera else it.nominalDeviceToCamera }
+    /**
+     * Device → camera rotations. A rotation override states how the image sits on screen, which
+     * pins down how the camera is mounted relative to the device (and so the gyro) as well.
+     */
+    private val orientations = cameras.map { camera ->
+        val displayDegrees = when (displayRotation) {
+            Surface.ROTATION_90 -> 90
+            Surface.ROTATION_180 -> 180
+            Surface.ROTATION_270 -> 270
+            else -> 0
+        }
+        val sensorOrientation = if (rotationOverride >= 0) (rotationOverride + displayDegrees) % 360 else camera.sensorOrientation
+        camera.deviceToCamera(sensorOrientation, useFactoryCalibration)
+    }
+    private val deviceToCamera = orientations.map { it.first }
 
     /** Rectified frame ← left camera frame. */
     private val rectFromLeft: DoubleArray
@@ -47,28 +62,23 @@ class StereoGeometry(
         val leftFromRight = Mat3.mul(left, Mat3.transpose(right))
 
         // Screen right expressed in the left camera's frame.
-        val screenRight = if (rotationOverride >= 0) {
-            when (rotationOverride) {
-                90 -> doubleArrayOf(0.0, -1.0, 0.0)
-                180 -> doubleArrayOf(-1.0, 0.0, 0.0)
-                270 -> doubleArrayOf(0.0, 1.0, 0.0)
-                else -> doubleArrayOf(1.0, 0.0, 0.0)
-            }
-        } else {
-            Mat3.mulVec(left, screenRightInDevice(displayRotation))
-        }
+        val screenRight = Mat3.mulVec(left, screenRightInDevice(displayRotation))
 
-        // Baseline direction from the factory lens positions, if they are usable.
+        // Baseline direction from the factory lens positions, if usable. It only refines the
+        // horizontal axis; when it disagrees with the screen horizontal, the positions are wrong.
         val pl = cameras[0].position
         val pr = cameras[1].position
-        var baselineMm: Double? = null
+        var baselineNote = ", baseline direction assumed horizontal"
         var baseline: DoubleArray? = null
         if (useFactoryCalibration && pl != null && pr != null && cameras[0] !== cameras[1]) {
             val b = Mat3.mulVec(left, doubleArrayOf(pr[0] - pl[0], pr[1] - pl[1], pr[2] - pl[2]))
             val mm = Mat3.norm(b) * 1000
-            if (mm in 10.0..250.0) {
-                baselineMm = mm
+            val angle = Math.toDegrees(acos(abs(Mat3.dot(Mat3.normalize(b), screenRight)).coerceAtMost(1.0)))
+            if (mm in 10.0..250.0 && angle < 30) {
                 baseline = Mat3.normalize(b)
+                baselineNote = ", baseline %.1f mm from lens poses (%.1f° from horizontal)".format(mm, angle)
+            } else {
+                baselineNote = ", lens poses ignored (%.1f mm, %.0f° from horizontal)".format(mm, angle)
             }
         }
 
@@ -93,15 +103,9 @@ class StereoGeometry(
         imageXIsHorizontal = abs(e1[0]) >= abs(e1[1])
 
         summary = buildString {
-            append(if (useFactoryCalibration) "factory calibration" else "sensor orientation only")
-            append(", relative rotation %.2f°".format(Mat3.angleDegrees(leftFromRight)))
-            append(
-                when {
-                    cameras[0] === cameras[1] -> ", single camera"
-                    baselineMm != null -> ", baseline %.1f mm from lens poses".format(baselineMm)
-                    else -> ", baseline direction assumed horizontal"
-                }
-            )
+            append("L: ${orientations[0].second}; R: ${orientations[1].second}")
+            append("; relative rotation %.2f°".format(Mat3.angleDegrees(leftFromRight)))
+            append(if (cameras[0] === cameras[1]) ", single camera" else baselineNote)
         }
     }
 

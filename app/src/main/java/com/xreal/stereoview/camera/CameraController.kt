@@ -8,10 +8,13 @@ import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.CaptureResult
+import android.hardware.camera2.TotalCaptureResult
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.util.Log
 import android.util.Size
 import android.view.Surface
@@ -30,7 +33,18 @@ class CameraController(context: Context, private val listener: Listener) {
         fun onCameraStatus(message: String)
         fun onCameraStreaming(rig: StereoRig, size: Size)
         fun onCameraError(message: String)
+
+        /** What the sensor actually used for a recent frame; called about twice a second. */
+        fun onCaptureStats(exposureTimeNs: Long, iso: Int, frameDurationNs: Long) = Unit
     }
+
+    /** Auto exposure with [compensation] steps, or a fixed [exposureTimeNs] and [iso]. */
+    data class Exposure(
+        val compensation: Int = 0,
+        val manual: Boolean = false,
+        val exposureTimeNs: Long = 4_000_000,
+        val iso: Int = 400,
+    )
 
     private val manager = context.getSystemService(CameraManager::class.java)
     private val thread = HandlerThread("StereoCamera").apply { start() }
@@ -42,13 +56,14 @@ class CameraController(context: Context, private val listener: Listener) {
     private var textures: Pair<SurfaceTexture, SurfaceTexture>? = null
     private var surfaces: List<Surface> = emptyList()
     private var sizeIndex = 0
-    private var exposure = 0
+    private var exposure = Exposure()
+    private var lastStatsMs = 0L
     /** Bumped whenever cameras are closed or reconfigured; stale callbacks compare against it. */
     private var generation = 0
     private val devices = LinkedHashMap<String, CameraDevice>()
     private val sessions = HashMap<String, CameraCaptureSession>()
 
-    fun start(rig: StereoRig, left: SurfaceTexture, right: SurfaceTexture, exposure: Int) {
+    fun start(rig: StereoRig, left: SurfaceTexture, right: SurfaceTexture, exposure: Exposure) {
         handler.post {
             closeCameras()
             releaseSurfaces()
@@ -70,7 +85,7 @@ class CameraController(context: Context, private val listener: Listener) {
         handler.post { if (devices.isEmpty() && rig != null && surfaces.isNotEmpty()) open() }
     }
 
-    fun setExposure(value: Int) {
+    fun setExposure(value: Exposure) {
         handler.post {
             exposure = value
             sessions.keys.forEach(::applyRepeating)
@@ -239,8 +254,18 @@ class CameraController(context: Context, private val listener: Listener) {
             val request = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                 rig.targetsFor(deviceId).forEach { (eye, _) -> addTarget(surfaces[eye]) }
                 set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-                rig.fpsRange?.let { set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
-                set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, exposure.coerceIn(rig.exposureRange.lower, rig.exposureRange.upper))
+                if (exposure.manual && rig.manualSensor) {
+                    // AE off: the frame duration sets the frame rate, so it can exceed the AE ranges.
+                    val frameNs = 1_000_000_000L / rig.targetFps
+                    val time = rig.exposureTimeRange?.let { exposure.exposureTimeNs.coerceIn(it.lower, it.upper) } ?: exposure.exposureTimeNs
+                    set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+                    set(CaptureRequest.SENSOR_FRAME_DURATION, frameNs)
+                    set(CaptureRequest.SENSOR_EXPOSURE_TIME, time.coerceAtMost(frameNs))
+                    set(CaptureRequest.SENSOR_SENSITIVITY, rig.sensitivityRange?.let { exposure.iso.coerceIn(it.lower, it.upper) } ?: exposure.iso)
+                } else {
+                    rig.fpsRange?.let { set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
+                    set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, exposure.compensation.coerceIn(rig.exposureRange.lower, rig.exposureRange.upper))
+                }
                 // Per-camera stabilization and HAL undistortion would move each eye's image
                 // independently; the renderer stabilizes and undistorts both eyes consistently.
                 set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
@@ -251,13 +276,28 @@ class CameraController(context: Context, private val listener: Listener) {
                     set(CaptureRequest.DISTORTION_CORRECTION_MODE, CaptureRequest.DISTORTION_CORRECTION_MODE_OFF)
                 }
             }
-            session.setRepeatingRequest(request.build(), null, handler)
+            // Only the first device reports stats; with two devices both run the same settings.
+            val callback = if (deviceId == rig.deviceIds.first()) statsCallback else null
+            session.setRepeatingRequest(request.build(), callback, handler)
         } catch (e: Exception) {
             when (e) {
                 is CameraAccessException, is IllegalStateException, is IllegalArgumentException ->
                     Log.w(TAG, "setRepeatingRequest failed for $deviceId", e)
                 else -> throw e
             }
+        }
+    }
+
+    private val statsCallback = object : CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastStatsMs < 500) return
+            lastStatsMs = now
+            listener.onCaptureStats(
+                result.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: 0L,
+                result.get(CaptureResult.SENSOR_SENSITIVITY) ?: 0,
+                result.get(CaptureResult.SENSOR_FRAME_DURATION) ?: 0L,
+            )
         }
     }
 

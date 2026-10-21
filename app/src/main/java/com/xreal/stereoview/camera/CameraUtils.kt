@@ -34,7 +34,20 @@ data class StereoRig(
     val sizes: List<Size>,
     val sensorOrientation: Int,
     val exposureRange: Range<Int>,
+    /** AE target range for [targetFps], or null to leave AE free. */
     val fpsRange: Range<Int>?,
+    /** Requested frame rate; [sizes] only holds sizes both cameras can stream at this rate. */
+    val targetFps: Int,
+    /** Frame rates that can be requested: AE ranges, plus faster rates possible with manual exposure. */
+    val availableFps: List<Int>,
+    /** The subset of [availableFps] that auto exposure can run at. */
+    val autoExposureFps: List<Int>,
+    /** Fastest frame rate each of [sizes] supports on both cameras. */
+    val maxFps: Map<Size, Double>,
+    /** Manual exposure time and ISO are supported (MANUAL_SENSOR). */
+    val manualSensor: Boolean,
+    val exposureTimeRange: Range<Long>?,
+    val sensitivityRange: Range<Int>?,
     val baselineMm: Float?,
     val leftFocal: Float,
     val rightFocal: Float,
@@ -67,8 +80,18 @@ data class StereoRig(
 private class Candidate(val target: CameraTarget, val chars: CameraCharacteristics, val hidden: Boolean = false) {
     val focal: Float = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.minOrNull() ?: 0f
     val pose: FloatArray? = chars.get(CameraCharacteristics.LENS_POSE_TRANSLATION)
-    val sizes: Set<Size> = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-        ?.getOutputSizes(SurfaceTexture::class.java)?.toSet() ?: emptySet()
+    private val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+    val sizes: Set<Size> = map?.getOutputSizes(SurfaceTexture::class.java)?.toSet() ?: emptySet()
+
+    /** Fastest frame rate for a SurfaceTexture stream of [size]. */
+    fun maxFps(size: Size): Double {
+        val ns = try {
+            map?.getOutputMinFrameDuration(SurfaceTexture::class.java, size) ?: 0L
+        } catch (e: IllegalArgumentException) {
+            0L
+        }
+        return if (ns > 0) 1e9 / ns else 30.0
+    }
 }
 
 object CameraUtils {
@@ -80,7 +103,7 @@ object CameraUtils {
      * outweigh everything, then hardware-synced logical cameras, then advertised concurrency,
      * then the widest baseline. Cameras missing from the public list are tried last.
      */
-    fun stereoRigs(manager: CameraManager, displayRotation: Int, maxHeight: Int): List<StereoRig> {
+    fun stereoRigs(manager: CameraManager, displayRotation: Int, maxHeight: Int, targetFps: Int = 30): List<StereoRig> {
         val scored = mutableListOf<Pair<Float, StereoRig>>()
         val back = backCandidates(manager)
 
@@ -89,7 +112,7 @@ object CameraUtils {
                 characteristicsOrNull(manager, id)?.let { Candidate(CameraTarget(logical.target.deviceId, id), it) }
             }
             for ((a, b) in pairs(physicals)) {
-                buildRig(RigMode.LOGICAL, a, b, logical.chars, displayRotation, maxHeight)
+                buildRig(RigMode.LOGICAL, a, b, logical.chars, displayRotation, maxHeight, targetFps)
                     ?.let { scored += pairScore(a, b, bonus = 2000f) to it }
             }
         }
@@ -99,7 +122,7 @@ object CameraUtils {
             val ids = setOf(a.target.deviceId, b.target.deviceId)
             val concurrent = concurrentSets.any { it.containsAll(ids) }
             val hiddenPenalty = if (a.hidden || b.hidden) 500f else 0f
-            buildRig(if (concurrent) RigMode.CONCURRENT else RigMode.DUAL, a, b, a.chars, displayRotation, maxHeight)
+            buildRig(if (concurrent) RigMode.CONCURRENT else RigMode.DUAL, a, b, a.chars, displayRotation, maxHeight, targetFps)
                 ?.let { scored += pairScore(a, b, bonus = (if (concurrent) 1000f else 0f) - hiddenPenalty) to it }
         }
         return scored.sortedByDescending { it.first }.map { it.second }
@@ -109,13 +132,19 @@ object CameraUtils {
      * The rig to start with, followed by a chain of fallbacks: [preferredKey]'s rig if it
      * exists, the best other stereo rigs, then one camera feeding both eyes.
      */
-    fun selectRig(manager: CameraManager, displayRotation: Int, maxHeight: Int, preferredKey: String = ""): StereoRig? {
-        val stereo = stereoRigs(manager, displayRotation, maxHeight)
+    fun selectRig(
+        manager: CameraManager,
+        displayRotation: Int,
+        maxHeight: Int,
+        preferredKey: String = "",
+        targetFps: Int = 30,
+    ): StereoRig? {
+        val stereo = stereoRigs(manager, displayRotation, maxHeight, targetFps)
         val ordered = (stereo.filter { it.key == preferredKey } + stereo.filter { it.key != preferredKey })
             .take(MAX_STEREO_ATTEMPTS)
             .toMutableList()
         backCandidates(manager).firstOrNull { !it.hidden }?.let { primary ->
-            buildRig(RigMode.MONO, primary, primary, primary.chars, displayRotation, maxHeight)?.let(ordered::add)
+            buildRig(RigMode.MONO, primary, primary, primary.chars, displayRotation, maxHeight, targetFps)?.let(ordered::add)
         }
         // Link each rig to the next one as its fallback.
         return ordered.foldRight(null as StereoRig?) { rig, next -> rig.copy(fallback = next) }
@@ -172,9 +201,20 @@ object CameraUtils {
         deviceChars: CameraCharacteristics,
         displayRotation: Int,
         maxHeight: Int,
+        targetFps: Int,
     ): StereoRig? {
-        val sizes = pickSizes(commonSizes(a, b), maxHeight)
+        val common = commonSizes(a, b)
+        fun maxFps(size: Size) = minOf(a.maxFps(size), b.maxFps(size))
+        // Prefer sizes fast enough for the requested rate, trading resolution for frame rate.
+        val fastEnough = common.filter { maxFps(it) >= targetFps - 0.5 }.toSet()
+        val sizes = pickSizes(fastEnough.ifEmpty { common }, maxHeight)
         if (sizes.isEmpty()) return null
+
+        val capabilities = deviceChars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
+        val manualSensor = capabilities?.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR) == true
+        val aeRates = deviceChars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+            ?.map { it.upper }.orEmpty()
+        val manualRates = if (manualSensor) listOf(60, 90, 120).filter { rate -> common.any { maxFps(it) >= rate - 0.5 } } else emptyList()
 
         // Lens poses are in Android sensor coordinates (x right, y up in the natural
         // orientation). Map them to screen axes; seen from behind a rear camera, the lens
@@ -199,7 +239,14 @@ object CameraUtils {
             sizes = sizes,
             sensorOrientation = deviceChars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90,
             exposureRange = deviceChars.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE) ?: Range(0, 0),
-            fpsRange = pickFpsRange(deviceChars),
+            fpsRange = pickFpsRange(deviceChars, targetFps),
+            targetFps = targetFps,
+            availableFps = (aeRates + manualRates + 30).distinct().sorted(),
+            autoExposureFps = aeRates.distinct().sorted(),
+            maxFps = sizes.associateWith(::maxFps),
+            manualSensor = manualSensor,
+            exposureTimeRange = deviceChars.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE),
+            sensitivityRange = deviceChars.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE),
             baselineMm = if (mode == RigMode.MONO) null else baselineMm(a, b),
             leftFocal = left.focal,
             rightFocal = right.focal,
@@ -245,11 +292,15 @@ object CameraUtils {
         return sorted.take(4).ifEmpty { listOfNotNull(sizes.minByOrNull { it.width * it.height }) }
     }
 
-    /** Prefer a fixed 30 fps; otherwise the range capped at 30 with the highest floor. */
-    private fun pickFpsRange(chars: CameraCharacteristics): Range<Int>? {
+    /**
+     * A fixed [fps] range if available, else the range capped at [fps] with the highest floor,
+     * else the fastest range below [fps]. A fixed rate keeps AE from lengthening exposures.
+     */
+    private fun pickFpsRange(chars: CameraCharacteristics, fps: Int): Range<Int>? {
         val ranges = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) ?: return null
-        return ranges.firstOrNull { it.lower == 30 && it.upper == 30 }
-            ?: ranges.filter { it.upper == 30 }.maxByOrNull { it.lower }
+        return ranges.firstOrNull { it.lower == fps && it.upper == fps }
+            ?: ranges.filter { it.upper == fps }.maxByOrNull { it.lower }
+            ?: ranges.filter { it.upper < fps }.maxWithOrNull(compareBy<Range<Int>> { it.upper }.thenBy { it.lower })
     }
 
     /** Human-readable dump of every camera, for the Info dialog. */

@@ -44,6 +44,13 @@
             android:text="@string/align" />
 
         <Button
+            android:id="@+id/exposureModeButton"
+            style="?android:attr/buttonBarButtonStyle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1" />
+
+        <Button
             android:id="@+id/hudButton"
             style="?android:attr/buttonBarButtonStyle"
             android:layout_width="0dp"
@@ -111,6 +118,7 @@
     </LinearLayout>
 
     <LinearLayout
+        android:id="@+id/brightnessRow"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center_vertical"
@@ -127,6 +135,52 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:paddingVertical="10dp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/shutterRow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/shutterLabel"
+            android:layout_width="150dp"
+            android:layout_height="wrap_content"
+            android:textColor="#FFFFFF" />
+
+        <SeekBar
+            android:id="@+id/shutterSeek"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:max="1000"
+            android:paddingVertical="10dp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/isoRow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/isoLabel"
+            android:layout_width="150dp"
+            android:layout_height="wrap_content"
+            android:textColor="#FFFFFF" />
+
+        <SeekBar
+            android:id="@+id/isoSeek"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:max="1000"
             android:paddingVertical="10dp" />
     </LinearLayout>
 

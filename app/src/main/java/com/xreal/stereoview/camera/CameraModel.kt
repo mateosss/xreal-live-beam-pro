@@ -25,15 +25,34 @@ class CameraModel(
     val radial: DoubleArray,
     /** p1, p2 of LENS_DISTORTION. */
     val tangential: DoubleArray,
-    /** Rotation from device coordinates to camera coordinates (x right, y down, z forward). */
-    val deviceToCamera: DoubleArray,
-    /** The same rotation derived from SENSOR_ORIENTATION alone. */
-    val nominalDeviceToCamera: DoubleArray,
+    /** SENSOR_ORIENTATION as reported. */
+    val sensorOrientation: Int,
+    /** LENS_POSE_ROTATION as a device → camera rotation matrix, if reported. */
+    private val factoryRotation: DoubleArray?,
     /** Optical center in device coordinates, meters. */
     val position: DoubleArray?,
     val intrinsicsSource: String,
-    val poseSource: String,
 ) {
+    /**
+     * Rotation from device coordinates to camera coordinates (x right, y down, z forward),
+     * for a camera whose image must be turned clockwise by [sensorOrientation] degrees to be
+     * upright in the device's natural orientation. The factory rotation is used when
+     * [useFactory] and it agrees with that within [MAX_POSE_DEVIATION_DEG] (directly or
+     * inverted); the description says which was used.
+     */
+    fun deviceToCamera(sensorOrientation: Int, useFactory: Boolean): Pair<DoubleArray, String> {
+        val nominal = nominalDeviceToCamera(sensorOrientation)
+        val factory = factoryRotation
+        if (!useFactory) return nominal to "sensor orientation $sensorOrientation°"
+        if (factory == null) return nominal to "sensor orientation $sensorOrientation° (no factory rotation)"
+        for ((candidate, name) in listOf(factory to "factory", Mat3.transpose(factory) to "factory (inverted)")) {
+            val deviation = Mat3.angleDegrees(Mat3.mul(candidate, Mat3.transpose(nominal)))
+            if (deviation < MAX_POSE_DEVIATION_DEG) return candidate to "%s, %.1f° from %d°".format(name, deviation, sensorOrientation)
+        }
+        val deviation = Mat3.angleDegrees(Mat3.mul(factory, Mat3.transpose(nominal)))
+        return nominal to "sensor orientation $sensorOrientation° (factory rotation %.0f° off, ignored)".format(deviation)
+    }
+
     val hasDistortion: Boolean get() = (radial + tangential).any { it != 0.0 }
 
     /** Tangent of the half field of view that is fully inside the image, per image axis. */
@@ -57,7 +76,7 @@ class CameraModel(
             Math.toDegrees(2 * atan(0.5 / fx)), Math.toDegrees(2 * atan(0.5 / fy)),
         ))
         if (hasDistortion) append(", distortion k=%s p=%s".format(radial.fmt(), tangential.fmt()))
-        append(", pose: $poseSource")
+        append(", sensor orientation $sensorOrientation°, factory rotation ${if (factoryRotation != null) "yes" else "no"}")
         position?.let { append(", position %s mm".format(it.map { v -> v * 1000 }.toDoubleArray().fmt(1))) }
     }
 
@@ -116,8 +135,7 @@ class CameraModel(
             val radial = distortion?.let { doubleArrayOf(it[0].toDouble(), it[1].toDouble(), it[2].toDouble()) } ?: DoubleArray(3)
             val tangential = distortion?.let { doubleArrayOf(it[3].toDouble(), it[4].toDouble()) } ?: DoubleArray(2)
 
-            val nominal = nominalDeviceToCamera(chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90)
-            val (rotation, poseSource) = factoryRotation(chars, nominal)
+            val q = chars.get(CameraCharacteristics.LENS_POSE_ROTATION)?.takeIf { it.size >= 4 }
 
             return CameraModel(
                 label = label,
@@ -127,12 +145,11 @@ class CameraModel(
                 cy = (cyPx - offY) / cropH,
                 radial = radial,
                 tangential = tangential,
-                deviceToCamera = rotation,
-                nominalDeviceToCamera = nominal,
+                sensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90,
+                factoryRotation = q?.let { Mat3.fromQuaternion(it[0].toDouble(), it[1].toDouble(), it[2].toDouble(), it[3].toDouble()) },
                 position = chars.get(CameraCharacteristics.LENS_POSE_TRANSLATION)?.takeIf { it.size >= 3 }
                     ?.let { doubleArrayOf(it[0].toDouble(), it[1].toDouble(), it[2].toDouble()) },
                 intrinsicsSource = intrinsicsSource,
-                poseSource = poseSource,
             )
         }
 
@@ -146,19 +163,6 @@ class CameraModel(
             val y = doubleArrayOf(-sin(t), -cos(t), 0.0) // image down
             val z = doubleArrayOf(0.0, 0.0, -1.0)        // out of the back of the device
             return Mat3.fromRows(x, y, z)
-        }
-
-        /** LENS_POSE_ROTATION if it agrees with the sensor orientation (directly or inverted). */
-        private fun factoryRotation(chars: CameraCharacteristics, nominal: DoubleArray): Pair<DoubleArray, String> {
-            val q = chars.get(CameraCharacteristics.LENS_POSE_ROTATION)?.takeIf { it.size >= 4 }
-                ?: return nominal to "sensor orientation only (no LENS_POSE_ROTATION)"
-            val r = Mat3.fromQuaternion(q[0].toDouble(), q[1].toDouble(), q[2].toDouble(), q[3].toDouble())
-            for ((candidate, name) in listOf(r to "factory", Mat3.transpose(r) to "factory (inverted)")) {
-                val deviation = Mat3.angleDegrees(Mat3.mul(candidate, Mat3.transpose(nominal)))
-                if (deviation < MAX_POSE_DEVIATION_DEG) return candidate to "%s, %.1f° from nominal".format(name, deviation)
-            }
-            val deviation = Mat3.angleDegrees(Mat3.mul(r, Mat3.transpose(nominal)))
-            return nominal to "sensor orientation only (factory rotation is %.0f° off, ignored)".format(deviation)
         }
     }
 }
