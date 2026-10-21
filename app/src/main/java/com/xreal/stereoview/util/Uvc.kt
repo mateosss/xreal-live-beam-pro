@@ -138,53 +138,21 @@ object Uvc {
             return@buildString
         }
 
-        val buffer = ByteArray(payload)
-        val current = ByteArrayOutputStream()
-        val frames = mutableListOf<ByteArray>()
-        var lastFid = -1
-        var reads = 0
-        var errors = 0
-        val start = System.nanoTime()
-        val frameTimes = mutableListOf<Long>()
-        while (frames.size < 3 && System.nanoTime() - start < 3_000_000_000L) {
-            val n = connection.bulkTransfer(endpoint, buffer, buffer.size, 500)
-            reads++
-            if (n <= 0) {
-                errors++
-                continue
-            }
-            val header = buffer[0].u8()
-            if (header < 2 || header > n) {
-                current.write(buffer, 0, n) // no header: raw data
-                continue
-            }
-            val info = buffer[1].u8()
-            val fid = info and 0x01
-            if (lastFid >= 0 && fid != lastFid && current.size() > 0) {
-                frames += current.toByteArray().also { frameTimes += System.nanoTime() }
-                current.reset()
-            }
-            lastFid = fid
-            if (info and 0x40 != 0) errors++
-            current.write(buffer, header, n - header)
-            if (info and 0x02 != 0) {
-                frames += current.toByteArray().also { frameTimes += System.nanoTime() }
-                current.reset()
-            }
-        }
-        connection.setInterface(streaming) // alternate setting 0 stops the stream
-        appendLine("reads: $reads, errors/timeouts: $errors, frames: ${frames.size} in %.2f s".format((System.nanoTime() - start) / 1e9))
-        if (frameTimes.size >= 2) {
-            appendLine("frame period ≈ %.1f ms".format((frameTimes.last() - frameTimes.first()) / 1e6 / (frameTimes.size - 1)))
-        }
-        val picked = frames.getOrNull(1) ?: frames.firstOrNull() ?: return@buildString
         dir.mkdirs()
+        val base = "glasses_stream_${size?.width ?: 0}x${size?.height ?: 0}_${chosen?.fourcc ?: "unknown"}"
+        val rawFile = File(dir, "$base.raw")
+        val stats = streamToFile(connection, endpoint, payload, rawFile, File(dir, "$base.reads.csv"))
+        connection.setInterface(streaming) // alternate setting 0 stops the stream
+        append(stats.report(frameBytes))
+        appendLine("raw stream saved to $rawFile (+ .reads.csv with every read's size and first bytes)")
+
+        // Keep the largest assembled frame, and also show it as grayscale guesses.
+        val picked = stats.frames.maxByOrNull { it.size } ?: return@buildString
         val name = "glasses_frame_${size?.width ?: 0}x${size?.height ?: 0}_${chosen?.fourcc ?: "unknown"}"
         File(dir, "$name.bin").writeBytes(picked)
-        appendLine("frame: ${picked.size} bytes (expected $frameBytes), first bytes ${picked.take(16).joinToString(" ") { "%02x".format(it) }}")
-        appendLine("saved ${File(dir, "$name.bin")}")
-        // Also write the bytes as 8-bit grayscale images anyone can open. A "YUY2" stream may
-        // really be packed grayscale (e.g. tracking cameras), so try both plausible layouts.
+        appendLine("largest frame: ${picked.size} bytes (expected $frameBytes), saved ${File(dir, "$name.bin")}")
+        // A "YUY2" stream may really be packed grayscale (e.g. tracking cameras), so try both
+        // plausible layouts; only whole frames are written.
         if (size != null) {
             val layouts = when (picked.size) {
                 size.width * size.height -> listOf(size.width to size.height)
@@ -201,6 +169,105 @@ object Uvc {
             }
         }
     }
+
+    /** What a raw capture contained. */
+    class StreamStats {
+        var reads = 0
+        var timeouts = 0
+        var bytes = 0L
+        val readSizes = sortedMapOf<Int, Int>()
+        val headerLengths = sortedMapOf<Int, Int>()
+        var eofFlags = 0
+        var errorFlags = 0
+        var fidToggles = 0
+        var nonZeroBytes = 0L
+        val frames = mutableListOf<ByteArray>()
+        val frameSizes = mutableListOf<Int>()
+        var seconds = 0.0
+
+        fun report(expectedFrame: Int) = buildString {
+            appendLine("captured %.2f s: %d reads (%d empty/timeouts), %d bytes (%.1f MB/s), %d non-zero bytes".format(
+                seconds, reads, timeouts, bytes, bytes / 1e6 / seconds.coerceAtLeast(1e-3), nonZeroBytes,
+            ))
+            appendLine("read sizes (bytes×count): ${readSizes.entries.joinToString { "${it.key}×${it.value}" }}")
+            appendLine("header lengths (byte 0): ${headerLengths.entries.joinToString { "${it.key}×${it.value}" }}")
+            appendLine("EOF flags: $eofFlags, FID toggles: $fidToggles, error flags: $errorFlags")
+            appendLine("assembled frames: ${frameSizes.size}, sizes: ${frameSizes.take(30).joinToString()}" +
+                if (frameSizes.size > 30) " …" else "")
+            val whole = frameSizes.count { it == expectedFrame }
+            appendLine("frames of the expected $expectedFrame bytes: $whole" +
+                if (whole > 1) " (≈ %.1f fps)".format(whole / seconds) else "")
+        }
+    }
+
+    /**
+     * Reads the bulk stream for [CAPTURE_SECONDS], writing every transfer to [rawFile] and its
+     * size and first bytes to [indexFile], and assembles frames from UVC payload headers (a new
+     * frame starts when FID toggles or after EOF).
+     */
+    private fun streamToFile(connection: UsbDeviceConnection, endpoint: UsbEndpoint, payload: Int, rawFile: File, indexFile: File): StreamStats {
+        val stats = StreamStats()
+        val buffer = ByteArray(payload)
+        val current = ByteArrayOutputStream()
+        var lastFid = -1
+        val start = System.nanoTime()
+        rawFile.outputStream().buffered().use { raw ->
+            indexFile.bufferedWriter().use { index ->
+                index.write("read,time_ms,length,first_bytes\n")
+                while (System.nanoTime() - start < CAPTURE_SECONDS * 1_000_000_000L) {
+                    val n = connection.bulkTransfer(endpoint, buffer, buffer.size, 200)
+                    stats.reads++
+                    if (n <= 0) {
+                        stats.timeouts++
+                        continue
+                    }
+                    stats.bytes += n
+                    stats.readSizes.merge(n, 1, Int::plus)
+                    for (k in 0 until n) if (buffer[k].toInt() != 0) stats.nonZeroBytes++
+                    raw.write(buffer, 0, n)
+                    if (stats.reads <= MAX_INDEX_ROWS) {
+                        index.write("${stats.reads},%.3f,$n,${buffer.take(minOf(n, 16)).joinToString(" ") { "%02x".format(it) }}\n"
+                            .format((System.nanoTime() - start) / 1e6))
+                    }
+                    val header = buffer[0].u8()
+                    stats.headerLengths.merge(header, 1, Int::plus)
+                    if (header < 2 || header > n) {
+                        current.write(buffer, 0, n) // no header: raw data
+                        continue
+                    }
+                    val info = buffer[1].u8()
+                    val fid = info and 0x01
+                    if (lastFid >= 0 && fid != lastFid) {
+                        stats.fidToggles++
+                        if (current.size() > 0) stats.finishFrame(current)
+                    }
+                    lastFid = fid
+                    if (info and 0x40 != 0) stats.errorFlags++
+                    current.write(buffer, header, n - header)
+                    if (info and 0x02 != 0) {
+                        stats.eofFlags++
+                        stats.finishFrame(current)
+                    }
+                }
+            }
+        }
+        stats.seconds = (System.nanoTime() - start) / 1e9
+        return stats
+    }
+
+    private fun StreamStats.finishFrame(current: ByteArrayOutputStream) {
+        frameSizes += current.size()
+        // Keep a few frames in memory, preferring large ones.
+        if (frames.size < 4) frames += current.toByteArray()
+        else if (current.size() > frames.minOf { it.size }) {
+            frames.remove(frames.minByOrNull { it.size })
+            frames += current.toByteArray()
+        }
+        current.reset()
+    }
+
+    private const val CAPTURE_SECONDS = 2
+    private const val MAX_INDEX_ROWS = 5000
 
     /** FourCC from a UVC format GUID of the form XXXXXXXX-0000-0010-8000-00AA00389B71. */
     private fun fourcc(guid: ByteArray): String? {
