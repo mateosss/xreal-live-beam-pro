@@ -32,7 +32,11 @@ one half. In 2D mode both eyes see the whole frame.
 | Picks the camera pair and the left/right order, with a fallback chain | `camera/CameraUtils.kt` |
 | Opens the cameras and streams into two SurfaceTextures, stepping down sizes on failure | `camera/CameraController.kt` |
 | Pairs left/right frames before drawing | `camera/FrameSynchronizer.kt` |
-| Side-by-side compositing per eye: rotation, aspect, convergence, depth | `render/StereoRenderer.kt`, `render/StereoShader.kt` |
+| Per-camera intrinsics, lens distortion and orientation | `camera/CameraModel.kt` |
+| Stereo rectification and the per-eye ray mapping | `render/StereoGeometry.kt`, `render/StereoShader.kt` |
+| Gyro stabilization, applied identically to both eyes | `render/Stabilizer.kt` |
+| Measures vertical offset and roll between the eyes from the image | `render/AlignmentEstimator.kt` |
+| Side-by-side compositing and the auto-align pass | `render/StereoRenderer.kt` |
 | Full-screen output on the glasses display | `render/StereoPresentation.kt`, `util/DisplayUtils.kt` |
 | Touchscreen controls and DataStore settings | `ui/ControlsOverlay.kt`, `ui/SettingsViewModel.kt` |
 
@@ -45,6 +49,29 @@ the automatic choice.
 
 Left and right come from `LENS_POSE_TRANSLATION`, converted to the current screen orientation.
 If the pose isn't available, the ID order is used. **Swap L/R** corrects either case.
+
+**Rectification.** Raw feeds from two cameras are never perfectly parallel. A small tilt or
+height difference between them produces vertical disparity, which the eyes can't fuse. Each
+output pixel is therefore mapped to a ray in a shared rectified frame. That frame's x axis
+runs along the baseline, and both eyes look along the same forward axis. The ray is then
+projected through each camera's own intrinsics and lens distortion. The camera's factory
+calibration (`LENS_POSE_ROTATION`, `LENS_INTRINSIC_CALIBRATION`, `LENS_DISTORTION`) is used
+when it is plausible; otherwise the sensor orientation is used. Per-camera OIS, EIS and HAL
+undistortion are turned off where possible, since each moves one eye's image independently.
+
+**Auto-align.** This removes what calibration misses. It renders both eyes small, compares
+mean row-intensity profiles of a strip at each edge, and corrects the vertical offset and
+roll it finds. Row profiles barely change with horizontal disparity, and each strip's
+disparity is compensated first, so the scene's depth doesn't bias the result.
+
+**Scale.** In *1:1* mode, camera angles are shown at their real size in the glasses, using
+the glasses' field of view (*More → Glasses field of view*). Disparity then matches what the
+eyes would see directly. *Fill*, *Fit* and *Stretch* fit the camera image to the eye instead.
+Half-SBS output (each half stretched to double width by the glasses) is accounted for. It is
+detected from the output size, or set in *More → SBS layout*.
+
+**Stabilization.** Rendering from a low-pass-filtered gyro orientation removes hand shake.
+Both eyes get the same rotation, so the stereo alignment is unaffected.
 
 **Output.** If the glasses show up as a presentation display, the stereo view goes there and
 the phone screen keeps only the controls. Otherwise the view is drawn full-screen on the phone,
@@ -62,13 +89,14 @@ how many frame pairs exceeded the threshold.
 |---|---|
 | Pause / Play | Closes / reopens the cameras |
 | Swap L/R | Swaps which camera feeds which eye |
-| Fill / Fit / Stretch | Fits each camera image into its half: crop, letterbox, or stretch (use Stretch for half-SBS displays) |
-| Convergence | ±50 px horizontal shift per eye, in opposite directions |
+| 1:1 / Fill / Fit / Stretch | True angular scale, or fit the camera image into each eye by cropping, letterboxing or stretching |
+| Auto-align | Measures and corrects vertical offset and roll between the eyes; point at a detailed scene and hold still |
+| Convergence | ±200 px horizontal shift per eye, in opposite directions |
 | Depth | Zooms each eye 1–2× about its center, which also scales disparity. Pinch on the touchscreen does the same |
 | Brightness | Exposure compensation, using the camera's own range |
 | HUD | Frame-rate and sync statistics |
 | Info | Report of every camera (including hidden ones), the displays, camera system properties and the app log, with Share/Copy |
-| More | Camera pair, output mode, image rotation override, max resolution, sync wait, reset adjustments |
+| More | Camera pair, output mode, image rotation override, max resolution, sync wait, stabilization, glasses field of view, SBS layout, lens calibration source, manual alignment, reset adjustments |
 
 All settings persist through DataStore.
 

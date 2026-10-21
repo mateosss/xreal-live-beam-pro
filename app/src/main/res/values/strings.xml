@@ -5,6 +5,7 @@
     <string name="swap">Swap L/R</string>
     <string name="hud">HUD</string>
     <string name="info">Info</string>
+    <string name="align">Auto-align</string>
     <string name="more">More</string>
     <string name="convergence">Convergence</string>
     <string name="depth">Depth</string>

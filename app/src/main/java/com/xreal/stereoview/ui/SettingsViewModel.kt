@@ -22,9 +22,25 @@ import kotlinx.coroutines.launch
 
 /** How each camera image is fitted into its half of the SBS frame. */
 enum class ScaleMode(val label: String) {
+    REAL("1:1"),        // camera angles shown at their true size in the glasses
     FILL("Fill"),       // keep aspect, crop overflow
     FIT("Fit"),         // keep aspect, letterbox
     STRETCH("Stretch"), // ignore aspect (useful for half-SBS output)
+}
+
+/** How the glasses split the frame into eyes. */
+enum class SbsLayout(val label: String) {
+    AUTO("Auto (from output size)"),
+    FULL("Full SBS: each half shown at its own aspect"),
+    HALF("Half SBS: each half stretched to double width"),
+}
+
+/** Gyro stabilization strength, as the smoothing time constant. */
+enum class Stabilization(val label: String, val timeConstantSec: Double) {
+    OFF("Off", 0.0),
+    LOW("Low", 0.12),
+    MEDIUM("Medium", 0.3),
+    HIGH("High", 0.8),
 }
 
 /** Where the SBS frame is rendered. */
@@ -34,14 +50,14 @@ enum class OutputMode(val label: String) {
 }
 
 data class StereoSettings(
-    /** Horizontal image shift per eye in render pixels, -50..50. */
+    /** Horizontal image shift per eye in render pixels, ±[CONVERGENCE_RANGE]. */
     val convergencePx: Float = 0f,
     /** Magnification about each eye's center, 1..2. Scales disparity along with the image. */
     val depth: Float = 1f,
     val swapEyes: Boolean = false,
     /** Exposure compensation in camera steps (see CONTROL_AE_COMPENSATION_RANGE). */
     val exposure: Int = 0,
-    val scaleMode: ScaleMode = ScaleMode.FILL,
+    val scaleMode: ScaleMode = ScaleMode.REAL,
     val showHud: Boolean = false,
     /** Image rotation in degrees, or -1 to derive it from sensor and display orientation. */
     val rotationOverride: Int = -1,
@@ -52,9 +68,20 @@ data class StereoSettings(
     val outputMode: OutputMode = OutputMode.AUTO,
     /** [com.xreal.stereoview.camera.StereoRig.key] of a manually chosen camera pair, or empty for automatic. */
     val cameraPair: String = "",
+    /** Diagonal field of view of one eye of the glasses, used by [ScaleMode.REAL]. */
+    val glassesFovDeg: Float = 46f,
+    val sbsLayout: SbsLayout = SbsLayout.AUTO,
+    val stabilization: Stabilization = Stabilization.MEDIUM,
+    /** Use the lens poses reported by the camera; otherwise only the sensor orientation. */
+    val useFactoryCalibration: Boolean = true,
+    /** Vertical alignment correction between the eyes, degrees. */
+    val alignPitchDeg: Float = 0f,
+    /** Rotational alignment correction between the eyes, degrees. */
+    val alignRollDeg: Float = 0f,
 ) {
     companion object {
-        const val CONVERGENCE_RANGE = 50f
+        const val CONVERGENCE_RANGE = 200f
+        const val ALIGN_RANGE_DEG = 3f
         const val DEPTH_MIN = 1f
         const val DEPTH_MAX = 2f
     }
@@ -75,6 +102,12 @@ class SettingsRepository(private val context: Context) {
         val MAX_RESOLUTION = intPreferencesKey("max_resolution")
         val OUTPUT_MODE = stringPreferencesKey("output_mode")
         val CAMERA_PAIR = stringPreferencesKey("camera_pair")
+        val GLASSES_FOV = floatPreferencesKey("glasses_fov_deg")
+        val SBS_LAYOUT = stringPreferencesKey("sbs_layout")
+        val STABILIZATION = stringPreferencesKey("stabilization")
+        val FACTORY_CALIBRATION = booleanPreferencesKey("use_factory_calibration")
+        val ALIGN_PITCH = floatPreferencesKey("align_pitch_deg")
+        val ALIGN_ROLL = floatPreferencesKey("align_roll_deg")
     }
 
     val settings = context.dataStore.data.map { p ->
@@ -91,6 +124,12 @@ class SettingsRepository(private val context: Context) {
             maxResolution = p[Keys.MAX_RESOLUTION] ?: defaults.maxResolution,
             outputMode = enumOrDefault(p[Keys.OUTPUT_MODE], defaults.outputMode),
             cameraPair = p[Keys.CAMERA_PAIR] ?: defaults.cameraPair,
+            glassesFovDeg = p[Keys.GLASSES_FOV] ?: defaults.glassesFovDeg,
+            sbsLayout = enumOrDefault(p[Keys.SBS_LAYOUT], defaults.sbsLayout),
+            stabilization = enumOrDefault(p[Keys.STABILIZATION], defaults.stabilization),
+            useFactoryCalibration = p[Keys.FACTORY_CALIBRATION] ?: defaults.useFactoryCalibration,
+            alignPitchDeg = p[Keys.ALIGN_PITCH] ?: defaults.alignPitchDeg,
+            alignRollDeg = p[Keys.ALIGN_ROLL] ?: defaults.alignRollDeg,
         )
     }
 
@@ -107,6 +146,12 @@ class SettingsRepository(private val context: Context) {
             p[Keys.MAX_RESOLUTION] = s.maxResolution
             p[Keys.OUTPUT_MODE] = s.outputMode.name
             p[Keys.CAMERA_PAIR] = s.cameraPair
+            p[Keys.GLASSES_FOV] = s.glassesFovDeg
+            p[Keys.SBS_LAYOUT] = s.sbsLayout.name
+            p[Keys.STABILIZATION] = s.stabilization.name
+            p[Keys.FACTORY_CALIBRATION] = s.useFactoryCalibration
+            p[Keys.ALIGN_PITCH] = s.alignPitchDeg
+            p[Keys.ALIGN_ROLL] = s.alignRollDeg
         }
     }
 

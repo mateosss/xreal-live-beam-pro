@@ -9,28 +9,37 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.util.Size
-import com.xreal.stereoview.camera.CameraUtils
+import com.xreal.stereoview.camera.CameraModel
 import com.xreal.stereoview.camera.FrameSynchronizer
-import com.xreal.stereoview.ui.ScaleMode
+import com.xreal.stereoview.ui.SbsLayout
 import com.xreal.stereoview.ui.StereoSettings
+import com.xreal.stereoview.util.Mat3
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 import kotlin.math.abs
+import kotlin.math.atan
 
 /**
  * Composites the left and right camera textures into one side-by-side frame: the left half of
- * the surface is the left eye, the right half the right eye.
+ * the surface is the left eye, the right half the right eye. Both eyes are rectified into a
+ * shared frame by [StereoGeometry] and stabilized together by [Stabilizer].
  *
  * Listener callbacks are delivered on the main thread.
  */
-class StereoRenderer(private val listener: Listener) : GLSurfaceView.Renderer {
+class StereoRenderer(
+    private val listener: Listener,
+    private val stabilizer: Stabilizer?,
+) : GLSurfaceView.Renderer {
     interface Listener {
         /** New camera targets (0 = left camera, 1 = right camera); called after every GL context creation. */
         fun onSurfacesReady(left: SurfaceTexture, right: SurfaceTexture)
         fun onRenderStats(stats: RenderStats)
     }
 
-    data class StreamInfo(val size: Size, val sensorOrientation: Int, val displayRotationDegrees: Int)
+    /** The streams' camera models (same instance twice for a single camera) and the display rotation. */
+    data class Cameras(val left: CameraModel, val right: CameraModel, val displayRotation: Int)
 
     data class RenderStats(
         val leftFps: Float,
@@ -39,7 +48,11 @@ class StereoRenderer(private val listener: Listener) : GLSurfaceView.Renderer {
         val drawMs: Float,
         val sync: FrameSynchronizer.Stats,
         val outputSize: Size,
+        val view: String,
     )
+
+    /** Alignment correction measured from the image, to add to the current settings. */
+    data class AlignmentResult(val pitchDeg: Double, val rollDeg: Double, val samples: Int)
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var requestRender: () -> Unit = {}
@@ -54,20 +67,38 @@ class StereoRenderer(private val listener: Listener) : GLSurfaceView.Renderer {
         }
 
     @Volatile
-    var stream: StreamInfo? = null
+    var cameras: Cameras? = null
         set(value) {
             field = value
             requestRender()
         }
+
+    /** Description of the current rectification, for the Info dialog. */
+    @Volatile
+    var geometrySummary: String = "not streaming"
+        private set
 
     // GL thread state
     private var shader: StereoShader? = null
     private val textureIds = IntArray(2)
     private var surfaceTextures: List<SurfaceTexture> = emptyList()
     private val stMatrices = Array(2) { FloatArray(16).also { Matrix.setIdentityM(it, 0) } }
-    private val viewMatrix = FloatArray(16)
     private var width = 1
     private var height = 1
+    private var geometry: StereoGeometry? = null
+    private var geometryKey: Any? = null
+    private var viewDescription = ""
+
+    // Auto-alignment, GL thread
+    @Volatile
+    private var alignmentCallback: ((AlignmentResult?) -> Unit)? = null
+    private val alignmentPitch = mutableListOf<Double>()
+    private val alignmentRoll = mutableListOf<Double>()
+    private var alignmentAttempts = 0
+    private var alignmentFramebuffer = 0
+    private var alignmentTexture = 0
+    private val alignmentPixels: ByteBuffer =
+        ByteBuffer.allocateDirect(ALIGN_WIDTH * ALIGN_HEIGHT * 4).order(ByteOrder.nativeOrder())
 
     // Stats, GL thread only
     private val newFrames = IntArray(2)
@@ -80,10 +111,20 @@ class StereoRenderer(private val listener: Listener) : GLSurfaceView.Renderer {
         requestRender = view::requestRender
     }
 
+    /**
+     * Measures the vertical offset and roll between the eyes over the next frames.
+     * [onResult] runs on the main thread, with null if the image had too little structure.
+     */
+    fun requestAlignment(onResult: (AlignmentResult?) -> Unit) {
+        alignmentCallback = onResult
+        requestRender()
+    }
+
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         // A new context invalidates any previous textures; replace the SurfaceTextures too.
         surfaceTextures.forEach { it.release() }
         shader = StereoShader()
+        alignmentFramebuffer = 0
         surfaceTextures = List(2) { eye ->
             textureIds[eye] = StereoShader.createExternalTexture()
             SurfaceTexture(textureIds[eye]).apply {
@@ -117,17 +158,49 @@ class StereoRenderer(private val listener: Listener) : GLSurfaceView.Renderer {
             sync.recordPair(deltaNs / 1e6)
         }
 
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
         GLES20.glViewport(0, 0, width, height)
         GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
-        val info = stream
+        val cams = cameras
         val shader = shader
-        if (info != null && shader != null) {
+        if (cams != null && shader != null) {
             val s = settings
+            val geometry = geometryFor(cams, s)
+            val models = listOf(cams.left, cams.right)
+            val eyeWidth = width / 2
+            val halfSbs = when (s.sbsLayout) {
+                SbsLayout.FULL -> false
+                SbsLayout.HALF -> true
+                SbsLayout.AUTO -> width.toFloat() / height < 3f
+            }
+            val eyeAspect = eyeWidth.toDouble() * (if (halfSbs) 2 else 1) / height
+            val (tanH, tanV) = geometry.displayTangents(s.scaleMode, eyeAspect, s.glassesFovDeg.toDouble())
+            val zoom = s.depth.coerceIn(StereoSettings.DEPTH_MIN, StereoSettings.DEPTH_MAX).toDouble()
+            val deviceCorrection = stabilizer?.correction(surfaceTextures[0].timestamp, s.stabilization.timeConstantSec)
+                ?: Mat3.identity()
+            val stabilization = geometry.toRectFrame(deviceCorrection)
+            viewDescription = "eye %.1f°×%.1f° %s, %s".format(
+                Math.toDegrees(2 * atan(tanH / zoom)), Math.toDegrees(2 * atan(tanV / zoom)),
+                s.scaleMode.label, if (halfSbs) "half SBS" else "full SBS",
+            )
+
+            if (alignmentCallback != null && fresh[0] && fresh[1]) {
+                measureAlignment(shader, geometry, models, tanH, tanV, zoom, s, stabilization)
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+            }
+
             for (viewport in 0..1) {
                 val camera = if (s.swapEyes) 1 - viewport else viewport
-                drawEye(shader, viewport, camera, info, s)
+                // Positive convergence moves the left image left and the right image right.
+                val shift = (if (viewport == 0) 1.0 else -1.0) * s.convergencePx / eyeWidth
+                val ray = geometry.rayMatrix(
+                    camera, tanH, tanV, shift, zoom,
+                    s.alignPitchDeg.toDouble(), s.alignRollDeg.toDouble(), stabilization,
+                )
+                GLES20.glViewport(viewport * eyeWidth, 0, eyeWidth, height)
+                shader.draw(textureIds[camera], ray, models[camera], stMatrices[camera])
             }
         }
 
@@ -136,43 +209,101 @@ class StereoRenderer(private val listener: Listener) : GLSurfaceView.Renderer {
         maybeReportStats()
     }
 
-    /** Draws camera [camera] into half [viewport] (0 = left, 1 = right) of the SBS frame. */
-    private fun drawEye(shader: StereoShader, viewport: Int, camera: Int, info: StreamInfo, s: StereoSettings) {
-        val eyeWidth = width / 2
-        GLES20.glViewport(viewport * eyeWidth, 0, eyeWidth, height)
+    private fun geometryFor(cams: Cameras, s: StereoSettings): StereoGeometry {
+        val key = listOf(cams, s.useFactoryCalibration, s.rotationOverride)
+        geometry?.takeIf { key == geometryKey }?.let { return it }
+        return StereoGeometry(listOf(cams.left, cams.right), s.useFactoryCalibration, cams.displayRotation, s.rotationOverride)
+            .also {
+                geometry = it
+                geometryKey = key
+                geometrySummary = it.summary
+            }
+    }
 
-        val rotation = if (s.rotationOverride >= 0) s.rotationOverride
-        else CameraUtils.imageRotation(info.sensorOrientation, info.displayRotationDegrees)
-        val cameraAspect = if (rotation % 180 == 0) info.size.width.toFloat() / info.size.height
-        else info.size.height.toFloat() / info.size.width
-        val eyeAspect = eyeWidth.toFloat() / height
-
-        var cropX = 1f
-        var cropY = 1f
-        var quadX = 1f
-        var quadY = 1f
-        when (s.scaleMode) {
-            ScaleMode.FILL ->
-                if (cameraAspect > eyeAspect) cropX = eyeAspect / cameraAspect else cropY = cameraAspect / eyeAspect
-            ScaleMode.FIT ->
-                if (cameraAspect > eyeAspect) quadY = eyeAspect / cameraAspect else quadX = cameraAspect / eyeAspect
-            ScaleMode.STRETCH -> Unit
+    /** Renders both eyes small and unswapped, and compares them; see [AlignmentEstimator]. */
+    private fun measureAlignment(
+        shader: StereoShader,
+        geometry: StereoGeometry,
+        models: List<CameraModel>,
+        tanH: Double,
+        tanV: Double,
+        zoom: Double,
+        s: StereoSettings,
+        stabilization: DoubleArray,
+    ) {
+        ensureAlignmentFramebuffer()
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, alignmentFramebuffer)
+        GLES20.glViewport(0, 0, ALIGN_WIDTH, ALIGN_HEIGHT)
+        val images = List(2) { camera ->
+            val ray = geometry.rayMatrix(
+                camera, tanH, tanV, 0.0, zoom, s.alignPitchDeg.toDouble(), s.alignRollDeg.toDouble(), stabilization,
+            )
+            shader.draw(textureIds[camera], ray, models[camera], stMatrices[camera])
+            readLuminance()
+        }
+        alignmentAttempts++
+        AlignmentEstimator.estimate(images[0], images[1], ALIGN_WIDTH, ALIGN_HEIGHT, ALIGN_MAX_SHIFT)?.let { e ->
+            val tanPerRow = 2 * tanV / zoom / ALIGN_HEIGHT
+            val tanPerColumn = 2 * tanH / zoom / ALIGN_WIDTH
+            // Right view lower → lower the left / raise the right: decrease pitch.
+            alignmentPitch += -Math.toDegrees(atan(e.meanOffset * tanPerRow))
+            // Right view rotated clockwise → rotate it back: increase roll.
+            alignmentRoll += Math.toDegrees(atan(e.slope * tanPerRow / tanPerColumn))
         }
 
-        // Positive convergence moves the left image left and the right image right, by
-        // convergencePx render pixels each.
-        val shift = (if (viewport == 0) 1f else -1f) * s.convergencePx / (eyeWidth * quadX)
-        val zoom = s.depth.coerceIn(StereoSettings.DEPTH_MIN, StereoSettings.DEPTH_MAX)
-
-        // camera = R(rotation) · S(crop / zoom) · (screen + shift), all about the image center.
-        Matrix.setIdentityM(viewMatrix, 0)
-        Matrix.translateM(viewMatrix, 0, 0.5f, 0.5f, 0f)
-        Matrix.rotateM(viewMatrix, 0, rotation.toFloat(), 0f, 0f, 1f)
-        Matrix.scaleM(viewMatrix, 0, cropX / zoom, cropY / zoom, 1f)
-        Matrix.translateM(viewMatrix, 0, -0.5f + shift, -0.5f, 0f)
-
-        shader.draw(textureIds[camera], viewMatrix, stMatrices[camera], quadX, quadY)
+        if (alignmentPitch.size >= ALIGN_SAMPLES || alignmentAttempts >= ALIGN_MAX_ATTEMPTS) {
+            val result = if (alignmentPitch.size >= ALIGN_SAMPLES / 2) {
+                AlignmentResult(alignmentPitch.median(), alignmentRoll.median(), alignmentPitch.size)
+            } else {
+                null
+            }
+            val callback = alignmentCallback
+            alignmentCallback = null
+            alignmentPitch.clear()
+            alignmentRoll.clear()
+            alignmentAttempts = 0
+            mainHandler.post { callback?.invoke(result) }
+        }
     }
+
+    private fun ensureAlignmentFramebuffer() {
+        if (alignmentFramebuffer != 0) return
+        val ids = IntArray(1)
+        GLES20.glGenTextures(1, ids, 0)
+        alignmentTexture = ids[0]
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, alignmentTexture)
+        GLES20.glTexImage2D(
+            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, ALIGN_WIDTH, ALIGN_HEIGHT, 0,
+            GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null,
+        )
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+        GLES20.glGenFramebuffers(1, ids, 0)
+        alignmentFramebuffer = ids[0]
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, alignmentFramebuffer)
+        GLES20.glFramebufferTexture2D(
+            GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, alignmentTexture, 0,
+        )
+    }
+
+    /** Reads the alignment framebuffer as luminance, row 0 at the top. */
+    private fun readLuminance(): FloatArray {
+        alignmentPixels.position(0)
+        GLES20.glReadPixels(0, 0, ALIGN_WIDTH, ALIGN_HEIGHT, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, alignmentPixels)
+        val out = FloatArray(ALIGN_WIDTH * ALIGN_HEIGHT)
+        for (y in 0 until ALIGN_HEIGHT) {
+            val src = (ALIGN_HEIGHT - 1 - y) * ALIGN_WIDTH * 4 // GL rows start at the bottom
+            for (x in 0 until ALIGN_WIDTH) {
+                val i = src + x * 4
+                val r = alignmentPixels.get(i).toInt() and 0xff
+                val g = alignmentPixels.get(i + 1).toInt() and 0xff
+                val b = alignmentPixels.get(i + 2).toInt() and 0xff
+                out[y * ALIGN_WIDTH + x] = 0.299f * r + 0.587f * g + 0.114f * b
+            }
+        }
+        return out
+    }
+
+    private fun List<Double>.median(): Double = sorted()[size / 2]
 
     private fun maybeReportStats() {
         val now = SystemClock.elapsedRealtime()
@@ -186,6 +317,7 @@ class StereoRenderer(private val listener: Listener) : GLSurfaceView.Renderer {
             drawMs = if (draws > 0) drawNanos / 1e6f / draws else 0f,
             sync = sync.takeStats(),
             outputSize = Size(width, height),
+            view = viewDescription,
         )
         newFrames.fill(0)
         draws = 0
@@ -204,5 +336,10 @@ class StereoRenderer(private val listener: Listener) : GLSurfaceView.Renderer {
     private companion object {
         const val TAG = "StereoRenderer"
         const val STATS_INTERVAL_MS = 500L
+        const val ALIGN_WIDTH = 320
+        const val ALIGN_HEIGHT = 180
+        const val ALIGN_MAX_SHIFT = 30
+        const val ALIGN_SAMPLES = 9
+        const val ALIGN_MAX_ATTEMPTS = 40
     }
 }

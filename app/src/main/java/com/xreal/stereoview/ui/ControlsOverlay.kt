@@ -1,7 +1,9 @@
 package com.xreal.stereoview.ui
 
 import android.util.Range
+import android.widget.LinearLayout
 import android.widget.SeekBar
+import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import com.xreal.stereoview.R
 import com.xreal.stereoview.databinding.OverlayControlsBinding
@@ -20,6 +22,7 @@ class ControlsOverlay(
     interface Actions {
         fun onPlayPause()
         fun onShowInfo()
+        fun onAutoAlign()
 
         /** Selectable camera pairs as (key, description), best first. */
         fun cameraPairOptions(): List<Pair<String, String>>
@@ -31,6 +34,7 @@ class ControlsOverlay(
     init {
         binding.playButton.setOnClickListener { actions.onPlayPause() }
         binding.infoButton.setOnClickListener { actions.onShowInfo() }
+        binding.alignButton.setOnClickListener { actions.onAutoAlign() }
         binding.moreButton.setOnClickListener { showMoreMenu() }
         binding.swapButton.setOnClickListener { viewModel.update { it.copy(swapEyes = !it.swapEyes) } }
         binding.hudButton.setOnClickListener { viewModel.update { it.copy(showHud = !it.showHud) } }
@@ -91,6 +95,11 @@ class ControlsOverlay(
             "Image rotation: ${if (s.rotationOverride < 0) "auto" else "${s.rotationOverride}°"}",
             "Max resolution: ${s.maxResolution}p",
             "Sync wait: ${s.syncThresholdMs} ms",
+            "Stabilization: ${s.stabilization.label}",
+            "Glasses field of view: %.0f°".format(s.glassesFovDeg),
+            "SBS layout: ${s.sbsLayout.label}",
+            "Lens calibration: ${if (s.useFactoryCalibration) "factory" else "sensor orientation only"}",
+            "Manual alignment: pitch %+.2f°, roll %+.2f°".format(s.alignPitchDeg, s.alignRollDeg),
             "Reset view adjustments",
         )
         AlertDialog.Builder(context)
@@ -125,9 +134,71 @@ class ControlsOverlay(
                             viewModel.update { it.copy(syncThresholdMs = values[i]) }
                         }
                     }
-                    5 -> viewModel.update { it.copy(convergencePx = 0f, depth = 1f, exposure = 0) }
+                    5 -> choose("Stabilization", Stabilization.entries.map { it.label }, s.stabilization.ordinal) { i ->
+                        viewModel.update { it.copy(stabilization = Stabilization.entries[i]) }
+                    }
+                    6 -> {
+                        val presets = listOf(
+                            45f to "45° — Air",
+                            46f to "46° — Air 2 / Air 2 Pro",
+                            50f to "50° — One",
+                            52f to "52° — Air 2 Ultra",
+                            57f to "57° — One Pro",
+                        )
+                        choose("Glasses field of view (diagonal)", presets.map { it.second }, presets.indexOfFirst { it.first == s.glassesFovDeg }) { i ->
+                            viewModel.update { it.copy(glassesFovDeg = presets[i].first) }
+                        }
+                    }
+                    7 -> choose("SBS layout", SbsLayout.entries.map { it.label }, s.sbsLayout.ordinal) { i ->
+                        viewModel.update { it.copy(sbsLayout = SbsLayout.entries[i]) }
+                    }
+                    8 -> choose(
+                        "Lens calibration",
+                        listOf("Factory (lens poses from the camera)", "Sensor orientation only"),
+                        if (s.useFactoryCalibration) 0 else 1,
+                    ) { i -> viewModel.update { it.copy(useFactoryCalibration = i == 0) } }
+                    9 -> showAlignmentDialog()
+                    10 -> viewModel.update { it.copy(convergencePx = 0f, depth = 1f, exposure = 0) }
                 }
             }
+            .show()
+    }
+
+    /** Sliders for the vertical and rotational alignment between the eyes. */
+    private fun showAlignmentDialog() {
+        val range = StereoSettings.ALIGN_RANGE_DEG
+        val steps = 300
+        fun toProgress(deg: Float) = ((deg + range) / (2 * range) * steps).roundToInt()
+        fun toDegrees(progress: Int) = progress.toFloat() / steps * 2 * range - range
+
+        val layout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 16, 48, 0)
+        }
+        fun slider(label: String, value: Float, onChange: (Float) -> Unit) {
+            val text = TextView(context).apply { this.text = "$label %+.2f°".format(value) }
+            val seek = SeekBar(context).apply {
+                max = steps
+                progress = toProgress(value)
+                onUserChange { p ->
+                    val deg = toDegrees(p)
+                    text.text = "$label %+.2f°".format(deg)
+                    onChange(deg)
+                }
+            }
+            layout.addView(text)
+            layout.addView(seek)
+        }
+        val s = viewModel.settings.value
+        slider("Vertical (pitch)", s.alignPitchDeg) { d -> viewModel.update { it.copy(alignPitchDeg = d) } }
+        slider("Rotation (roll)", s.alignRollDeg) { d -> viewModel.update { it.copy(alignRollDeg = d) } }
+
+        AlertDialog.Builder(context)
+            .setTitle("Eye alignment")
+            .setMessage("Line up a distant horizontal edge so it is not doubled vertically. Auto-align does this from the image.")
+            .setView(layout)
+            .setPositiveButton(android.R.string.ok, null)
+            .setNeutralButton("Reset") { _, _ -> viewModel.update { it.copy(alignPitchDeg = 0f, alignRollDeg = 0f) } }
             .show()
     }
 

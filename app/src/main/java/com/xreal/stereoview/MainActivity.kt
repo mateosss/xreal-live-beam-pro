@@ -28,11 +28,14 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.xreal.stereoview.camera.CameraController
+import com.xreal.stereoview.camera.CameraModel
+import com.xreal.stereoview.camera.CameraTarget
 import com.xreal.stereoview.camera.CameraUtils
 import com.xreal.stereoview.camera.StereoRig
 import com.xreal.stereoview.databinding.ActivityMainBinding
 import com.xreal.stereoview.render.StereoPresentation
 import com.xreal.stereoview.render.StereoRenderer
+import com.xreal.stereoview.render.Stabilizer
 import com.xreal.stereoview.ui.ControlsOverlay
 import com.xreal.stereoview.ui.OutputMode
 import com.xreal.stereoview.ui.SettingsViewModel
@@ -53,6 +56,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     private lateinit var binding: ActivityMainBinding
     private lateinit var controls: ControlsOverlay
     private lateinit var camera: CameraController
+    private lateinit var stabilizer: Stabilizer
     private lateinit var cameraManager: CameraManager
     private lateinit var displayManager: DisplayManager
 
@@ -89,6 +93,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         cameraManager = getSystemService(CameraManager::class.java)
         displayManager = getSystemService(DisplayManager::class.java)
         camera = CameraController(this, this)
+        stabilizer = Stabilizer(this)
         controls = ControlsOverlay(binding.controls, viewModel, this)
         controls.setPlaying(playing)
         binding.grantButton.setOnClickListener { requestPermission.launch(Manifest.permission.CAMERA) }
@@ -137,7 +142,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
 
         val settings = viewModel.settings.value
         val display = if (settings.outputMode == OutputMode.AUTO) DisplayUtils.findGlassesDisplay(displayManager) else null
-        val renderer = StereoRenderer(this).also { it.settings = settings }
+        val renderer = StereoRenderer(this, stabilizer).also { it.settings = settings }
         val view = GLSurfaceView(this).apply {
             setEGLContextClientVersion(2)
             setRenderer(renderer)
@@ -156,6 +161,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         this.renderer = renderer
         glView = view
         outputDisplay = display
+        stabilizer.start()
         updateStatus()
     }
 
@@ -163,6 +169,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         if (!outputActive) return
         outputActive = false
         camera.stopBlocking()
+        stabilizer.stop()
         glView?.onPause()
         presentation?.dismiss()
         binding.glContainer.removeAllViews()
@@ -221,13 +228,59 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             this.rig = rig
             streamSize = size
             controls.setExposureRange(rig.exposureRange)
-            renderer?.stream = StereoRenderer.StreamInfo(
-                size,
-                rig.sensorOrientation,
-                CameraUtils.rotationDegrees(displayRotation()),
-            )
+            renderer?.cameras = cameraModels(rig, size)
             updateStatus()
         }
+    }
+
+    /** Geometric models of the rig's two streams; a single camera yields the same model twice. */
+    private fun cameraModels(rig: StereoRig, size: Size): StereoRenderer.Cameras? = try {
+        fun model(target: CameraTarget) = CameraModel.from(
+            target.label,
+            cameraManager.getCameraCharacteristics(target.physicalId ?: target.deviceId),
+            size,
+            rig.undistortInShader,
+        )
+        val left = model(rig.left)
+        val right = if (rig.right == rig.left) left else model(rig.right)
+        StereoRenderer.Cameras(left, right, displayRotation())
+    } catch (e: Exception) {
+        Log.w(TAG, "Cannot build camera models", e)
+        null
+    }
+
+    /** Measures and corrects the eyes' vertical offset and roll; repeats once to refine. */
+    override fun onAutoAlign() {
+        val renderer = renderer ?: return
+        if (streamSize == null) {
+            controls.setStatus("Auto-align needs the cameras running")
+            return
+        }
+        fun round(n: Int) {
+            controls.setStatus("Auto-align: measuring (pass $n of 2)… keep the view steady")
+            renderer.requestAlignment { result ->
+                if (result == null) {
+                    controls.setStatus("Auto-align: not enough detail in view. Point at a textured scene and retry.")
+                    return@requestAlignment
+                }
+                viewModel.update {
+                    it.copy(
+                        alignPitchDeg = (it.alignPitchDeg + result.pitchDeg).toFloat()
+                            .coerceIn(-StereoSettings.ALIGN_RANGE_DEG, StereoSettings.ALIGN_RANGE_DEG),
+                        alignRollDeg = (it.alignRollDeg + result.rollDeg).toFloat()
+                            .coerceIn(-StereoSettings.ALIGN_RANGE_DEG, StereoSettings.ALIGN_RANGE_DEG),
+                    )
+                }
+                val s = viewModel.settings.value
+                Log.i(TAG, "Auto-align pass $n: Δpitch %.3f° Δroll %.3f° (%d samples)".format(result.pitchDeg, result.rollDeg, result.samples))
+                if (n < 2) {
+                    round(n + 1)
+                } else {
+                    controls.setStatus("Auto-align done: pitch %+.2f°, roll %+.2f°".format(s.alignPitchDeg, s.alignRollDeg))
+                }
+            }
+        }
+        round(1)
     }
 
     override fun onCameraError(message: String) {
@@ -269,7 +322,8 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         binding.hudText.text = buildString {
             appendLine("L %.1f fps  R %.1f fps  draw %.1f fps (%.2f ms)".format(stats.leftFps, stats.rightFps, stats.drawFps, stats.drawMs))
             appendLine("L/R Δ mean %.2f ms  max %.2f ms  over threshold %d/%d".format(sync.meanDeltaMs, sync.maxDeltaMs, sync.unsyncedPairs, sync.pairs))
-            append("stream ${streamSize ?: "-"}  output ${stats.outputSize.width}×${stats.outputSize.height}")
+            appendLine("stream ${streamSize ?: "-"}  output ${stats.outputSize.width}×${stats.outputSize.height}")
+            append(stats.view)
         }
     }
 
@@ -290,6 +344,12 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             appendLine(CrashReporter.deviceInfo(this@MainActivity))
             appendLine("Active rig: ${rig?.description ?: "none"}")
             appendLine("Stream size: ${streamSize ?: "-"}, sensor orientation ${rig?.sensorOrientation ?: "-"}°")
+            appendLine("Rectification: ${renderer?.geometrySummary ?: "-"}")
+            renderer?.cameras?.let { cams ->
+                appendLine("  " + cams.left.describe())
+                if (cams.right !== cams.left) appendLine("  " + cams.right.describe())
+            }
+            appendLine("Undistort in app: ${rig?.undistortInShader}, OIS off: ${rig?.canDisableOis}, gyro: ${stabilizer.available}")
             appendLine("Display rotation: ${CameraUtils.rotationDegrees(displayRotation())}°")
             appendLine("Output: ${outputDisplay?.let(DisplayUtils::describe) ?: "main screen"}")
             appendLine("Displays: " + displayManager.displays.joinToString { DisplayUtils.describe(it) })

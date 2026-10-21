@@ -40,6 +40,10 @@ data class StereoRig(
     val rightFocal: Float,
     /** True when the lens baseline runs vertically in the current display orientation. */
     val baselineVertical: Boolean,
+    /** HAL distortion correction can be turned off because both lenses report LENS_DISTORTION. */
+    val undistortInShader: Boolean,
+    /** Optical stabilization can be turned off; each lens' OIS moves its image independently. */
+    val canDisableOis: Boolean,
     /** Rig to try if this one cannot be opened or configured. */
     val fallback: StereoRig? = null,
 ) {
@@ -199,6 +203,12 @@ object CameraUtils {
             baselineMm = if (mode == RigMode.MONO) null else baselineMm(a, b),
             leftFocal = left.focal,
             rightFocal = right.focal,
+            undistortInShader = deviceChars.get(CameraCharacteristics.DISTORTION_CORRECTION_AVAILABLE_MODES)
+                ?.contains(CameraMetadata.DISTORTION_CORRECTION_MODE_OFF) == true &&
+                a.chars.get(CameraCharacteristics.LENS_DISTORTION) != null &&
+                b.chars.get(CameraCharacteristics.LENS_DISTORTION) != null,
+            canDisableOis = deviceChars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)
+                ?.contains(CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_OFF) == true,
             baselineVertical = vertical,
         )
     }
@@ -277,7 +287,14 @@ object CameraUtils {
                 ", ref " + poseReference(c.get(CameraCharacteristics.LENS_POSE_REFERENCE)))
             appendLine("  sensor orientation: ${c.get(CameraCharacteristics.SENSOR_ORIENTATION)}°, " +
                 "hw level: ${hardwareLevel(c.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL))}")
-            c.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)?.let { appendLine("  pixel array: $it") }
+            c.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)?.let { appendLine("  pixel array: $it, physical ${c.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)} mm") }
+            appendLine("  active: ${c.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)}, pre-correction: ${c.get(CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE)}")
+            appendLine("  rotation (x,y,z,w): " + (c.get(CameraCharacteristics.LENS_POSE_ROTATION)?.joinToString(prefix = "[", postfix = "]") { "%.4f".format(it) } ?: "n/a"))
+            appendLine("  intrinsics (fx,fy,cx,cy,s): " + (c.get(CameraCharacteristics.LENS_INTRINSIC_CALIBRATION)?.joinToString(prefix = "[", postfix = "]") { "%.1f".format(it) } ?: "n/a"))
+            appendLine("  distortion (k1,k2,k3,p1,p2): " + (c.get(CameraCharacteristics.LENS_DISTORTION)?.joinToString(prefix = "[", postfix = "]") { "%.5f".format(it) } ?: "n/a") +
+                ", correction modes ${c.get(CameraCharacteristics.DISTORTION_CORRECTION_AVAILABLE_MODES)?.toList() ?: "n/a"}")
+            appendLine("  OIS modes ${c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)?.toList()}, " +
+                "EIS modes ${c.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES)?.toList()}")
             if (isLogicalMultiCamera(c)) {
                 val sync = when (c.get(CameraCharacteristics.LOGICAL_MULTI_CAMERA_SENSOR_SYNC_TYPE)) {
                     CameraMetadata.LOGICAL_MULTI_CAMERA_SENSOR_SYNC_TYPE_CALIBRATED -> "calibrated"

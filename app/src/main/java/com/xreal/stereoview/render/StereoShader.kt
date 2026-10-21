@@ -2,6 +2,8 @@ package com.xreal.stereoview.render
 
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
+import com.xreal.stereoview.camera.CameraModel
+import com.xreal.stereoview.util.Mat3
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -9,19 +11,23 @@ import java.nio.FloatBuffer
 /**
  * Draws one camera texture into the current viewport (one eye of the SBS frame).
  *
- * The quad's texture coordinates are in screen space; [draw]'s view matrix maps them into
- * camera-image space (convergence shift, depth zoom, aspect crop, rotation), then the
- * SurfaceTexture matrix maps them into the buffer. Samples falling outside the camera image,
- * e.g. after a convergence shift, come out black instead of smearing the edge pixels.
+ * Every output pixel is mapped to a ray by [draw]'s ray matrix (see [StereoGeometry]), then
+ * projected through the camera's lens distortion and intrinsics into the stream image. This is
+ * done per fragment because the mapping is projective, not affine. Rays that miss the camera
+ * image come out black.
  */
 class StereoShader {
     private val program: Int
     private val aPosition: Int
     private val aTexCoord: Int
-    private val uViewMatrix: Int
+    private val uRay: Int
+    private val uIntrinsics: Int
+    private val uRadial: Int
+    private val uTangential: Int
+    private val uMaxRadius2: Int
     private val uStMatrix: Int
-    private val uVertexScale: Int
     private val uTexture: Int
+    private val rayGl = FloatArray(9)
 
     private val quad: FloatBuffer = floatBuffer(
         // x, y, u, v
@@ -35,13 +41,16 @@ class StereoShader {
         program = linkProgram(VERTEX_SHADER, FRAGMENT_SHADER)
         aPosition = GLES20.glGetAttribLocation(program, "aPosition")
         aTexCoord = GLES20.glGetAttribLocation(program, "aTexCoord")
-        uViewMatrix = GLES20.glGetUniformLocation(program, "uViewMatrix")
+        uRay = GLES20.glGetUniformLocation(program, "uRay")
+        uIntrinsics = GLES20.glGetUniformLocation(program, "uIntrinsics")
+        uRadial = GLES20.glGetUniformLocation(program, "uRadial")
+        uTangential = GLES20.glGetUniformLocation(program, "uTangential")
+        uMaxRadius2 = GLES20.glGetUniformLocation(program, "uMaxRadius2")
         uStMatrix = GLES20.glGetUniformLocation(program, "uStMatrix")
-        uVertexScale = GLES20.glGetUniformLocation(program, "uVertexScale")
         uTexture = GLES20.glGetUniformLocation(program, "uTexture")
     }
 
-    fun draw(texture: Int, viewMatrix: FloatArray, stMatrix: FloatArray, scaleX: Float, scaleY: Float) {
+    fun draw(texture: Int, rayMatrix: DoubleArray, camera: CameraModel, stMatrix: FloatArray) {
         GLES20.glUseProgram(program)
 
         quad.position(0)
@@ -51,9 +60,12 @@ class StereoShader {
         GLES20.glVertexAttribPointer(aTexCoord, 2, GLES20.GL_FLOAT, false, STRIDE, quad)
         GLES20.glEnableVertexAttribArray(aTexCoord)
 
-        GLES20.glUniformMatrix4fv(uViewMatrix, 1, false, viewMatrix, 0)
+        GLES20.glUniformMatrix3fv(uRay, 1, false, Mat3.toGl(rayMatrix, rayGl), 0)
+        GLES20.glUniform4f(uIntrinsics, camera.fx.toFloat(), camera.fy.toFloat(), camera.cx.toFloat(), camera.cy.toFloat())
+        GLES20.glUniform3f(uRadial, camera.radial[0].toFloat(), camera.radial[1].toFloat(), camera.radial[2].toFloat())
+        GLES20.glUniform2f(uTangential, camera.tangential[0].toFloat(), camera.tangential[1].toFloat())
+        GLES20.glUniform1f(uMaxRadius2, camera.maxRadiusSquared.toFloat())
         GLES20.glUniformMatrix4fv(uStMatrix, 1, false, stMatrix, 0)
-        GLES20.glUniform2f(uVertexScale, scaleX, scaleY)
 
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, texture)
@@ -71,31 +83,46 @@ class StereoShader {
         private const val VERTEX_SHADER = """
             attribute vec2 aPosition;
             attribute vec2 aTexCoord;
-            uniform mat4 uViewMatrix;
-            uniform mat4 uStMatrix;
-            uniform vec2 uVertexScale;
-            varying vec2 vCamCoord;
-            varying vec2 vTexCoord;
+            varying vec2 vUv;
             void main() {
-                gl_Position = vec4(aPosition * uVertexScale, 0.0, 1.0);
-                vec4 cam = uViewMatrix * vec4(aTexCoord, 0.0, 1.0);
-                vCamCoord = cam.xy;
-                vTexCoord = (uStMatrix * cam).xy;
+                gl_Position = vec4(aPosition, 0.0, 1.0);
+                vUv = aTexCoord;
             }
         """
 
         private const val FRAGMENT_SHADER = """
             #extension GL_OES_EGL_image_external : require
+            #ifdef GL_FRAGMENT_PRECISION_HIGH
+            precision highp float;
+            #else
             precision mediump float;
+            #endif
             uniform samplerExternalOES uTexture;
-            varying vec2 vCamCoord;
-            varying vec2 vTexCoord;
+            uniform mat3 uRay;          // output (u, v, 1) -> camera ray
+            uniform vec4 uIntrinsics;   // fx, fy, cx, cy in normalized image coords (y down)
+            uniform vec3 uRadial;       // k1, k2, k3
+            uniform vec2 uTangential;   // p1, p2
+            uniform float uMaxRadius2;
+            uniform mat4 uStMatrix;
+            varying vec2 vUv;
+            const vec4 BLACK = vec4(0.0, 0.0, 0.0, 1.0);
             void main() {
-                if (any(lessThan(vCamCoord, vec2(0.0))) || any(greaterThan(vCamCoord, vec2(1.0)))) {
-                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-                } else {
-                    gl_FragColor = texture2D(uTexture, vTexCoord);
+                vec3 ray = uRay * vec3(vUv, 1.0);
+                if (ray.z <= 0.0) { gl_FragColor = BLACK; return; }
+                vec2 n = ray.xy / ray.z;
+                float r2 = dot(n, n);
+                if (r2 > uMaxRadius2) { gl_FragColor = BLACK; return; }
+                float radial = 1.0 + r2 * (uRadial.x + r2 * (uRadial.y + r2 * uRadial.z));
+                vec2 d = n * radial + vec2(
+                    2.0 * uTangential.x * n.x * n.y + uTangential.y * (r2 + 2.0 * n.x * n.x),
+                    uTangential.x * (r2 + 2.0 * n.y * n.y) + 2.0 * uTangential.y * n.x * n.y);
+                vec2 image = uIntrinsics.xy * d + uIntrinsics.zw;
+                if (any(lessThan(image, vec2(0.0))) || any(greaterThan(image, vec2(1.0)))) {
+                    gl_FragColor = BLACK;
+                    return;
                 }
+                vec2 tex = (uStMatrix * vec4(image.x, 1.0 - image.y, 0.0, 1.0)).xy;
+                gl_FragColor = texture2D(uTexture, tex);
             }
         """
 

@@ -241,6 +241,15 @@ class CameraController(context: Context, private val listener: Listener) {
                 set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                 rig.fpsRange?.let { set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
                 set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, exposure.coerceIn(rig.exposureRange.lower, rig.exposureRange.upper))
+                // Per-camera stabilization and HAL undistortion would move each eye's image
+                // independently; the renderer stabilizes and undistorts both eyes consistently.
+                set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
+                if (rig.canDisableOis) {
+                    set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF)
+                }
+                if (rig.undistortInShader) {
+                    set(CaptureRequest.DISTORTION_CORRECTION_MODE, CaptureRequest.DISTORTION_CORRECTION_MODE_OFF)
+                }
             }
             session.setRepeatingRequest(request.build(), null, handler)
         } catch (e: Exception) {
