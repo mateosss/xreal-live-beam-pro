@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">Stereo Passthrough</string>
+    <string name="play">Play</string>
+    <string name="pause">Pause</string>
+    <string name="swap">Swap L/R</string>
+    <string name="hud">HUD</string>
+    <string name="info">Info</string>
+    <string name="more">More</string>
+    <string name="convergence">Convergence</string>
+    <string name="depth">Depth</string>
+    <string name="brightness">Brightness</string>
+    <string name="permission_needed">Camera permission is required to show the passthrough view.</string>
+    <string name="grant">Grant permission</string>
+</resources>
