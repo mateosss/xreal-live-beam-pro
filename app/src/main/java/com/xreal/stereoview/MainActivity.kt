@@ -10,6 +10,7 @@ import android.opengl.GLSurfaceView
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.util.Size
 import android.view.Display
 import android.view.GestureDetector
@@ -199,7 +200,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     private fun startCamera() {
         val (left, right) = surfaces ?: return
         val settings = viewModel.settings.value
-        val rig = CameraUtils.selectRig(cameraManager, displayRotation(), settings.maxResolution)
+        val rig = CameraUtils.selectRig(cameraManager, displayRotation(), settings.maxResolution, settings.cameraPair)
         if (rig == null) {
             onCameraError("No rear camera found")
             return
@@ -210,11 +211,13 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     }
 
     override fun onCameraStatus(message: String) {
+        Log.i(TAG, message)
         runOnUiThread { controls.setStatus(message) }
     }
 
     override fun onCameraStreaming(rig: StereoRig, size: Size) {
         runOnUiThread {
+            Log.i(TAG, "Streaming ${rig.description} at $size")
             this.rig = rig
             streamSize = size
             controls.setExposureRange(rig.exposureRange)
@@ -228,6 +231,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     }
 
     override fun onCameraError(message: String) {
+        Log.w(TAG, message)
         runOnUiThread { controls.setStatus("⚠ $message") }
     }
 
@@ -252,7 +256,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
 
         if (s.outputMode != previous.outputMode) {
             rebuildOutput()
-        } else if (s.maxResolution != previous.maxResolution && playing) {
+        } else if ((s.maxResolution != previous.maxResolution || s.cameraPair != previous.cameraPair) && playing) {
             startCamera()
         } else if (s.exposure != previous.exposure) {
             camera.setExposure(s.exposure)
@@ -298,8 +302,17 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
                 }
             )
         }
-        CrashReporter.showReport(this, "Camera & display info", text + "\n--- logcat ---\n" + CrashReporter.ownLogcat())
+        val props = CameraUtils.cameraSystemProperties()
+        CrashReporter.showReport(
+            this,
+            "Camera & display info",
+            "$text\n--- camera properties ---\n$props\n--- logcat ---\n${CrashReporter.ownLogcat()}",
+        )
     }
+
+    override fun cameraPairOptions(): List<Pair<String, String>> =
+        CameraUtils.stereoRigs(cameraManager, displayRotation(), viewModel.settings.value.maxResolution)
+            .map { it.key to it.description }
 
     // endregion
 
@@ -334,6 +347,10 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     }
 
     // endregion
+
+    private companion object {
+        const val TAG = "StereoView"
+    }
 
     private fun displayRotation(): Int = display?.rotation ?: 0
 

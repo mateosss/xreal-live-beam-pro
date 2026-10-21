@@ -36,12 +36,17 @@ data class StereoRig(
     val exposureRange: Range<Int>,
     val fpsRange: Range<Int>?,
     val baselineMm: Float?,
+    val leftFocal: Float,
+    val rightFocal: Float,
     /** True when the lens baseline runs vertically in the current display orientation. */
     val baselineVertical: Boolean,
     /** Rig to try if this one cannot be opened or configured. */
     val fallback: StereoRig? = null,
 ) {
     val deviceIds: List<String> get() = listOf(left.deviceId, right.deviceId).distinct()
+
+    /** Identifies the camera pair independent of which side is left. */
+    val key: String get() = listOf(left.label, right.label).sorted().joinToString("+")
 
     /** Eye index (0 = left camera, 1 = right camera) and target for each output on [deviceId]. */
     fun targetsFor(deviceId: String): List<Pair<Int, CameraTarget>> =
@@ -50,11 +55,12 @@ data class StereoRig(
     val description: String
         get() = buildString {
             append("${mode.label}: L=${left.label} R=${right.label}")
+            if (mode != RigMode.MONO) append(", focal %.2f/%.2f mm".format(leftFocal, rightFocal))
             baselineMm?.let { append(", baseline %.1f mm".format(it)) }
         }
 }
 
-private class Candidate(val target: CameraTarget, val chars: CameraCharacteristics) {
+private class Candidate(val target: CameraTarget, val chars: CameraCharacteristics, val hidden: Boolean = false) {
     val focal: Float = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.minOrNull() ?: 0f
     val pose: FloatArray? = chars.get(CameraCharacteristics.LENS_POSE_TRANSLATION)
     val sizes: Set<Size> = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
@@ -62,46 +68,83 @@ private class Candidate(val target: CameraTarget, val chars: CameraCharacteristi
 }
 
 object CameraUtils {
-    /** Pairs whose focal lengths differ by more than this are not treated as a stereo pair. */
-    private const val MAX_FOCAL_MISMATCH = 0.15f
+    /** Camera IDs probed beyond the public list; vendors sometimes hide extra cameras from it. */
+    private const val PROBE_IDS = 32
 
     /**
-     * Picks the best way to get two rear camera streams, with a chain of fallbacks:
-     * logical multi-camera (hardware synced) → concurrent pair → plain dual open → mono.
+     * Every way to stream two different rear cameras, best first: matching focal lengths
+     * outweigh everything, then hardware-synced logical cameras, then advertised concurrency,
+     * then the widest baseline. Cameras missing from the public list are tried last.
      */
-    fun selectRig(manager: CameraManager, displayRotation: Int, maxHeight: Int): StereoRig? {
-        val backIds = manager.cameraIdList.filter {
-            manager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) ==
-                CameraCharacteristics.LENS_FACING_BACK
-        }
-        if (backIds.isEmpty()) return null
-        val rigs = mutableListOf<StereoRig>()
+    fun stereoRigs(manager: CameraManager, displayRotation: Int, maxHeight: Int): List<StereoRig> {
+        val scored = mutableListOf<Pair<Float, StereoRig>>()
+        val back = backCandidates(manager)
 
-        for (id in backIds) {
-            val chars = manager.getCameraCharacteristics(id)
-            if (!isLogicalMultiCamera(chars)) continue
-            val physicals = chars.physicalCameraIds.map {
-                Candidate(CameraTarget(id, it), manager.getCameraCharacteristics(it))
+        for (logical in back.filter { isLogicalMultiCamera(it.chars) }) {
+            val physicals = logical.chars.physicalCameraIds.mapNotNull { id ->
+                characteristicsOrNull(manager, id)?.let { Candidate(CameraTarget(logical.target.deviceId, id), it) }
             }
-            bestPair(physicals)?.let { (a, b) ->
-                buildRig(RigMode.LOGICAL, a, b, chars, displayRotation, maxHeight)?.let(rigs::add)
+            for ((a, b) in pairs(physicals)) {
+                buildRig(RigMode.LOGICAL, a, b, logical.chars, displayRotation, maxHeight)
+                    ?.let { scored += pairScore(a, b, bonus = 2000f) to it }
             }
         }
 
-        val standalone = backIds.map { Candidate(CameraTarget(it, null), manager.getCameraCharacteristics(it)) }
-        bestPair(standalone)?.let { (a, b) ->
+        val concurrentSets = manager.concurrentCameraIds
+        for ((a, b) in pairs(back)) {
             val ids = setOf(a.target.deviceId, b.target.deviceId)
-            val concurrent = manager.concurrentCameraIds.any { it.containsAll(ids) }
-            val mode = if (concurrent) RigMode.CONCURRENT else RigMode.DUAL
-            buildRig(mode, a, b, a.chars, displayRotation, maxHeight)?.let(rigs::add)
+            val concurrent = concurrentSets.any { it.containsAll(ids) }
+            val hiddenPenalty = if (a.hidden || b.hidden) 500f else 0f
+            buildRig(if (concurrent) RigMode.CONCURRENT else RigMode.DUAL, a, b, a.chars, displayRotation, maxHeight)
+                ?.let { scored += pairScore(a, b, bonus = (if (concurrent) 1000f else 0f) - hiddenPenalty) to it }
         }
-
-        val primary = standalone.first()
-        buildRig(RigMode.MONO, primary, primary, primary.chars, displayRotation, maxHeight)?.let(rigs::add)
-
-        // Link each rig to the next one as its fallback.
-        return rigs.foldRight(null as StereoRig?) { rig, next -> rig.copy(fallback = next) }
+        return scored.sortedByDescending { it.first }.map { it.second }
     }
+
+    /**
+     * The rig to start with, followed by a chain of fallbacks: [preferredKey]'s rig if it
+     * exists, the best other stereo rigs, then one camera feeding both eyes.
+     */
+    fun selectRig(manager: CameraManager, displayRotation: Int, maxHeight: Int, preferredKey: String = ""): StereoRig? {
+        val stereo = stereoRigs(manager, displayRotation, maxHeight)
+        val ordered = (stereo.filter { it.key == preferredKey } + stereo.filter { it.key != preferredKey })
+            .take(MAX_STEREO_ATTEMPTS)
+            .toMutableList()
+        backCandidates(manager).firstOrNull { !it.hidden }?.let { primary ->
+            buildRig(RigMode.MONO, primary, primary, primary.chars, displayRotation, maxHeight)?.let(ordered::add)
+        }
+        // Link each rig to the next one as its fallback.
+        return ordered.foldRight(null as StereoRig?) { rig, next -> rig.copy(fallback = next) }
+    }
+
+    private const val MAX_STEREO_ATTEMPTS = 4
+
+    /** Back-facing cameras from the public list plus any that answer when probed by ID. */
+    private fun backCandidates(manager: CameraManager): List<Candidate> {
+        val listed = manager.cameraIdList.toList()
+        val probed = (0 until PROBE_IDS).map(Int::toString).filter { it !in listed }
+        return (listed + probed).mapNotNull { id ->
+            val chars = characteristicsOrNull(manager, id) ?: return@mapNotNull null
+            if (chars.get(CameraCharacteristics.LENS_FACING) != CameraCharacteristics.LENS_FACING_BACK) return@mapNotNull null
+            Candidate(CameraTarget(id, null), chars, hidden = id !in listed)
+        }
+    }
+
+    private fun characteristicsOrNull(manager: CameraManager, id: String): CameraCharacteristics? = try {
+        manager.getCameraCharacteristics(id)
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun pairs(candidates: List<Candidate>): List<Pair<Candidate, Candidate>> =
+        candidates.indices.flatMap { i -> (i + 1 until candidates.size).map { j -> candidates[i] to candidates[j] } }
+            .filter { (a, b) -> commonSizes(a, b).isNotEmpty() }
+
+    private fun pairScore(a: Candidate, b: Candidate, bonus: Float): Float =
+        bonus - focalMismatch(a, b) * 5000f + (baselineMm(a, b) ?: 0f)
+
+    private fun focalMismatch(a: Candidate, b: Candidate): Float =
+        abs(a.focal - b.focal) / maxOf(a.focal, b.focal, 1e-3f)
 
     fun rotationDegrees(displayRotation: Int): Int = when (displayRotation) {
         Surface.ROTATION_90 -> 90
@@ -117,25 +160,6 @@ object CameraUtils {
     private fun isLogicalMultiCamera(chars: CameraCharacteristics): Boolean =
         chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
             ?.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA) == true
-
-    /** The pair with matching focal lengths and, among those, the widest baseline. */
-    private fun bestPair(candidates: List<Candidate>): Pair<Candidate, Candidate>? {
-        var best: Pair<Candidate, Candidate>? = null
-        var bestScore = Float.NEGATIVE_INFINITY
-        for (i in candidates.indices) for (j in i + 1 until candidates.size) {
-            val a = candidates[i]
-            val b = candidates[j]
-            val mismatch = abs(a.focal - b.focal) / maxOf(a.focal, b.focal, 1e-3f)
-            if (mismatch > MAX_FOCAL_MISMATCH) continue
-            if (commonSizes(a, b).isEmpty()) continue
-            val score = -mismatch * 1000f + (baselineMm(a, b) ?: 0f)
-            if (score > bestScore) {
-                bestScore = score
-                best = a to b
-            }
-        }
-        return best
-    }
 
     private fun buildRig(
         mode: RigMode,
@@ -173,6 +197,8 @@ object CameraUtils {
             exposureRange = deviceChars.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE) ?: Range(0, 0),
             fpsRange = pickFpsRange(deviceChars),
             baselineMm = if (mode == RigMode.MONO) null else baselineMm(a, b),
+            leftFocal = left.focal,
+            rightFocal = right.focal,
             baselineVertical = vertical,
         )
     }
@@ -221,7 +247,10 @@ object CameraUtils {
         val listed = manager.cameraIdList.toList()
         val physical = listed.flatMap { manager.getCameraCharacteristics(it).physicalCameraIds }
             .filter { it !in listed }.distinct()
-        for (id in listed + physical) {
+        val probed = (0 until PROBE_IDS).map(Int::toString)
+            .filter { it !in listed && it !in physical && characteristicsOrNull(manager, it) != null }
+        appendLine("Listed: $listed  physical-only: $physical  hidden (probed): $probed")
+        for (id in listed + physical + probed) {
             val c = try {
                 manager.getCameraCharacteristics(id)
             } catch (e: Exception) {
@@ -234,7 +263,12 @@ object CameraUtils {
                 CameraCharacteristics.LENS_FACING_EXTERNAL -> "external"
                 else -> "?"
             }
-            appendLine("Camera $id${if (id in physical) " (physical only)" else ""} — $facing")
+            val tag = when (id) {
+                in physical -> " (physical only)"
+                in probed -> " (hidden, probed)"
+                else -> ""
+            }
+            appendLine("Camera $id$tag — $facing")
             c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.let {
                 appendLine("  focal: ${it.joinToString { f -> "%.2f mm".format(f) }}")
             }
@@ -265,6 +299,17 @@ object CameraUtils {
         }
         val concurrent = manager.concurrentCameraIds
         appendLine("Concurrent sets: " + if (concurrent.isEmpty()) "none" else concurrent.joinToString())
+    }
+
+    /** Camera-related system properties, e.g. vendor lists of apps allowed to see extra cameras. */
+    fun cameraSystemProperties(): String = try {
+        ProcessBuilder("getprop").redirectErrorStream(true).start().inputStream.bufferedReader()
+            .readLines()
+            .filter { it.contains("camera", ignoreCase = true) || it.contains("aux", ignoreCase = true) }
+            .joinToString("\n")
+            .ifEmpty { "(none readable)" }
+    } catch (e: Exception) {
+        "(getprop unavailable: ${e.message})"
     }
 
     private fun poseReference(ref: Int?): String = when (ref) {

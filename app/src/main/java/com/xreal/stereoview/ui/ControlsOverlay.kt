@@ -20,6 +20,9 @@ class ControlsOverlay(
     interface Actions {
         fun onPlayPause()
         fun onShowInfo()
+
+        /** Selectable camera pairs as (key, description), best first. */
+        fun cameraPairOptions(): List<Pair<String, String>>
     }
 
     private val context = binding.root.context
@@ -83,6 +86,7 @@ class ControlsOverlay(
     private fun showMoreMenu() {
         val s = viewModel.settings.value
         val items = arrayOf(
+            "Camera pair: ${s.cameraPair.ifEmpty { "auto" }}",
             "Output: ${s.outputMode.label}",
             "Image rotation: ${if (s.rotationOverride < 0) "auto" else "${s.rotationOverride}°"}",
             "Max resolution: ${s.maxResolution}p",
@@ -93,28 +97,35 @@ class ControlsOverlay(
             .setTitle("Settings")
             .setItems(items) { _, which ->
                 when (which) {
-                    0 -> choose("Output", OutputMode.entries.map { it.label }, s.outputMode.ordinal) { i ->
+                    0 -> {
+                        val options = listOf("" to "Auto (best pair, with fallbacks)") + actions.cameraPairOptions()
+                        val labels = options.map { (key, description) -> if (key.isEmpty()) description else "$key\n$description" }
+                        choose("Camera pair", labels, options.indexOfFirst { it.first == s.cameraPair }) { i ->
+                            viewModel.update { it.copy(cameraPair = options[i].first) }
+                        }
+                    }
+                    1 -> choose("Output", OutputMode.entries.map { it.label }, s.outputMode.ordinal) { i ->
                         viewModel.update { it.copy(outputMode = OutputMode.entries[i]) }
                     }
-                    1 -> {
+                    2 -> {
                         val values = listOf(-1, 0, 90, 180, 270)
                         choose("Image rotation", values.map { if (it < 0) "Auto" else "$it°" }, values.indexOf(s.rotationOverride)) { i ->
                             viewModel.update { it.copy(rotationOverride = values[i]) }
                         }
                     }
-                    2 -> {
+                    3 -> {
                         val values = listOf(1080, 720, 480)
                         choose("Max resolution", values.map { "${it}p" }, values.indexOf(s.maxResolution)) { i ->
                             viewModel.update { it.copy(maxResolution = values[i]) }
                         }
                     }
-                    3 -> {
+                    4 -> {
                         val values = listOf(16, 33, 50, 100)
                         choose("Wait for partner frame", values.map { "$it ms" }, values.indexOf(s.syncThresholdMs)) { i ->
                             viewModel.update { it.copy(syncThresholdMs = values[i]) }
                         }
                     }
-                    4 -> viewModel.update { it.copy(convergencePx = 0f, depth = 1f, exposure = 0) }
+                    5 -> viewModel.update { it.copy(convergencePx = 0f, depth = 1f, exposure = 0) }
                 }
             }
             .show()

@@ -50,6 +50,8 @@ data class StereoSettings(
     /** Maximum stream height; the largest shared size up to this is used. */
     val maxResolution: Int = 1080,
     val outputMode: OutputMode = OutputMode.AUTO,
+    /** [com.xreal.stereoview.camera.StereoRig.key] of a manually chosen camera pair, or empty for automatic. */
+    val cameraPair: String = "",
 ) {
     companion object {
         const val CONVERGENCE_RANGE = 50f
@@ -72,6 +74,7 @@ class SettingsRepository(private val context: Context) {
         val SYNC_THRESHOLD = intPreferencesKey("sync_threshold_ms")
         val MAX_RESOLUTION = intPreferencesKey("max_resolution")
         val OUTPUT_MODE = stringPreferencesKey("output_mode")
+        val CAMERA_PAIR = stringPreferencesKey("camera_pair")
     }
 
     val settings = context.dataStore.data.map { p ->
@@ -87,6 +90,7 @@ class SettingsRepository(private val context: Context) {
             syncThresholdMs = p[Keys.SYNC_THRESHOLD] ?: defaults.syncThresholdMs,
             maxResolution = p[Keys.MAX_RESOLUTION] ?: defaults.maxResolution,
             outputMode = enumOrDefault(p[Keys.OUTPUT_MODE], defaults.outputMode),
+            cameraPair = p[Keys.CAMERA_PAIR] ?: defaults.cameraPair,
         )
     }
 
@@ -102,6 +106,7 @@ class SettingsRepository(private val context: Context) {
             p[Keys.SYNC_THRESHOLD] = s.syncThresholdMs
             p[Keys.MAX_RESOLUTION] = s.maxResolution
             p[Keys.OUTPUT_MODE] = s.outputMode.name
+            p[Keys.CAMERA_PAIR] = s.cameraPair
         }
     }
 
