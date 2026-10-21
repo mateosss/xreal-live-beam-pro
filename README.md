@@ -215,6 +215,17 @@ resolution drops automatically to the largest size both cameras can deliver at t
 Rates beyond auto exposure's ranges need manual exposure, which sets the frame duration
 directly. The HUD shows the exposure time, ISO and frame duration the sensor actually used.
 
+## Glasses USB probe
+
+*Settings → Glasses USB probe* checks whether the app can talk to the glasses directly over
+USB, as [Monado](https://monado.freedesktop.org/) does for their IMU and, on the Air 2 Ultra,
+their tracking cameras. It lists every USB device and interface Android exposes to apps
+(video, HID, vendor-specific, with endpoints). For XREAL glasses (vendor `3318`) it then asks
+for USB access, tries to claim each interface, and reads briefly from its input endpoints.
+It never forces an interface away from its current owner, which could break the glasses'
+display or tracking until they are replugged, and it sends nothing to the glasses. The
+report ends with a verdict and can be shared; **Info** includes the USB listing too.
+
 ## Debugging without adb
 
 If the app crashes, the next launch shows the report (Java stack trace, or the native

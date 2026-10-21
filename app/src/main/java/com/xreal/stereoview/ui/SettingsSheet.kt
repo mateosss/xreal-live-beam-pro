@@ -34,6 +34,7 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
         fun cameraPairOptions(): List<Pair<String, String>>
         fun setStatus(text: CharSequence)
         fun showProfiles()
+        fun probeUsb()
     }
 
     private var dialog: BottomSheetDialog? = null
@@ -160,6 +161,7 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
                 viewModel.update { it.copy(outputMode = OutputMode.entries[i]) }
             }
         }
+        row(content, "Glasses USB probe", "Check whether the app can reach the glasses' cameras and IMU") { host.probeUsb() }
 
         section(content, "Camera setup", "this device")
         row(content, "Camera pair", s.cameraPair.ifEmpty { "Automatic" }, locked = recording) {

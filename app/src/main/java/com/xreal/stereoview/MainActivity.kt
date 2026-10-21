@@ -45,6 +45,8 @@ import com.xreal.stereoview.ui.SettingsViewModel
 import com.xreal.stereoview.ui.StereoSettings
 import com.xreal.stereoview.util.CrashReporter
 import com.xreal.stereoview.util.DisplayUtils
+import com.xreal.stereoview.util.UsbProbe
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -404,11 +406,48 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             )
         }
         val props = CameraUtils.cameraSystemProperties()
+        val usb = runCatching { UsbProbe(this).describe() }.getOrElse { "USB query failed: ${it.message}" }
         CrashReporter.showReport(
             this,
             "Camera & display info",
-            "$text\n--- camera properties ---\n$props\n--- logcat ---\n${CrashReporter.ownLogcat()}",
+            "$text\n--- camera properties ---\n$props\n--- USB ---\n$usb\n--- logcat ---\n${CrashReporter.ownLogcat()}",
         )
+    }
+
+    /**
+     * Lists USB devices and, for XREAL glasses, asks for access and checks which interfaces
+     * (cameras, IMU) the app can claim and read.
+     */
+    override fun onUsbProbe() {
+        val probe = UsbProbe(this)
+        val glasses = probe.glasses()
+        fun show(report: String) = CrashReporter.showReport(this, "Glasses USB probe", report)
+        fun run(device: android.hardware.usb.UsbDevice) {
+            controls.setStatus("USB probe: waiting for access to ${device.productName ?: device.deviceName}…")
+            probe.requestAndProbe(device) { report ->
+                controls.setStatus("USB probe finished")
+                show("$report\n\n--- all USB devices ---\n${probe.describe()}")
+            }
+        }
+        val label = { d: android.hardware.usb.UsbDevice -> "%04x:%04x %s".format(d.vendorId, d.productId, d.productName ?: d.deviceName) }
+        when (glasses.size) {
+            0 -> show("No XREAL glasses (USB vendor 3318) visible to apps.\n\n${probe.describe()}")
+            1 -> MaterialAlertDialogBuilder(this)
+                .setTitle("Probe ${label(glasses[0])}")
+                .setMessage(
+                    "Android will ask to give this app access to the glasses. The probe then tries to claim each " +
+                        "USB interface without taking it from the system, and reads briefly from it. Nothing is " +
+                        "sent to the glasses.",
+                )
+                .setPositiveButton("Probe") { _, _ -> run(glasses[0]) }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+            else -> MaterialAlertDialogBuilder(this)
+                .setTitle("Probe which USB device? (asks for access, only reads)")
+                .setItems(glasses.map(label).toTypedArray()) { _, i -> run(glasses[i]) }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        }
     }
 
     override fun cameraPairOptions(): List<Pair<String, String>> =

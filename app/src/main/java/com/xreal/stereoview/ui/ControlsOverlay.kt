@@ -28,6 +28,7 @@ class ControlsOverlay(
         fun onShowInfo()
         fun onAutoAlign()
         fun onRecord()
+        fun onUsbProbe()
         fun isRecording(): Boolean
 
         /** Selectable camera pairs as (key, description), best first. */
@@ -48,6 +49,7 @@ class ControlsOverlay(
         override fun cameraPairOptions() = actions.cameraPairOptions()
         override fun setStatus(text: CharSequence) = this@ControlsOverlay.setStatus(text)
         override fun showProfiles() = profilesDialog.show()
+        override fun probeUsb() = actions.onUsbProbe()
     })
     private val profilesDialog = ProfilesDialog(context, viewModel, actions::isRecording, ::setStatus)
 
