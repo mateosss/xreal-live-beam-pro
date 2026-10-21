@@ -210,7 +210,10 @@ the whole panel.
 All settings persist through DataStore. The defaults (Swap L/R on, image rotation 270°,
 convergence −50 px) are the ones that work on the Beam Pro.
 
-**Frame rate.** *Settings → Frame rate* lists the rates the camera supports. The stream
+**Frame rate.** *Settings → Frame rate* lists the rates the camera supports. On the Beam
+Pro (firmware X4000_X502), every stream size of the rear cameras is limited to 30 fps by
+the camera HAL (no high-speed modes), so 30 fps is the maximum there; **Info** shows these
+limits per camera. The stream
 resolution drops automatically to the largest size both cameras can deliver at that rate.
 Rates beyond auto exposure's ranges need manual exposure, which sets the frame duration
 directly. The HUD shows the exposure time, ISO and frame duration the sensor actually used.
@@ -223,8 +226,15 @@ their tracking cameras. It lists every USB device and interface Android exposes 
 (video, HID, vendor-specific, with endpoints). For XREAL glasses (vendor `3318`) it then asks
 for USB access, tries to claim each interface, and reads briefly from its input endpoints.
 It never forces an interface away from its current owner, which could break the glasses'
-display or tracking until they are replugged, and it sends nothing to the glasses. The
-report ends with a verdict and can be shared; **Info** includes the USB listing too.
+display or tracking until they are replugged. It also decodes the camera's USB video (UVC)
+formats. If the camera interfaces can be claimed, it offers to capture one frame: it starts
+the stream with the standard UVC probe/commit requests, reads for up to 3 s, stops it, and
+saves the raw frame (plus a PGM if it is 8-bit) under
+`Android/data/com.xreal.stereoview/files/glasses_probe/`. The report ends with a verdict and
+can be shared; **Info** includes the USB listing too.
+
+On a Beam Pro with Air 2 Ultra glasses, the glasses appear to apps as `3318:0426` with HID
+interfaces (IMU and controls) and a UVC camera streaming over a bulk endpoint.
 
 ## Debugging without adb
 

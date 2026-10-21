@@ -56,8 +56,11 @@ class UsbProbe(private val context: Context) {
      * Asks for permission to [device] (the system shows a dialog), then probes it on a
      * background thread. [onDone] gets the report on the main thread.
      */
-    fun requestAndProbe(device: UsbDevice, onDone: (String) -> Unit) {
-        val manager = manager ?: return onDone("No UsbManager")
+    /** Result of [requestAndProbe]: the report, and whether a camera frame can be grabbed. */
+    class Result(val report: String, val canGrab: Boolean)
+
+    fun requestAndProbe(device: UsbDevice, onDone: (Result) -> Unit) {
+        val manager = manager ?: return onDone(Result("No UsbManager", false))
         if (manager.hasPermission(device)) {
             probeInBackground(device, onDone)
             return
@@ -68,7 +71,7 @@ class UsbProbe(private val context: Context) {
                 if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
                     probeInBackground(device, onDone)
                 } else {
-                    onDone("USB permission denied for ${deviceLine(device).trim()}\n\n${describe()}")
+                    onDone(Result("USB permission denied for ${deviceLine(device).trim()}\n\n${describe()}", false))
                 }
             }
         }
@@ -78,20 +81,60 @@ class UsbProbe(private val context: Context) {
         manager.requestPermission(device, PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_MUTABLE))
     }
 
-    private fun probeInBackground(device: UsbDevice, onDone: (String) -> Unit) {
+    private fun probeInBackground(device: UsbDevice, onDone: (Result) -> Unit) {
         val main = ContextCompat.getMainExecutor(context)
         thread(name = "UsbProbe") {
-            val report = try {
+            val result = try {
                 probe(device)
             } catch (e: Exception) {
-                "Probe failed: $e"
+                Result("Probe failed: $e", false)
+            }
+            main.execute { onDone(result) }
+        }
+    }
+
+    /**
+     * Starts the glasses' UVC camera with the standard probe/commit commands, grabs a frame
+     * into [dir] and stops it again. Needs permission (granted by [requestAndProbe]).
+     */
+    fun grabFrame(device: UsbDevice, dir: java.io.File, onDone: (String) -> Unit) {
+        val main = ContextCompat.getMainExecutor(context)
+        thread(name = "UvcGrab") {
+            val report = try {
+                grab(device, dir)
+            } catch (e: Exception) {
+                "Frame grab failed: $e"
             }
             main.execute { onDone(report) }
         }
     }
 
+    private fun grab(device: UsbDevice, dir: java.io.File): String {
+        val connection = manager?.openDevice(device) ?: return "openDevice failed"
+        val claimed = mutableListOf<UsbInterface>()
+        try {
+            val interfaces = (0 until device.interfaceCount).map(device::getInterface)
+                .filter { it.interfaceClass == UsbConstants.USB_CLASS_VIDEO && it.alternateSetting == 0 }
+            val streaming = interfaces.firstOrNull { it.interfaceSubclass == 2 } ?: return "No video streaming interface"
+            val endpoint = (0 until streaming.endpointCount).map(streaming::getEndpoint)
+                .firstOrNull { it.direction == UsbConstants.USB_DIR_IN && it.type == UsbConstants.USB_ENDPOINT_XFER_BULK }
+                ?: return "No bulk input endpoint on the streaming interface"
+            for (iface in interfaces) {
+                if (!connection.claimInterface(iface, false)) return "Cannot claim video interface ${iface.id}"
+                claimed += iface
+            }
+            val formats = Uvc.parseFormats(connection.rawDescriptors ?: ByteArray(0))
+            return Uvc.grabFrame(connection, streaming, endpoint, formats, dir)
+        } finally {
+            claimed.forEach { connection.releaseInterface(it) }
+            connection.close()
+        }
+    }
+
     /** Opens [device], tries to claim every interface and reads briefly from its IN endpoints. */
-    private fun probe(device: UsbDevice): String = buildString {
+    private fun probe(device: UsbDevice): Result {
+        var canGrab = false
+        val report = buildString {
         appendLine("Probing ${deviceLine(device).trim()}")
         appendLine("Serial: ${runCatching { device.serialNumber }.getOrNull() ?: "-"}, version ${device.version}")
         val connection = manager?.openDevice(device)
@@ -100,7 +143,16 @@ class UsbProbe(private val context: Context) {
             return@buildString
         }
         try {
-            appendLine("Opened. Raw descriptors: ${connection.rawDescriptors?.size ?: 0} bytes")
+            val raw = connection.rawDescriptors ?: ByteArray(0)
+            appendLine("Opened. Raw descriptors: ${raw.size} bytes")
+            val formats = Uvc.parseFormats(raw)
+            if (formats.isNotEmpty()) {
+                appendLine()
+                appendLine("Camera video formats (UVC):")
+                formats.forEach { appendLine(it.describe()) }
+            }
+            var videoClaimed = 0
+            var videoTotal = 0
             var claimed = 0
             var total = 0
             for (c in 0 until device.configurationCount) {
@@ -110,15 +162,20 @@ class UsbProbe(private val context: Context) {
                     total++
                     appendLine()
                     append(interfaceLines(iface))
+                    val video = iface.interfaceClass == UsbConstants.USB_CLASS_VIDEO && iface.alternateSetting == 0
+                    if (video) videoTotal++
                     if (!connection.claimInterface(iface, false)) {
                         appendLine("    claim: FAILED (in use by a kernel driver or another app)")
                         continue
                     }
                     claimed++
+                    if (video) videoClaimed++
                     appendLine("    claim: OK")
                     for (e in 0 until iface.endpointCount) {
                         val ep = iface.getEndpoint(e)
                         if (ep.direction != UsbConstants.USB_DIR_IN) continue
+                        // A UVC stream sends nothing until started; the frame grab does that.
+                        if (iface.interfaceClass == UsbConstants.USB_CLASS_VIDEO) continue
                         when (ep.type) {
                             UsbConstants.USB_ENDPOINT_XFER_BULK, UsbConstants.USB_ENDPOINT_XFER_INT -> {
                                 val buffer = ByteArray(maxOf(ep.maxPacketSize, 64) * 4)
@@ -151,9 +208,12 @@ class UsbProbe(private val context: Context) {
                     else -> "Verdict: full access. Camera and IMU streams can be read directly by the app, given their protocol (see Monado)."
                 }
             )
+            canGrab = videoTotal > 0 && videoClaimed == videoTotal
         } finally {
             connection.close()
         }
+        }
+        return Result(report, canGrab)
     }
 
     private fun deviceLine(d: UsbDevice): String {

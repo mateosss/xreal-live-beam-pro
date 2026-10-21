@@ -424,9 +424,30 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         fun show(report: String) = CrashReporter.showReport(this, "Glasses USB probe", report)
         fun run(device: android.hardware.usb.UsbDevice) {
             controls.setStatus("USB probe: waiting for access to ${device.productName ?: device.deviceName}…")
-            probe.requestAndProbe(device) { report ->
+            probe.requestAndProbe(device) { result ->
                 controls.setStatus("USB probe finished")
-                show("$report\n\n--- all USB devices ---\n${probe.describe()}")
+                val report = "${result.report}\n\n--- all USB devices ---\n${probe.describe()}"
+                if (!result.canGrab) {
+                    show(report)
+                    return@requestAndProbe
+                }
+                // The camera is ours to use: offer to start it and grab one frame.
+                MaterialAlertDialogBuilder(this)
+                    .setTitle("Glasses camera is accessible")
+                    .setMessage(
+                        "Capture one frame from it? This starts the camera with standard USB video commands, " +
+                            "reads for up to 3 seconds and stops it again. The frame is saved for inspection.",
+                    )
+                    .setPositiveButton("Capture") { _, _ ->
+                        controls.setStatus("Capturing a frame from the glasses camera…")
+                        val dir = java.io.File(getExternalFilesDir(null), "glasses_probe")
+                        probe.grabFrame(device, dir) { grab ->
+                            controls.setStatus("Glasses camera capture finished")
+                            show("--- frame capture ---\n$grab\n\n--- probe ---\n$report")
+                        }
+                    }
+                    .setNegativeButton("Just the report") { _, _ -> show(report) }
+                    .show()
             }
         }
         val label = { d: android.hardware.usb.UsbDevice -> "%04x:%04x %s".format(d.vendorId, d.productId, d.productName ?: d.deviceName) }
