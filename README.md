@@ -36,15 +36,12 @@ one half. In 2D mode both eyes see the whole frame.
 | Full-screen output on the glasses display | `render/StereoPresentation.kt`, `util/DisplayUtils.kt` |
 | Touchscreen controls and DataStore settings | `ui/ControlsOverlay.kt`, `ui/SettingsViewModel.kt` |
 
-**Camera selection.** The app tries each option below in order. If one can't be opened or
-configured, it falls back to the next:
-
-1. **Logical multi-camera** that contains two back physical cameras with matching focal
-   lengths. This gives one session with physical-camera outputs, and the hardware can sync it.
-2. **Concurrent pair** listed in `CameraManager.concurrentCameraIds`.
-3. **Dual open** of two matching back cameras, even though the device doesn't list them as
-   concurrent.
-4. **Mono**: one camera feeds both eyes (2D), so you still get passthrough.
+**Camera selection.** The app ranks every pair of rear cameras it can find. Matching focal
+lengths count most, then hardware-synced logical multi-cameras, then pairs the device lists
+as concurrent, then the widest lens spacing. It tries the best few in turn, falling back to a
+single camera feeding both eyes (2D) if none opens. Camera IDs missing from the public list
+are probed too, because vendors sometimes hide extra cameras. *More → Camera pair* overrides
+the automatic choice.
 
 Left and right come from `LENS_POSE_TRANSLATION`, converted to the current screen orientation.
 If the pose isn't available, the ID order is used. **Swap L/R** corrects either case.
@@ -70,17 +67,22 @@ how many frame pairs exceeded the threshold.
 | Depth | Zooms each eye 1–2× about its center, which also scales disparity. Pinch on the touchscreen does the same |
 | Brightness | Exposure compensation, using the camera's own range |
 | HUD | Frame-rate and sync statistics |
-| Info | Dump of all cameras (poses, focal lengths, sync capability, concurrent sets) and displays |
-| More | Output mode, image rotation override, max resolution, sync wait, reset adjustments |
+| Info | Report of every camera (including hidden ones), the displays, camera system properties and the app log, with Share/Copy |
+| More | Camera pair, output mode, image rotation override, max resolution, sync wait, reset adjustments |
 
 All settings persist through DataStore.
 
+## Debugging without adb
+
+If the app crashes, the next launch shows the report (Java stack trace, or the native
+tombstone recovered from the system's exit records) with Share and Copy buttons. For problems
+that aren't crashes, **Info** shares the camera setup together with the app's recent log.
+
 ## Not implemented / caveats
 
-- **Untested on Beam Pro hardware.** The project builds and passes lint. How the Beam Pro
-  exposes its two cameras (logical, concurrent or neither) and the glasses display is only
-  known on the device. The **Info** dialog shows exactly that. If the image is rotated wrong,
-  use *More → Image rotation*. If depth is inverted, use *Swap L/R*.
+- Confirmed working on a Beam Pro with both rear cameras streaming. Camera exposure and
+  display detection may still vary between firmware versions. If the image is rotated wrong,
+  use *More → Image rotation*; if depth looks inverted, use *Swap L/R*.
 - No separate floating overlay window: a `TYPE_APPLICATION_OVERLAY` window would be mirrored
   to the glasses along with everything else, so the controls go on the phone screen instead
   (presentation mode) or on a hideable panel. This is why the app requests only the `CAMERA`
