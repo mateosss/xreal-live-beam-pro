@@ -89,3 +89,7 @@ that aren't crashes, **Info** shares the camera setup together with the app's re
   permission.
 - Stretch goals from the spec are not built: SBS recording, automatic convergence, L/R color
   matching, and lens-distortion correction from `LENS_INTRINSIC_CALIBRATION`.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
