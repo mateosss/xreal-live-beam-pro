@@ -1,9 +1,7 @@
 # XREAL Beam Pro — Stereo Camera Passthrough
 
-Built with Claude Code from the prompt in
-[gabriellupu/xreal-glasses-live-beam-pro](https://github.com/gabriellupu/xreal-glasses-live-beam-pro),
-copied to [`docs/xreal_beampro_stereo_passthrough_spec.md`](docs/xreal_beampro_stereo_passthrough_spec.md).
-That file is not covered by this project's license.
+Human note: LLM-built utility app to do a stereoscopic live stream of the stereo xreal beam pro cameras to the xreal glasses (tested on air 2 ultra ones). The original prompt was derived from
+[gabriellupu/xreal-glasses-live-beam-pro](https://github.com/gabriellupu/xreal-glasses-live-beam-pro), copied to [`docs/xreal_beampro_stereo_passthrough_spec.md`](docs/xreal_beampro_stereo_passthrough_spec.md), with additional prompts to fix issues. Automated apk, code, and text follows, beware.
 
 Android app for the XREAL Beam Pro. It opens both rear cameras, places their feeds side by side
 (left eye | right eye) and shows the result full-screen on connected XREAL Air glasses, for
