@@ -27,10 +27,12 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * One dataset recording: per camera a video (or JPEG sequence), a frames.csv with the sensor
- * timestamp of every stored frame and a capture_results.csv with per-frame camera metadata;
- * IMU streams under imu/; settings changes in settings.jsonl; and metadata.json describing
- * the device, cameras, calibration and recording settings.
+ * One dataset recording, in the EuRoC layout (see [Euroc]): per camera mav0/camN/ with a
+ * video (data.mp4) or image sequence (data/), data.csv, sensor.yaml, plus frames.csv with
+ * extra per-frame details and capture_results.csv with per-frame camera metadata; mav0/imu0
+ * built from the gyroscope and accelerometer when the recording ends; every IMU stream as
+ * recorded under imu/; settings changes in settings.jsonl; and metadata.json describing the
+ * device, cameras, calibration and recording settings.
  *
  * Frames are stored by the renderer on its GL thread ([onFrameStored]); capture results arrive
  * on the camera thread ([onCaptureResult]). [finish] must run after the renderer has released
@@ -44,6 +46,8 @@ class Recording private constructor(
     private val imu: ImuRecorder,
     private val settingsLog: LineWriter,
     private val metadata: JSONObject,
+    private val cameraClockIsBoottime: Boolean,
+    private val boottimeMinusMonotonicNs: Long,
 ) : CameraController.ResultListener, ActiveRecording {
 
     /** One recorded camera. [camera] is the renderer's camera index (0 = rig's left, 1 = right). */
@@ -53,7 +57,8 @@ class Recording private constructor(
         val target: CameraTarget,
         val size: Size,
         val video: VideoEncoder?,
-        val jpeg: JpegWriter?,
+        val images: ImageWriter?,
+        val data: LineWriter,
         val frames: LineWriter,
         val results: LineWriter,
     ) {
@@ -78,6 +83,31 @@ class Recording private constructor(
     fun eyeView(geometry: StereoGeometry, s: StereoSettings, output: Output): EyeView =
         eyeView(geometry, s, output.index, output.size, mono)
 
+    /**
+     * Added to camera timestamps to put them on the IMU's CLOCK_BOOTTIME: zero for a REALTIME
+     * camera clock, else decided from the first frame (null until then).
+     */
+    @Volatile
+    private var cameraOffsetNs: Long? = if (cameraClockIsBoottime) 0L else null
+    private var cameraOffsetNote = if (cameraClockIsBoottime) "camera clock is REALTIME (CLOCK_BOOTTIME)" else ""
+
+    /** The dataset timestamp (IMU clock) of a frame with sensor timestamp [sensorNs]. GL thread. */
+    fun eurocNs(sensorNs: Long): Long {
+        val offset = cameraOffsetNs ?: run {
+            // A frame is a few ms old when drawn; seconds or more away means another clock (MONOTONIC).
+            val age = SystemClock.elapsedRealtimeNanos() - sensorNs
+            val o = if (age in 0..1_000_000_000L) 0L else boottimeMinusMonotonicNs
+            cameraOffsetNote = if (o == 0L) {
+                "camera clock source unknown, but frames are %.1f ms old on CLOCK_BOOTTIME: no offset".format(age / 1e6)
+            } else {
+                "camera clock source unknown and not CLOCK_BOOTTIME: added CLOCK_BOOTTIME − CLOCK_MONOTONIC"
+            }
+            cameraOffsetNs = o
+            o
+        }
+        return sensorNs + offset
+    }
+
     /** GL thread: a frame of [output] captured at [timestampNs] was handed to its encoder. */
     fun onFrameStored(output: Output, timestampNs: Long, intrinsics: DoubleArray?, stabilization: DoubleArray?) {
         val o = output
@@ -85,7 +115,8 @@ class Recording private constructor(
         o.lastNs = timestampNs
         val line = o.line
         line.setLength(0)
-        line.append(o.stored).append(',').append(timestampNs).append(',').append(SystemClock.elapsedRealtimeNanos())
+        line.append(o.stored).append(',').append(timestampNs).append(',').append(eurocNs(timestampNs)).append(',')
+            .append(SystemClock.elapsedRealtimeNanos())
         if (view == RecordView.RECTIFIED) {
             val k = intrinsics ?: DoubleArray(4)
             for (v in k) line.append(',').append(v)
@@ -93,6 +124,8 @@ class Recording private constructor(
             for (v in q) line.append(',').append(v)
         }
         o.frames.line(line)
+        val t = eurocNs(timestampNs)
+        o.data.line("$t,$t.${o.images?.extension ?: "png"}")
         o.stored++
     }
 
@@ -154,16 +187,20 @@ class Recording private constructor(
         val imuSummary = imu.stop()
         for (o in outputs) {
             o.video?.finish()
-            o.jpeg?.finish()
+            o.images?.finish()
+            o.data.close()
             o.frames.close()
             o.results.close()
         }
         settingsLog.close()
+        val imu0 = writeImu0()
 
         metadata.put("status", if (error == null) "complete" else "stopped with error: $error")
         metadata.put("clocks_at_end", end)
         metadata.put("duration_s", (end.getLong("boottime_ns") - startBoottimeNs) / 1e9)
         metadata.put("imu", imuSummary)
+        metadata.put("imu0", imu0)
+        metadata.getJSONObject("timestamps").put("camera_offset_ns", cameraOffsetNs ?: 0L).put("camera_offset_note", cameraOffsetNote)
         val cams = metadata.getJSONArray("cameras")
         for (o in outputs) {
             cams.getJSONObject(o.index).put("stats", JSONObject().apply {
@@ -177,10 +214,10 @@ class Recording private constructor(
                     put("encoder", it.codecName)
                     it.error?.let { e -> put("encoder_error", e) }
                 }
-                o.jpeg?.let {
-                    put("jpeg_written", it.written.get())
-                    put("jpeg_dropped", it.dropped.get())
-                    put("jpeg_failed", it.failed.get())
+                o.images?.let {
+                    put("images_written", it.written.get())
+                    put("images_dropped", it.dropped.get())
+                    put("images_failed", it.failed.get())
                 }
                 put("capture_results", o.results.lines - 1)
             })
@@ -190,16 +227,35 @@ class Recording private constructor(
         return buildString {
             append("Saved ${dir.name}: ")
             append(outputs.joinToString { "${it.name} ${it.stored} frames" })
-            outputs.firstNotNullOfOrNull { it.jpeg?.dropped?.get()?.takeIf { d -> d > 0 } }?.let { append(", $it JPEG frames dropped") }
+            outputs.firstNotNullOfOrNull { it.images?.dropped?.get()?.takeIf { d -> d > 0 } }?.let { append(", $it image frames dropped") }
             outputs.firstNotNullOfOrNull { it.video?.error }?.let { append(", encoder error: $it") }
-            imuSummary.getJSONArray("streams").let { streams ->
-                for (i in 0 until streams.length()) {
-                    val t = streams.getJSONObject(i)
-                    if (t.getString("stream") == "GYROSCOPE" || t.getString("stream") == "ACCELEROMETER") {
-                        append(", ${t.getString("stream").lowercase()} %.0f Hz".format(t.optDouble("mean_rate_hz", 0.0)))
-                    }
-                }
-            }
+            if (imu0.optLong("samples") > 0) append(", imu0 %.0f Hz".format(imu0.optDouble("rate_hz"))) else append(", no imu0 (${imu0.optString("note")})")
+        }
+    }
+
+    /**
+     * Builds mav0/imu0 from the recorded gyroscope and accelerometer (calibrated if recorded,
+     * else uncalibrated). Returns a summary for metadata.json.
+     */
+    private fun writeImu0(): JSONObject {
+        val imuDir = File(dir, "imu")
+        val pair = listOf("" to "calibrated", "_uncalibrated" to "uncalibrated").map { (suffix, kind) ->
+            Triple(File(imuDir, "gyroscope$suffix.csv"), File(imuDir, "accelerometer$suffix.csv"), kind)
+        }.firstOrNull { it.first.exists() && it.second.exists() }
+            ?: return JSONObject().put("samples", 0).put("note", "record the gyroscope and accelerometer streams")
+        val out = File(Euroc.mav(dir), "imu0").apply { mkdirs() }
+        return try {
+            val (rows, rate) = Euroc.mergeImu(pair.first, pair.second, File(out, "data.csv"))
+            File(out, "sensor.yaml").writeText(Euroc.imuYaml(
+                listOf(
+                    "Beam Pro IMU (${pair.third} Android gyroscope + accelerometer), CLOCK_BOOTTIME.",
+                    "Body frame = this IMU = Android device sensor frame (x right, y up, z out of the screen).",
+                ),
+                "Beam Pro gyroscope timestamps, accelerometer linearly interpolated", Euroc.transform(Mat3.identity(), null), rate,
+            ))
+            JSONObject().put("samples", rows).put("rate_hz", rate).put("source", "${pair.first.name} + ${pair.second.name}")
+        } catch (e: Exception) {
+            JSONObject().put("samples", 0).put("note", "building imu0 failed: $e")
         }
     }
 
@@ -249,8 +305,8 @@ class Recording private constructor(
             val outputs = mutableListOf<Output>()
             try {
                 order.forEachIndexed { index, camera ->
-                    val camDir = File(dir, "cam$index").apply { mkdirs() }
-                    val frameColumns = mutableListOf("frame", "timestamp_ns", "render_ns")
+                    val camDir = File(Euroc.mav(dir), "cam$index").apply { mkdirs() }
+                    val frameColumns = mutableListOf("frame", "sensor_timestamp_ns", "timestamp_ns", "render_ns")
                     if (s.recordView == RecordView.RECTIFIED) frameColumns += listOf("fx", "fy", "cx", "cy", "stab_qw", "stab_qx", "stab_qy", "stab_qz")
                     outputs += Output(
                         index = index,
@@ -258,9 +314,14 @@ class Recording private constructor(
                         target = if (camera == 0) rig.left else rig.right,
                         size = size,
                         video = s.recordFormat.mime?.let {
-                            VideoEncoder(File(camDir, "video.mp4"), it, size.width, size.height, rig.targetFps, bitrate)
+                            VideoEncoder(File(camDir, "data.mp4"), it, size.width, size.height, rig.targetFps, bitrate)
                         },
-                        jpeg = if (s.recordFormat == RecordFormat.JPEG) JpegWriter(File(camDir, "data"), size.width, size.height) else null,
+                        images = if (s.recordFormat.mime == null) {
+                            ImageWriter(File(camDir, "data"), size.width, size.height, png = s.recordFormat == RecordFormat.PNG)
+                        } else {
+                            null
+                        },
+                        data = LineWriter(File(camDir, "data.csv"), Euroc.CAMERA_HEADER),
                         frames = LineWriter(File(camDir, "frames.csv"), frameColumns.joinToString(",")),
                         results = LineWriter(File(camDir, "capture_results.csv"), RESULT_COLUMNS),
                     )
@@ -268,7 +329,8 @@ class Recording private constructor(
             } catch (e: Exception) {
                 outputs.forEach { o ->
                     o.video?.finish()
-                    o.jpeg?.finish()
+                    o.images?.finish()
+                    o.data.close()
                     o.frames.close()
                     o.results.close()
                 }
@@ -279,13 +341,16 @@ class Recording private constructor(
             val sensorManager = context.getSystemService(SensorManager::class.java)
             val imu = ImuRecorder(sensorManager, File(dir, "imu"), ImuStream.parse(s.imuStreams), s.imuRate)
 
+            val timestamps = timestampInfo(cameraManager, rig)
             val metadata = JSONObject().apply {
-                put("format_version", 1)
+                put("format_version", 2)
+                put("layout", "EuRoC MAV (mav0/) plus extras")
                 put("status", "recording")
                 put("name", name)
+                put("source", "BEAM_PRO")
                 put("device", Metadata.device(context))
                 put("clocks_at_start", startClocks)
-                put("timestamps", timestampInfo(cameraManager, rig))
+                put("timestamps", timestamps)
                 put("recording", JSONObject().apply {
                     put("view", s.recordView.name)
                     put("format", s.recordFormat.name)
@@ -326,20 +391,66 @@ class Recording private constructor(
                 })
                 put("extra", extraInfo)
                 put("files", JSONObject().apply {
-                    put("camN/video.mp4", "H.264/H.265, no B-frames; frame i = row i of camN/frames.csv")
-                    put("camN/data/<timestamp_ns>.jpg", "JPEG mode: one file per stored frame")
-                    put("camN/frames.csv", "stored frames: sensor timestamp (start of exposure), and for rectified recordings the intrinsics and stabilization rotation used")
-                    put("camN/capture_results.csv", "every capture result of the camera: exposure, readout and rolling shutter times, ISO, focus, per-frame intrinsics")
-                    put("imu/<stream>.csv", "one file per IMU stream")
+                    put("mav0/camN/data.csv", "EuRoC: timestamp (IMU clock, start of exposure) and image file name of every stored frame")
+                    put("mav0/camN/data.mp4", "video modes: H.264/H.265, no B-frames; frame i = row i of data.csv (tools/to_euroc.py extracts data/<timestamp>.png)")
+                    put("mav0/camN/data/<timestamp_ns>.png|.jpg", "image modes: one file per stored frame (PNG = 8-bit grayscale)")
+                    put("mav0/camN/sensor.yaml", "EuRoC camera description: intrinsics, distortion, T_BS (body = Beam Pro IMU)")
+                    put("mav0/camN/frames.csv", "stored frames: sensor timestamp, dataset timestamp, and for rectified recordings the intrinsics and stabilization rotation used")
+                    put("mav0/camN/capture_results.csv", "every capture result of the camera: exposure, readout and rolling shutter times, ISO, focus, per-frame intrinsics")
+                    put("mav0/imu0/data.csv", "EuRoC IMU: gyroscope samples with the accelerometer interpolated to them (written when the recording ends)")
+                    put("mav0/imu0/sensor.yaml", "EuRoC IMU description (noise values are placeholders)")
+                    put("imu/<stream>.csv", "every recorded IMU stream as delivered")
                     put("settings.jsonl", "settings at start and after every change")
                 })
             }
             File(dir, "metadata.json").writeText(metadata.toString(2))
+            writeEurocDescriptions(dir, metadata, rig.targetFps.toDouble(), s.recordView == RecordView.RECTIFIED)
 
-            val recording = Recording(dir, s.recordView, s.recordFormat, outputs, imu, LineWriter(File(dir, "settings.jsonl")), metadata)
+            val recording = Recording(
+                dir, s.recordView, s.recordFormat, outputs, imu, LineWriter(File(dir, "settings.jsonl")), metadata,
+                cameraClockIsBoottime = timestamps.getBoolean("camera_timestamps_comparable_with_imu"),
+                boottimeMinusMonotonicNs = startClocks.getLong("boottime_minus_monotonic_ns"),
+            )
             recording.onSettingsChanged(s)
             imu.start()
             return recording
+        }
+
+        /** mav0/body.yaml and each camera's sensor.yaml, from the camera entries of [metadata]. */
+        private fun writeEurocDescriptions(dir: File, metadata: JSONObject, fps: Double, rectified: Boolean) {
+            File(Euroc.mav(dir), "body.yaml").writeText(Euroc.bodyYaml("The body frame is the Beam Pro IMU (Android device sensor frame)."))
+            val cams = metadata.getJSONArray("cameras")
+            for (i in 0 until cams.length()) {
+                val cam = cams.getJSONObject(i)
+                val size = cam.getJSONArray("size")
+                fun doubles(a: JSONArray) = DoubleArray(a.length()) { a.getDouble(it) }
+                fun matrix(key: String, o: JSONObject) = o.getJSONArray(key).let { rows -> DoubleArray(9) { rows.getJSONArray(it / 3).getDouble(it % 3) } }
+                val notes = mutableListOf("${cam.getString("name")}: ${cam.getString("eye")} eye, camera ${cam.getString("camera")}, ${if (rectified) "rectified" else "raw"} images.")
+                val translation = if (cam.optString("pose_reference") == "GYROSCOPE" && cam.opt("position_m") is JSONArray) {
+                    doubles(cam.getJSONArray("position_m"))
+                } else {
+                    notes += "Translation unknown (lens pose not relative to the gyroscope): set to zero. Calibrate (e.g. Kalibr)."
+                    null
+                }
+                val yaml = if (rectified) {
+                    val r = cam.getJSONObject("rectified")
+                    Euroc.cameraYaml(
+                        notes, cam.getString("name"), Euroc.transform(matrix("device_from_virtual_rotation", r), translation), fps,
+                        size.getInt(0), size.getInt(1), doubleArrayOf(r.getDouble("fx"), r.getDouble("fy"), r.getDouble("cx"), r.getDouble("cy")),
+                        "radial-tangential", DoubleArray(4),
+                    )
+                } else {
+                    val r = cam.getJSONObject("raw")
+                    val d = (r.opt("opencv_radtan_k1_k2_p1_p2_k3") as? JSONArray)?.let(::doubles) ?: DoubleArray(5)
+                    if (d.size > 4 && d[4] != 0.0) notes += "k3 = ${d[4]} is dropped: EuRoC's radial-tangential model has k1, k2, p1, p2 only."
+                    Euroc.cameraYaml(
+                        notes, cam.getString("name"), Euroc.transform(matrix("device_from_camera_rotation", cam), translation), fps,
+                        size.getInt(0), size.getInt(1), doubleArrayOf(r.getDouble("fx"), r.getDouble("fy"), r.getDouble("cx"), r.getDouble("cy")),
+                        "radial-tangential", d.copyOf(4),
+                    )
+                }
+                File(File(Euroc.mav(dir), cam.getString("name")), "sensor.yaml").writeText(yaml)
+            }
         }
 
         private const val RESULT_COLUMNS = "frame_number,timestamp_ns,readout_timestamp_ns,exposure_time_ns,frame_duration_ns," +

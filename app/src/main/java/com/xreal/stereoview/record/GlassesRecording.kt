@@ -7,6 +7,7 @@ import android.os.SystemClock
 import android.util.Log
 import com.xreal.stereoview.glasses.GlassesDevice
 import com.xreal.stereoview.glasses.GlassesProtocol
+import com.xreal.stereoview.glasses.Kb4Camera
 import com.xreal.stereoview.ui.StereoSettings
 import com.xreal.stereoview.util.PngGray
 import org.json.JSONArray
@@ -21,10 +22,11 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * A dataset from the glasses: the left and right tracking cameras as lossless grayscale PNGs
- * (cam0 = left, cam1 = right, 480×640 upright) named by their timestamps, the glasses' IMU
- * when it was taken over, the Beam Pro's IMU streams, the glasses' factory calibration and
- * metadata.json.
+ * A dataset from the glasses, in the EuRoC layout (see [Euroc]): the left and right tracking
+ * cameras as lossless grayscale PNGs in mav0/cam0 and mav0/cam1 (480×640 upright), the
+ * glasses' IMU as mav0/imu0 when it was taken over, plus frames.csv with each frame's sequence
+ * number, arrival time and metadata bytes, the full glasses IMU reports, the Beam Pro's IMU
+ * streams, the glasses' factory calibration and metadata.json.
  *
  * Camera and glasses-IMU timestamps are on the glasses' clock (ns since the glasses booted);
  * every row also has its arrival time on the Beam Pro's CLOCK_BOOTTIME, from which
@@ -34,11 +36,12 @@ class GlassesRecording private constructor(
     override val dir: File,
     private val cams: List<Cam>,
     private val glassesImu: LineWriter?,
+    private val imu0: LineWriter?,
     private val imu: ImuRecorder,
     private val settingsLog: LineWriter,
     private val metadata: JSONObject,
 ) : ActiveRecording {
-    private class Cam(val name: String, val dir: File, val frames: LineWriter) {
+    private class Cam(val name: String, val dir: File, val data: LineWriter, val frames: LineWriter) {
         var stored = 0L
         var firstNs = 0L
         var lastNs = 0L
@@ -55,6 +58,8 @@ class GlassesRecording private constructor(
     private val dropped = AtomicInteger()
     private val failed = AtomicInteger()
     private var imuSamples = 0L
+    private var imuFirstNs = 0L
+    private var imuLastNs = 0L
     private val cameraOffset = OffsetEstimate()
     private val imuOffset = OffsetEstimate()
     @Volatile
@@ -96,7 +101,8 @@ class GlassesRecording private constructor(
             if (cam.stored == 0L) cam.firstNs = eye.timestampNs else cam.maxGapNs = maxOf(cam.maxGapNs, eye.timestampNs - cam.lastNs)
             cam.lastNs = maxOf(cam.lastNs, eye.timestampNs)
             cam.stored++
-            cam.frames.line("${eye.timestampNs},${eye.sequence},${eye.arrivalNs},${eye.timestampNs}.png")
+            cam.data.line("${eye.timestampNs},${eye.timestampNs}.png")
+            cam.frames.line("${eye.timestampNs},${eye.sequence},${eye.arrivalNs},${eye.meta.joinToString("") { "%02x".format(it) }}")
         }
     }
 
@@ -104,7 +110,14 @@ class GlassesRecording private constructor(
     fun onImu(s: GlassesProtocol.ImuSample, arrivalNs: Long) {
         val w = glassesImu ?: return
         imuOffset.add(arrivalNs, s.timestampNs)
+        if (imuSamples == 0L) imuFirstNs = s.timestampNs
+        imuLastNs = s.timestampNs
         imuSamples++
+        imu0?.line(buildString(120) {
+            append(s.timestampNs)
+            for (i in 0..2) append(',').append(s.gyroRadPerSec(i))
+            for (i in 0..2) append(',').append(s.accelMps2(i))
+        })
         w.line(buildString(220) {
             append(s.timestampNs).append(',').append(arrivalNs)
             for (i in 0..2) append(',').append(s.gyroRadPerSec(i))
@@ -136,9 +149,26 @@ class GlassesRecording private constructor(
         encoder.shutdown()
         encoder.awaitTermination(30, TimeUnit.SECONDS)
         val imuSummary = imu.stop()
-        cams.forEach { it.frames.close() }
+        cams.forEach {
+            it.data.close()
+            it.frames.close()
+            // PNGs are stored by two threads, so rows can be slightly out of order.
+            Euroc.sortByTimestamp(File(it.dir, "data.csv"))
+            Euroc.sortByTimestamp(File(it.dir, "frames.csv"))
+        }
         glassesImu?.close()
+        imu0?.close()
         settingsLog.close()
+        if (imu0 != null) {
+            val rate = if (imuSamples > 1) (imuSamples - 1) * 1e9 / (imuLastNs - imuFirstNs) else 0.0
+            File(Euroc.mav(dir), "imu0/sensor.yaml").writeText(Euroc.imuYaml(
+                listOf(
+                    "XREAL Air 2 Ultra IMU in its own axes, uncalibrated (biases and scales: glasses_calibration.json).",
+                    "Same clock as the cameras (glasses clock). Body frame = this IMU.",
+                ),
+                "glasses IMU", Euroc.transform(com.xreal.stereoview.util.Mat3.identity(), null), rate,
+            ))
+        }
 
         metadata.put("status", if (error == null) "complete" else "stopped with error: $error")
         metadata.put("clocks_at_end", end)
@@ -189,9 +219,22 @@ class GlassesRecording private constructor(
             val name = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
             val dir = File(Recording.root(context), name)
             check(dir.mkdirs()) { "Cannot create $dir" }
-            val cams = listOf("cam0", "cam1").map { camName ->
-                val camDir = File(dir, camName).apply { File(this, "data").mkdirs() }
-                Cam(camName, camDir, LineWriter(File(camDir, "frames.csv"), "timestamp_ns,sequence,arrival_ns,file"))
+            val mav = Euroc.mav(dir)
+            val cams = listOf("cam0", "cam1").mapIndexed { i, camName ->
+                val camDir = File(mav, camName).apply { File(this, "data").mkdirs() }
+                File(camDir, "sensor.yaml").writeText(cameraYaml(i))
+                Cam(
+                    camName, camDir,
+                    LineWriter(File(camDir, "data.csv"), Euroc.CAMERA_HEADER),
+                    LineWriter(File(camDir, "frames.csv"), "timestamp_ns,sequence,arrival_ns,meta_hex"),
+                )
+            }
+            File(mav, "body.yaml").writeText(Euroc.bodyYaml("The body frame is the glasses IMU."))
+            val imu0 = if (withImu) {
+                File(mav, "imu0").mkdirs()
+                LineWriter(File(mav, "imu0/data.csv"), Euroc.IMU_HEADER)
+            } else {
+                null
             }
             val glassesImu = if (withImu) {
                 File(dir, "imu").mkdirs()
@@ -207,7 +250,8 @@ class GlassesRecording private constructor(
             val imu = ImuRecorder(sensorManager, File(dir, "imu"), ImuStream.parse(s.imuStreams), s.imuRate)
 
             val metadata = JSONObject().apply {
-                put("format_version", 1)
+                put("format_version", 2)
+                put("layout", "EuRoC MAV (mav0/) plus extras")
                 put("status", "recording")
                 put("name", name)
                 put("source", "GLASSES")
@@ -243,19 +287,36 @@ class GlassesRecording private constructor(
                 put("all_sensors", Metadata.allSensors(sensorManager))
                 put("extra", extraInfo)
                 put("files", JSONObject().apply {
-                    put("camN/data/<timestamp_ns>.png", "camera images, glasses clock")
-                    put("camN/frames.csv", "timestamp_ns (glasses), sequence, arrival_ns (BOOTTIME), file")
-                    put("imu/glasses_imu.csv", "glasses IMU (if taken over): SI units in the IMU's own axes, uncalibrated, plus raw values")
+                    put("mav0/camN/data/<timestamp_ns>.png", "camera images (8-bit grayscale), glasses clock")
+                    put("mav0/camN/data.csv", "EuRoC: timestamp, file name")
+                    put("mav0/camN/sensor.yaml", "EuRoC camera description from Monado's reference calibration (another unit; recalibrate)")
+                    put("mav0/camN/frames.csv", "timestamp_ns (glasses), sequence, arrival_ns (BOOTTIME), first 64 bytes of the frame's metadata row")
+                    put("mav0/imu0/data.csv", "EuRoC IMU: the glasses IMU (if taken over), SI units in its own axes, uncalibrated, glasses clock")
+                    put("imu/glasses_imu.csv", "glasses IMU (if taken over): SI units, magnetometer, temperature and raw values")
                     put("imu/<stream>.csv", "Beam Pro IMU streams, CLOCK_BOOTTIME")
                     put("glasses_calibration.json", "the glasses' factory calibration (if the IMU was taken over)")
                     put("settings.jsonl", "settings at start and after every change")
                 })
             }
             File(dir, "metadata.json").writeText(metadata.toString(2))
-            val recording = GlassesRecording(dir, cams, glassesImu, imu, LineWriter(File(dir, "settings.jsonl")), metadata)
+            val recording = GlassesRecording(dir, cams, glassesImu, imu0, imu, LineWriter(File(dir, "settings.jsonl")), metadata)
             recording.onSettingsChanged(s)
             imu.start()
             return recording
+        }
+
+        /** EuRoC sensor.yaml of camera [index] from the reference calibration (pinhole + equidistant = KB4). */
+        private fun cameraYaml(index: Int): String {
+            val c = Kb4Camera.REFERENCE[index]
+            return Euroc.cameraYaml(
+                listOf(
+                    "cam$index (${if (index == 0) "left" else "right"}) tracking camera of XREAL Air 2 Ultra glasses, upright 480x640 grayscale.",
+                    "Intrinsics and T_BS are Monado's reference Basalt calibration of ANOTHER unit: a starting point only.",
+                    "Calibrate your glasses (e.g. Kalibr, pinhole-equi). Body frame = glasses IMU.",
+                ),
+                "cam$index", Euroc.transform(c.imuFromCamera, c.positionInImu), 30.0,
+                Kb4Camera.WIDTH, Kb4Camera.HEIGHT, doubleArrayOf(c.fx, c.fy, c.cx, c.cy), "equidistant", c.k,
+            )
         }
 
         /**

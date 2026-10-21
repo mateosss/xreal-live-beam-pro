@@ -18,6 +18,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.slider.Slider
 import com.xreal.stereoview.R
 import com.xreal.stereoview.camera.StereoRig
+import com.xreal.stereoview.glasses.GlassesDevice
 import com.xreal.stereoview.record.ImuStream
 import com.xreal.stereoview.record.Recording
 import java.io.File
@@ -25,11 +26,13 @@ import java.io.File
 /**
  * All settings in one sheet, grouped by what they affect. The Capture and Recording groups
  * are stored in profiles; the rest describes this device and stays when switching profiles.
- * Rows show their current values and update live.
+ * Only the rows that apply to the selected camera source are shown. Rows show their current
+ * values and update live.
  */
 class SettingsSheet(private val context: Context, private val viewModel: SettingsViewModel, private val host: Host) {
     interface Host {
         val rig: StereoRig?
+        val glassesControls: GlassesDevice.CameraControls?
         fun isRecording(): Boolean
         fun cameraPairOptions(): List<Pair<String, String>>
         fun setStatus(text: CharSequence)
@@ -78,22 +81,89 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
             }
         }
         val glassesSource = s.cameraSource == CameraSource.GLASSES
-        if (glassesSource) {
-            row(
-                content, "Glasses IMU",
-                if (s.glassesImu) "Taken over and recorded (XREAL head tracking stops until replug)" else "Left to the system",
-                locked = recording,
-            ) {
-                choose(
-                    "Glasses IMU",
-                    listOf(
-                        "Leave to the system (head tracking keeps working)",
-                        "Take over and record it, with the factory calibration (head tracking stops until the glasses are replugged)",
-                    ),
-                    if (s.glassesImu) 1 else 0,
-                ) { i -> viewModel.update { it.copy(glassesImu = i == 1) } }
+        if (glassesSource) glassesCaptureRows(content, s, recording) else beamProCaptureRows(content, s, recording)
+        row(content, "Scale", s.scaleMode.label) {
+            choose("Scale", ScaleMode.entries.map { it.label }, s.scaleMode.ordinal) { i ->
+                viewModel.update { it.copy(scaleMode = ScaleMode.entries[i]) }
             }
         }
+
+        section(content, "Recording", "saved in profiles")
+        if (glassesSource) {
+            row(
+                content, "Images",
+                "Raw 480×640 grayscale PNG (lossless) per camera at 30 fps, EuRoC layout, timestamps on the glasses' clock",
+            ) {}
+        } else {
+            row(content, "Images", s.recordView.label, locked = recording) {
+                choose("Recorded images", RecordView.entries.map { it.label }, s.recordView.ordinal) { i ->
+                    viewModel.update { it.copy(recordView = RecordView.entries[i]) }
+                }
+            }
+            row(content, "Format", s.recordFormat.label, locked = recording) {
+                choose("Format", RecordFormat.entries.map { it.label }, s.recordFormat.ordinal) { i ->
+                    viewModel.update { it.copy(recordFormat = RecordFormat.entries[i]) }
+                }
+            }
+            if (s.recordFormat.mime != null) {
+                row(content, "Video bitrate", "${s.recordBitrateMbps} Mbit/s per camera", locked = recording) {
+                    val values = listOf(10, 20, 40, 60, 100)
+                    choose("Video bitrate per camera", values.map { "$it Mbit/s" }, values.indexOf(s.recordBitrateMbps)) { i ->
+                        viewModel.update { it.copy(recordBitrateMbps = values[i]) }
+                    }
+                }
+            }
+        }
+        // With the glasses as source, the Beam Pro's IMU is recorded as an extra (it doesn't move with the head).
+        val imuPrefix = if (glassesSource) "Beam Pro IMU" else "IMU"
+        val sensors = context.getSystemService(SensorManager::class.java)
+        row(content, "$imuPrefix rate", "${s.imuRate.label}\n${imuRateNote(sensors, s.imuRate)}", locked = recording) {
+            val labels = ImuRate.entries.map { "${it.label}\n${imuRateNote(sensors, it)}" }
+            choose("$imuPrefix sampling", labels, s.imuRate.ordinal) { i -> viewModel.update { it.copy(imuRate = ImuRate.entries[i]) } }
+        }
+        val streams = ImuStream.parse(s.imuStreams)
+        row(content, "$imuPrefix streams", streams.joinToString { it.file.replace('_', ' ') }.ifEmpty { "none" }, locked = recording) {
+            chooseImuStreams(sensors, streams)
+        }
+        row(content, "Recordings", recordingsSummary()) { showRecordings() }
+
+        section(content, "Glasses & output", null)
+        row(content, "Glasses field of view", "%.0f° diagonal (used by 1:1 scale)".format(s.glassesFovDeg)) {
+            val presets = listOf(
+                45f to "45° — Air",
+                46f to "46° — Air 2 / Air 2 Pro",
+                50f to "50° — One",
+                52f to "52° — Air 2 Ultra",
+                57f to "57° — One Pro",
+            )
+            choose("Glasses field of view (diagonal)", presets.map { it.second }, presets.indexOfFirst { it.first == s.glassesFovDeg }) { i ->
+                viewModel.update { it.copy(glassesFovDeg = presets[i].first) }
+            }
+        }
+        row(content, "SBS layout", s.sbsLayout.label) {
+            choose("SBS layout", SbsLayout.entries.map { it.label }, s.sbsLayout.ordinal) { i ->
+                viewModel.update { it.copy(sbsLayout = SbsLayout.entries[i]) }
+            }
+        }
+        row(content, "Output", s.outputMode.label, locked = recording) {
+            choose("Output", OutputMode.entries.map { it.label }, s.outputMode.ordinal) { i ->
+                viewModel.update { it.copy(outputMode = OutputMode.entries[i]) }
+            }
+        }
+        row(content, "Glasses USB probe", "Check whether the app can reach the glasses' cameras and IMU") { host.probeUsb() }
+
+        section(content, "Camera setup", "this device")
+        if (!glassesSource) beamProSetupRows(content, s, recording)
+        row(content, "Eye alignment", "pitch %+.2f°, roll %+.2f° (Align measures it)".format(s.alignPitchDeg, s.alignRollDeg)) {
+            showAlignmentDialog()
+        }
+        row(content, "Reset view adjustments", "Convergence, depth and brightness back to defaults") {
+            val d = StereoSettings()
+            viewModel.update { it.copy(convergencePx = d.convergencePx, depth = d.depth, exposure = d.exposure) }
+        }
+    }
+
+    private fun beamProCaptureRows(content: LinearLayout, s: StereoSettings, recording: Boolean) {
         row(content, "Frame rate", "${s.targetFps} fps", locked = recording) {
             val rig = host.rig
             val values = rig?.availableFps ?: listOf(30)
@@ -125,77 +195,58 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
                 viewModel.update { it.copy(stabilization = Stabilization.entries[i]) }
             }
         }
-        row(content, "Scale", s.scaleMode.label) {
-            choose("Scale", ScaleMode.entries.map { it.label }, s.scaleMode.ordinal) { i ->
-                viewModel.update { it.copy(scaleMode = ScaleMode.entries[i]) }
-            }
-        }
         row(content, "Sync wait", "${s.syncThresholdMs} ms for the partner frame") {
             val values = listOf(8, 16, 33, 50, 100)
             choose("Wait for partner frame", values.map { "$it ms" }, values.indexOf(s.syncThresholdMs)) { i ->
                 viewModel.update { it.copy(syncThresholdMs = values[i]) }
             }
         }
+    }
 
-        section(content, "Recording", "saved in profiles")
-        if (glassesSource) {
-            row(content, "Glasses images", "Raw 480×640 grayscale PNG per frame (lossless), 30 fps per camera; the options below apply to the Beam Pro cameras") {}
+    private fun glassesCaptureRows(content: LinearLayout, s: StereoSettings, recording: Boolean) {
+        row(content, "Frame rate", "30 fps per camera (fixed by the glasses; left and right alternate at 60 Hz)") {}
+        row(
+            content, "Glasses IMU",
+            if (s.glassesImu) "Taken over and recorded as imu0 (XREAL head tracking stops until replug)" else "Left to the system",
+            locked = recording,
+        ) {
+            choose(
+                "Glasses IMU",
+                listOf(
+                    "Leave to the system (head tracking keeps working)",
+                    "Take over and record it, with the factory calibration (head tracking stops until the glasses are replugged)",
+                ),
+                if (s.glassesImu) 1 else 0,
+            ) { i -> viewModel.update { it.copy(glassesImu = i == 1) } }
         }
-        row(content, "Images", s.recordView.label, locked = recording) {
-            choose("Recorded images", RecordView.entries.map { it.label }, s.recordView.ordinal) { i ->
-                viewModel.update { it.copy(recordView = RecordView.entries[i]) }
-            }
+        row(
+            content, "Rectify",
+            if (s.glassesRectify) "On: undistorted and aligned (reference calibration); preview only" else "Off: images as streamed",
+        ) {
+            choose(
+                "Glasses camera view",
+                listOf(
+                    "Rectified: fisheye undistorted, eyes aligned (Monado's reference calibration); recordings stay raw",
+                    "As streamed (distorted)",
+                ),
+                if (s.glassesRectify) 0 else 1,
+            ) { i -> viewModel.update { it.copy(glassesRectify = i == 0) } }
         }
-        row(content, "Format", s.recordFormat.label, locked = recording) {
-            choose("Format", RecordFormat.entries.map { it.label }, s.recordFormat.ordinal) { i ->
-                viewModel.update { it.copy(recordFormat = RecordFormat.entries[i]) }
-            }
+        val c = host.glassesControls
+        val exposure = when {
+            c == null -> "Shown once the glasses cameras stream"
+            !c.any -> "The glasses offer no exposure or gain controls over USB; they run their own auto exposure"
+            else -> listOfNotNull(
+                c.exposure?.let { "exposure %.1f–%.1f ms".format(it.min / 10.0, it.max / 10.0) },
+                c.gain?.let { "gain ${it.min}–${it.max}" },
+            ).joinToString(", ") + " (adjust in the panel)"
         }
-        if (s.recordFormat.mime != null) {
-            row(content, "Video bitrate", "${s.recordBitrateMbps} Mbit/s per camera", locked = recording) {
-                val values = listOf(10, 20, 40, 60, 100)
-                choose("Video bitrate per camera", values.map { "$it Mbit/s" }, values.indexOf(s.recordBitrateMbps)) { i ->
-                    viewModel.update { it.copy(recordBitrateMbps = values[i]) }
-                }
-            }
+        row(content, "Exposure controls", exposure) {
+            c?.let { Dialogs.info(context, "Glasses camera controls", it.report) }
         }
-        val sensors = context.getSystemService(SensorManager::class.java)
-        row(content, "IMU rate", "${s.imuRate.label}\n${imuRateNote(sensors, s.imuRate)}", locked = recording) {
-            val labels = ImuRate.entries.map { "${it.label}\n${imuRateNote(sensors, it)}" }
-            choose("IMU sampling", labels, s.imuRate.ordinal) { i -> viewModel.update { it.copy(imuRate = ImuRate.entries[i]) } }
-        }
-        val streams = ImuStream.parse(s.imuStreams)
-        row(content, "IMU streams", streams.joinToString { it.file.replace('_', ' ') }.ifEmpty { "none" }, locked = recording) {
-            chooseImuStreams(sensors, streams)
-        }
-        row(content, "Recordings", recordingsSummary()) { showRecordings() }
+    }
 
-        section(content, "Glasses & output", null)
-        row(content, "Glasses field of view", "%.0f° diagonal (used by 1:1 scale)".format(s.glassesFovDeg)) {
-            val presets = listOf(
-                45f to "45° — Air",
-                46f to "46° — Air 2 / Air 2 Pro",
-                50f to "50° — One",
-                52f to "52° — Air 2 Ultra",
-                57f to "57° — One Pro",
-            )
-            choose("Glasses field of view (diagonal)", presets.map { it.second }, presets.indexOfFirst { it.first == s.glassesFovDeg }) { i ->
-                viewModel.update { it.copy(glassesFovDeg = presets[i].first) }
-            }
-        }
-        row(content, "SBS layout", s.sbsLayout.label) {
-            choose("SBS layout", SbsLayout.entries.map { it.label }, s.sbsLayout.ordinal) { i ->
-                viewModel.update { it.copy(sbsLayout = SbsLayout.entries[i]) }
-            }
-        }
-        row(content, "Output", s.outputMode.label, locked = recording) {
-            choose("Output", OutputMode.entries.map { it.label }, s.outputMode.ordinal) { i ->
-                viewModel.update { it.copy(outputMode = OutputMode.entries[i]) }
-            }
-        }
-        row(content, "Glasses USB probe", "Check whether the app can reach the glasses' cameras and IMU") { host.probeUsb() }
-
-        section(content, "Camera setup", "this device")
+    private fun beamProSetupRows(content: LinearLayout, s: StereoSettings, recording: Boolean) {
         row(content, "Camera pair", s.cameraPair.ifEmpty { "Automatic" }, locked = recording) {
             val options = listOf("" to "Auto (best pair, with fallbacks)") + host.cameraPairOptions()
             val labels = options.map { (key, description) -> if (key.isEmpty()) description else "$key\n$description" }
@@ -215,13 +266,6 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
                 listOf("Factory (lens poses from the camera)", "Sensor orientation only"),
                 if (s.useFactoryCalibration) 0 else 1,
             ) { i -> viewModel.update { it.copy(useFactoryCalibration = i == 0) } }
-        }
-        row(content, "Eye alignment", "pitch %+.2f°, roll %+.2f° (Align measures it)".format(s.alignPitchDeg, s.alignRollDeg)) {
-            showAlignmentDialog()
-        }
-        row(content, "Reset view adjustments", "Convergence, depth and brightness back to defaults") {
-            val d = StereoSettings()
-            viewModel.update { it.copy(convergencePx = d.convergencePx, depth = d.depth, exposure = d.exposure) }
         }
     }
 

@@ -9,6 +9,7 @@ import com.google.android.material.slider.Slider
 import com.xreal.stereoview.R
 import com.xreal.stereoview.camera.StereoRig
 import com.xreal.stereoview.databinding.OverlayControlsBinding
+import com.xreal.stereoview.glasses.GlassesDevice
 import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.roundToInt
@@ -38,6 +39,7 @@ class ControlsOverlay(
     private val context = binding.root.context
     private var exposureRange = Range(0, 0)
     private var rig: StereoRig? = null
+    private var glassesControls: GlassesDevice.CameraControls? = null
     private var collapsed = false
     private var recordingShown = false
     /** Set while [render] moves widgets, so their listeners don't write the values back. */
@@ -45,6 +47,7 @@ class ControlsOverlay(
 
     private val settingsSheet = SettingsSheet(context, viewModel, object : SettingsSheet.Host {
         override val rig: StereoRig? get() = this@ControlsOverlay.rig
+        override val glassesControls: GlassesDevice.CameraControls? get() = this@ControlsOverlay.glassesControls
         override fun isRecording() = actions.isRecording()
         override fun cameraPairOptions() = actions.cameraPairOptions()
         override fun setStatus(text: CharSequence) = this@ControlsOverlay.setStatus(text)
@@ -78,18 +81,32 @@ class ControlsOverlay(
         binding.brightnessSlider.onUserChange { v -> viewModel.update { it.copy(exposure = v.roundToInt()) } }
         binding.shutterSlider.onUserChange { v ->
             viewModel.update {
-                val (min, max) = shutterRange(it)
-                it.copy(exposureTimeNs = fromLog(v / 1000.0, min.toDouble(), max.toDouble()).toLong())
+                if (it.cameraSource == CameraSource.GLASSES) {
+                    val (min, max) = glassesExposureRange() ?: return@update it
+                    it.copy(glassesExposure100us = fromLog(v / 1000.0, min.toDouble(), max.toDouble()).roundToInt())
+                } else {
+                    val (min, max) = shutterRange(it)
+                    it.copy(exposureTimeNs = fromLog(v / 1000.0, min.toDouble(), max.toDouble()).toLong())
+                }
             }
         }
         binding.isoSlider.onUserChange { v ->
-            val (min, max) = isoRange()
-            viewModel.update { it.copy(iso = fromLog(v / 1000.0, min.toDouble(), max.toDouble()).roundToInt()) }
+            viewModel.update {
+                if (it.cameraSource == CameraSource.GLASSES) {
+                    val r = glassesControls?.gain ?: return@update it
+                    it.copy(glassesGain = (r.min + (r.max - r.min) * v / 1000.0).roundToInt())
+                } else {
+                    val (min, max) = isoRange()
+                    it.copy(iso = fromLog(v / 1000.0, min.toDouble(), max.toDouble()).roundToInt())
+                }
+            }
         }
         binding.exposureModeGroup.addOnButtonCheckedListener { _, id, checked ->
             if (rendering || !checked) return@addOnButtonCheckedListener
             val manual = id == R.id.exposureManualButton
-            if (manual && rig?.manualSensor == false) {
+            if (viewModel.settings.value.cameraSource == CameraSource.GLASSES) {
+                viewModel.update { it.copy(glassesManualExposure = manual) }
+            } else if (manual && rig?.manualSensor == false) {
                 setStatus("This camera does not support manual exposure")
                 render(viewModel.settings.value)
             } else {
@@ -113,14 +130,28 @@ class ControlsOverlay(
         binding.depthSlider.setSafe((s.depth - StereoSettings.DEPTH_MIN) / (StereoSettings.DEPTH_MAX - StereoSettings.DEPTH_MIN) * 100)
         binding.depthLabel.text = context.getString(R.string.depth) + "  %.2f×".format(s.depth)
 
+        if (s.cameraSource == CameraSource.GLASSES) {
+            renderGlassesExposure(s)
+        } else {
+            renderBeamProExposure(s)
+        }
+
+        setActive(binding.swapButton, s.swapEyes)
+        setActive(binding.hudButton, s.showHud)
+        binding.scaleButton.text = s.scaleMode.label
+        settingsSheet.refresh()
+        profilesDialog.refresh()
+        rendering = false
+    }
+
+    private fun renderBeamProExposure(s: StereoSettings) {
         val manual = s.manualExposure && rig?.manualSensor != false
-        // The glasses cameras run their own exposure; these controls only drive the Beam Pro's.
-        val beamPro = s.cameraSource == CameraSource.BEAM_PRO
         binding.exposureModeGroup.check(if (manual) R.id.exposureManualButton else R.id.exposureAutoButton)
-        binding.exposureModeGroup.visibility = if (beamPro) View.VISIBLE else View.GONE
-        binding.brightnessColumn.visibility = if (beamPro && !manual) View.VISIBLE else View.GONE
-        binding.shutterColumn.visibility = if (beamPro && manual) View.VISIBLE else View.GONE
-        binding.isoColumn.visibility = if (beamPro && manual) View.VISIBLE else View.GONE
+        binding.exposureManualButton.isEnabled = rig?.manualSensor != false
+        binding.exposureModeGroup.visibility = View.VISIBLE
+        binding.brightnessColumn.visibility = if (!manual) View.VISIBLE else View.GONE
+        binding.shutterColumn.visibility = if (manual) View.VISIBLE else View.GONE
+        binding.isoColumn.visibility = if (manual) View.VISIBLE else View.GONE
         binding.brightnessSlider.setSafe(s.exposure.toFloat())
         binding.brightnessLabel.text = context.getString(R.string.brightness) + "  %+d".format(s.exposure)
         val (tMin, tMax) = shutterRange(s)
@@ -131,13 +162,49 @@ class ControlsOverlay(
         val iso = s.iso.coerceIn(isoMin, isoMax)
         binding.isoSlider.setSafe((toLog(iso.toDouble(), isoMin.toDouble(), isoMax.toDouble()) * 1000).toFloat())
         binding.isoLabel.text = "ISO  $iso"
+    }
 
-        setActive(binding.swapButton, s.swapEyes)
-        setActive(binding.hudButton, s.showHud)
-        binding.scaleButton.text = s.scaleMode.label
-        settingsSheet.refresh()
-        profilesDialog.refresh()
-        rendering = false
+    /**
+     * The glasses cameras' exposure controls, as far as they advertise them over UVC: the
+     * Auto/Manual switch, exposure time and gain. Hidden when they offer none.
+     */
+    private fun renderGlassesExposure(s: StereoSettings) {
+        val c = glassesControls
+        val exposureRange = glassesExposureRange()
+        val manual = s.glassesManualExposure && exposureRange != null
+        binding.exposureModeGroup.visibility = if (exposureRange != null) View.VISIBLE else View.GONE
+        binding.exposureManualButton.isEnabled = exposureRange != null
+        binding.exposureModeGroup.check(if (manual) R.id.exposureManualButton else R.id.exposureAutoButton)
+        binding.brightnessColumn.visibility = View.GONE
+        binding.shutterColumn.visibility = if (manual) View.VISIBLE else View.GONE
+        if (exposureRange != null) {
+            val (min, max) = exposureRange
+            val e = s.glassesExposure100us.coerceIn(min, max)
+            binding.shutterSlider.setSafe((toLog(e.toDouble(), min.toDouble(), max.toDouble()) * 1000).toFloat())
+            binding.shutterLabel.text = "Exposure  %.1f ms".format(e / 10.0)
+        }
+        val gain = c?.gain
+        binding.isoColumn.visibility = if (gain != null && (manual || exposureRange == null)) View.VISIBLE else View.GONE
+        if (gain != null) {
+            val g = if (s.glassesGain < 0) gain.default else s.glassesGain.coerceIn(gain.min, gain.max)
+            val t = if (gain.max > gain.min) (g - gain.min) * 1000f / (gain.max - gain.min) else 0f
+            binding.isoSlider.setSafe(t)
+            binding.isoLabel.text = "Gain  $g" + if (s.glassesGain < 0) " (default)" else ""
+        }
+    }
+
+    /** Exposure range of the glasses cameras in 100 µs units, capped at one frame of a camera (30 fps), or null. */
+    private fun glassesExposureRange(): Pair<Int, Int>? {
+        val r = glassesControls?.exposure ?: return null
+        val min = maxOf(r.min, 1)
+        val max = minOf(r.max, 333).coerceAtLeast(min + 1)
+        return min to max
+    }
+
+    /** The glasses cameras' controls once they stream (null otherwise). */
+    fun setGlassesControls(controls: GlassesDevice.CameraControls?) {
+        glassesControls = controls
+        render(viewModel.settings.value)
     }
 
     /** Adapts the exposure controls and frame-rate options to the streaming rig. */
@@ -147,7 +214,6 @@ class ControlsOverlay(
         binding.brightnessSlider.valueFrom = exposureRange.lower.toFloat()
         binding.brightnessSlider.valueTo = maxOf(exposureRange.upper, exposureRange.lower + 1).toFloat()
         binding.brightnessSlider.isEnabled = exposureRange.upper > exposureRange.lower
-        binding.exposureManualButton.isEnabled = rig.manualSensor
         render(viewModel.settings.value)
     }
 

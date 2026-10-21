@@ -71,7 +71,7 @@ needs one uninstall, because the keys differ.
 | Touchscreen controls and DataStore settings | `ui/ControlsOverlay.kt`, `ui/SettingsSheet.kt`, `ui/SettingsViewModel.kt` |
 | Capture profiles | `ui/Profiles.kt`, `ui/ProfilesDialog.kt` |
 | Dataset recording: files, metadata, encoders, IMU | `record/*.kt`, `render/GlRecorder.kt` |
-| Converts a recording to the EuRoC layout | `tools/to_euroc.py` |
+| Extracts video recordings' frames into the EuRoC image folders | `tools/to_euroc.py` |
 
 **Camera selection.** The app ranks every pair of rear cameras it can find. Matching focal
 lengths count most, then hardware-synced logical multi-cameras, then pairs the device lists
@@ -127,7 +127,7 @@ lens calibration and output. Two profiles are built in:
 | Profile | For |
 |---|---|
 | **Passthrough** | Live 3D viewing: 1:1 scale, medium stabilization, autofocus, up to 1080p |
-| **Glasses EuRoC dataset** | SLAM recordings from the Air 2 Ultra's own tracking cameras and IMU (see below) |
+| **Glasses EuRoC dataset** | SLAM recordings from the Air 2 Ultra's own tracking cameras and IMU, rectified preview, no convergence shift (see below) |
 | **EuRoC dataset** | SLAM recordings: raw images, focus locked at infinity, no stabilization, ≤720p at 30 fps, 60 Mbit/s H.264, IMU through the direct channel (fastest listener where unsupported) with calibrated and raw accelerometer/gyroscope, raw magnetometer and game rotation vector |
 
 To edit a profile, switch to it and change settings: the panel shows *Name •* while they
@@ -144,7 +144,7 @@ the elapsed time. Configure it under *Settings → Recording*:
 | Option | Choices |
 |---|---|
 | Images | **Raw**: each camera's stream as delivered (lens distortion intact, not rotated). **Rectified**: what each eye shows (undistorted, rectified, aligned, with the current zoom, convergence and stabilization; *1:1* scale is recorded as *Fill*) |
-| Format | H.264 or H.265 video per camera (hardware encoder, no B-frames), or one JPEG per frame |
+| Format | H.264 or H.265 video per camera (hardware encoder, no B-frames), one 8-bit grayscale PNG per frame (as EuRoC), or one JPEG per frame. The image formats can drop frames when the writer falls behind; metadata.json counts them |
 | Video bitrate | 10–100 Mbit/s per camera |
 | IMU rate | Fastest the sensors allow, 500/200/100 Hz through a listener, or a shared-memory direct channel (~800 or ~200 Hz) where the sensor supports it |
 | IMU streams | Accelerometer, gyroscope, their uncalibrated versions with bias, magnetometer (calibrated or not), game/rotation vector, gravity, linear acceleration, barometer |
@@ -156,36 +156,49 @@ its logged `stab_q`.
 
 Recordings go to `Android/data/com.xreal.stereoview/files/recordings/<date_time>/`,
 reachable over USB (MTP) or with
-`adb pull /sdcard/Android/data/com.xreal.stereoview/files/recordings`:
+`adb pull /sdcard/Android/data/com.xreal.stereoview/files/recordings`. They are written
+directly in the **EuRoC MAV layout** that Basalt, ORB-SLAM3, OpenVINS, VINS-Fusion and Kalibr
+read, with extra files beside it:
 
 ```
+mav0/
+  body.yaml
+  cam0/, cam1/            cam0 = left eye
+    data.csv              #timestamp [ns],filename   (EuRoC)
+    data/<timestamp>.png  PNG (or .jpg) image formats
+    data.mp4              video formats instead of data/: frame i = row i of data.csv
+    sensor.yaml           EuRoC camera: intrinsics, distortion, T_BS (body = Beam Pro IMU)
+    frames.csv            extra: sensor timestamp, dataset timestamp, render time
+                          [, rectified fx, fy, cx, cy, stab_q…]
+    capture_results.csv   extra: per capture timestamp, readout time, exposure, frame
+                          duration, rolling shutter skew, ISO, AE/AF state, focus, OIS and
+                          distortion correction modes, per-frame intrinsics, arrival time
+  imu0/
+    data.csv              EuRoC IMU: gyroscope timestamps, accelerometer interpolated
+                          (built when the recording stops)
+    sensor.yaml           EuRoC IMU (noise values are placeholders)
+imu/<stream>.csv          every recorded IMU stream as delivered: timestamp_ns, arrival_ns,
+                          values…, accuracy
 metadata.json             device, every camera characteristic, every sensor, settings,
-                          calibration (intrinsics, distortion, camera↔device rotation,
-                          lens positions, rectified intrinsics), clocks, per-stream stats
+                          calibration, clocks, per-stream stats
 settings.jsonl            settings at start and after every change, with timestamps
-cam0/, cam1/              cam0 = left eye
-  video.mp4 | data/<timestamp_ns>.jpg
-  frames.csv              frame, timestamp_ns, render_ns [, fx, fy, cx, cy, stab_q…]
-  capture_results.csv     per capture: timestamp, readout time, exposure, frame duration,
-                          rolling shutter skew, ISO, AE/AF state, focus, OIS and distortion
-                          correction modes, per-frame intrinsics, arrival time
-imu/<stream>.csv          timestamp_ns, arrival_ns, values…, accuracy
 ```
 
-**Timestamps.** `timestamp_ns` is the camera's `SENSOR_TIMESTAMP` (start of exposure of
-the first row), the same value the SurfaceTexture reports for the stored frame. IMU
-timestamps are `SensorEvent.timestamp` (CLOCK_BOOTTIME). Video frame *i* is row *i* of
-`frames.csv`, and the MP4 presentation times are the sensor timestamps too.
-`metadata.json → timestamps` says whether the camera clock is BOOTTIME and how to convert
-it if not. Every row also carries its arrival time on BOOTTIME, so the two clocks can be
-checked against each other. Join `frames.csv` and `capture_results.csv` on `timestamp_ns`
-to get mid-exposure times (`+ exposure/2 + skew/2`).
+**Timestamps.** Dataset timestamps are on the IMU's clock (CLOCK_BOOTTIME). For cameras
+they are the camera's `SENSOR_TIMESTAMP` (start of exposure of the first row), shifted onto
+BOOTTIME only if the camera clock isn't already BOOTTIME (`metadata.json → timestamps` says
+which). The MP4 presentation times are the sensor timestamps too. Every row also carries its
+arrival time on BOOTTIME, so the clocks can be checked against each other. Join `frames.csv`
+and `capture_results.csv` on `sensor_timestamp_ns` / `timestamp_ns` for mid-exposure times
+(`+ exposure/2 + skew/2`).
 
-**EuRoC conversion.** `tools/to_euroc.py REC OUT [--gray] [--mid-exposure] [--uncalibrated-imu]`
-writes `OUT/mav0/{cam0,cam1,imu0}` with PNG frames, `data.csv` and `sensor.yaml`. It needs
-Python 3 and ffmpeg. The gyroscope gives the IMU timestamps, and the accelerometer is
-interpolated onto them. Camera-IMU extrinsics come from the factory lens poses and
-orientations, so refine them with Kalibr, and replace the placeholder IMU noise values.
+`imu0` uses the calibrated gyroscope and accelerometer when both are recorded, else the
+uncalibrated ones. Camera-IMU extrinsics in `sensor.yaml` come from the factory lens poses
+and orientations, so refine them with Kalibr, and replace the placeholder IMU noise values.
+
+**Video recordings.** Extract the frames into `data/` with
+`python3 tools/to_euroc.py REC [--gray] [--keep-video]` (Python 3 and ffmpeg). It decodes
+each `data.mp4` into `data/<timestamp>.png` in place. Image recordings need no conversion.
 
 ## Controls
 
@@ -206,7 +219,7 @@ the whole panel.
 | Rec | Starts / stops a dataset recording |
 | Convergence | ±200 px horizontal shift per eye, in opposite directions |
 | Depth | Zooms each eye 1–2× about its center, which also scales disparity. Pinch on the touchscreen does the same |
-| Auto / Manual | Auto exposure with a Brightness (EV) slider, or manual Shutter (down to 1/20000 s) and ISO sliders. Short shutter times cut motion blur at the cost of a darker, noisier image |
+| Auto / Manual | Beam Pro: auto exposure with a Brightness (EV) slider, or manual Shutter (down to 1/20000 s) and ISO sliders. Short shutter times cut motion blur at the cost of a darker, noisier image. Glasses: the cameras' own auto exposure, or manual Exposure and Gain, if the glasses offer these controls over USB |
 
 All settings persist through DataStore. The defaults (Swap L/R on, image rotation 270°,
 convergence −50 px) are the ones that work on the Beam Pro.
@@ -225,17 +238,30 @@ directly. The HUD shows the exposure time, ISO and frame duration the sensor act
 Ultra's two grayscale tracking cameras**, streamed directly over USB; only one source runs at a
 time, and the source is part of each profile. With the glasses as source:
 
-- **Live preview** of both cameras, side by side (left camera in the left eye; *L/R* swaps,
-  the scale button fits, fills or stretches, *Depth* zooms).
-- **Recording** writes `cam0` (left) and `cam1` (right) as lossless 480×640 grayscale PNGs at
-  30 fps per camera, named by the glasses' own timestamps, with each frame's sequence number
-  and its arrival time on the Beam Pro clock, plus the Beam Pro's IMU streams.
+The settings sheet and panel then show only what applies to the glasses (no frame rate,
+resolution, focus, stabilization, camera pair or Beam Pro exposure).
+
+- **Live preview** of both cameras, side by side (left camera in the left eye). *Settings →
+  Rectify* (on by default) undistorts the fisheye images and aligns both eyes using Monado's
+  reference calibration, so *1:1*, *Fill*, *Fit*, *Depth*, *Convergence* and *Align* work as
+  for the Beam Pro cameras. With it off, the images are shown as streamed, and *Convergence*
+  shifts them. Recordings always store the raw images.
+- **Exposure and gain**: once the cameras stream, the app reads the UVC controls the glasses
+  advertise. If they offer exposure time and gain, the panel shows *Auto / Manual* with
+  *Exposure* and *Gain* sliders; *Settings → Exposure controls* shows what was found.
+  Monado leaves exposure to the glasses, so whether these controls exist is still to be seen.
+- **Recording** in the EuRoC layout: `mav0/cam0` (left) and `mav0/cam1` (right) as lossless
+  480×640 grayscale PNGs at 30 fps per camera, timestamped by the glasses, with `sensor.yaml`
+  (pinhole + equidistant, from the reference calibration). `frames.csv` adds each frame's
+  sequence number, arrival time on the Beam Pro clock and the first 64 bytes of its metadata
+  row. The Beam Pro's IMU streams go to `imu/`.
 - **Glasses IMU** (*Settings → Glasses IMU*, on in the *Glasses EuRoC dataset* profile): the
-  glasses' IMU is taken over too and recorded in `imu/glasses_imu.csv` (same clock as the
-  cameras), and its factory calibration JSON is saved with the recording.
+  glasses' IMU is taken over too and recorded as `mav0/imu0` (same clock as the cameras), with
+  all report fields in `imu/glasses_imu.csv`; its factory calibration JSON is saved with the
+  recording.
 - `metadata.json` estimates the offset between the glasses' clock and the Beam Pro's, and
-  includes Monado's reference Basalt calibration (KB4) as a starting point;
-  `tools/to_euroc.py` turns the recording into EuRoC with glasses IMU as `imu0`.
+  includes Monado's reference Basalt calibration (KB4). It comes from another unit, so
+  calibrate yours (e.g. Kalibr, pinhole-equi) for SLAM.
 
 The glasses stream "YUY2 640×241" UVC frames that really carry one 640×480 image of the left
 or right camera, cut into 128 shuffled 2400-byte chunks, plus a metadata row with timestamp,
@@ -288,9 +314,9 @@ that aren't crashes, **Info** shares the camera setup together with the app's re
   (presentation mode) or on a hideable panel. This is why the app requests only the `CAMERA`
   permission.
 - Stretch goals from the spec are not built: automatic convergence and L/R color matching.
-- The glasses-camera source is built from Monado's driver and a captured frame, but streaming
-  and the IMU handshake have not yet been run on the device; the HUD shows frame, pair and
-  IMU rates for checking.
+- The glasses' exposure and gain controls depend on what their UVC interface advertises,
+  which hasn't been checked on real glasses yet. The rectified glasses preview uses another
+  unit's calibration, so expect small residual misalignment (*Align* corrects pitch and roll).
 - Recording was tested on the emulator (one camera). On the Beam Pro, check `metadata.json`
   first: the camera timestamp source, whether the direct IMU channel was used, and dropped
   frames (`stats`).

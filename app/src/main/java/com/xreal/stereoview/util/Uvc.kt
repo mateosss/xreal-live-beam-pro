@@ -8,9 +8,9 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 
 /**
- * Minimal USB Video Class support for probing the glasses' camera: decoding the video formats
- * from the configuration descriptors, and grabbing one frame from a bulk streaming endpoint
- * with the standard probe/commit negotiation.
+ * Minimal USB Video Class support for the glasses' camera: decoding the video formats and
+ * camera controls from the configuration descriptors, the probe/commit negotiation, reading
+ * and setting controls (exposure, gain), and grabbing frames for the USB probe.
  */
 object Uvc {
     /** One frame size of a format, with its frame intervals (100 ns units). */
@@ -138,6 +138,135 @@ object Uvc {
             }
         }
     }
+
+    /**
+     * A camera setting the VideoControl interface advertises: [selector] of unit [unitId]
+     * (camera terminal or processing unit), [size] bytes, signed or not.
+     */
+    data class Control(val name: String, val unitId: Int, val selector: Int, val size: Int, val signed: Boolean)
+
+    /** The controls of a VideoControl interface, plus a description of every unit (for reports). */
+    class Controls(val interfaceNumber: Int, val available: List<Control>, val units: List<String>) {
+        fun find(name: String) = available.firstOrNull { it.name == name }
+    }
+
+    /** Range and current value of a [Control], as GET_MIN/MAX/RES/DEF/CUR report them. */
+    data class ControlRange(val min: Int, val max: Int, val step: Int, val default: Int, val current: Int)
+
+    /**
+     * Parses the VideoControl interface's camera terminal and processing unit descriptors into
+     * the exposure, gain and brightness controls they support.
+     */
+    fun parseControls(raw: ByteArray): Controls? {
+        var iface = -1
+        var subclass = -1
+        var vcInterface = -1
+        val controls = mutableListOf<Control>()
+        val units = mutableListOf<String>()
+        var i = 0
+        while (i + 2 <= raw.size) {
+            val length = raw[i].u8()
+            if (length < 2 || i + length > raw.size) break
+            val type = raw[i + 1].u8()
+            if (type == DESC_INTERFACE && length >= 9) {
+                iface = raw[i + 2].u8()
+                subclass = if (raw[i + 5].u8() == UsbConstants.USB_CLASS_VIDEO) raw[i + 6].u8() else -1
+            } else if (type == DESC_CS_INTERFACE && subclass == SUBCLASS_CONTROL && length >= 3) {
+                vcInterface = iface
+                val id = raw[i + 3].u8()
+                when (raw[i + 2].u8()) {
+                    VC_INPUT_TERMINAL -> if (length >= 8) {
+                        val terminalType = raw.u16(i + 4)
+                        if (terminalType == ITT_CAMERA && length >= 15) {
+                            val bits = raw.bits(i + 15, raw[i + 14].u8())
+                            units += "camera terminal $id, controls 0x%x: %s".format(bits, CT_NAMES.filterKeys { bits.bit(it) }.values.joinToString())
+                            if (bits.bit(1)) controls += Control(AE_MODE, id, CT_AE_MODE, 1, false)
+                            if (bits.bit(3)) controls += Control(EXPOSURE, id, CT_EXPOSURE_ABSOLUTE, 4, false)
+                        } else {
+                            units += "input terminal $id, type 0x%04x".format(terminalType)
+                        }
+                    }
+                    VC_PROCESSING_UNIT -> if (length >= 8) {
+                        val bits = raw.bits(i + 8, raw[i + 7].u8())
+                        units += "processing unit $id, controls 0x%x: %s".format(bits, PU_NAMES.filterKeys { bits.bit(it) }.values.joinToString())
+                        if (bits.bit(0)) controls += Control(BRIGHTNESS, id, PU_BRIGHTNESS, 2, true)
+                        if (bits.bit(9)) controls += Control(GAIN, id, PU_GAIN, 2, false)
+                    }
+                    VC_EXTENSION_UNIT -> if (length >= 21) {
+                        val guid = raw.copyOfRange(i + 4, i + 20).joinToString("") { "%02x".format(it) }
+                        units += "extension unit $id, GUID $guid, ${raw[i + 20].u8()} controls"
+                    }
+                    VC_OUTPUT_TERMINAL -> units += "output terminal $id"
+                }
+            }
+            i += length
+        }
+        return if (vcInterface >= 0) Controls(vcInterface, controls, units) else null
+    }
+
+    /** Reads [control]'s range and value, or null if the camera rejects the requests. */
+    fun range(connection: UsbDeviceConnection, controls: Controls, control: Control): ControlRange? {
+        fun get(request: Int): Int? {
+            val data = ByteArray(control.size)
+            val n = connection.controlTransfer(
+                GET_REQUEST, request, control.selector shl 8, (control.unitId shl 8) or controls.interfaceNumber, data, data.size, 500,
+            )
+            return if (n == control.size) data.decode(control) else null
+        }
+        val cur = get(GET_CUR) ?: return null
+        if (control.name == AE_MODE) return ControlRange(1, 8, get(GET_RES) ?: 0, get(GET_DEF) ?: cur, cur)
+        return ControlRange(get(GET_MIN) ?: cur, get(GET_MAX) ?: cur, (get(GET_RES) ?: 1).coerceAtLeast(1), get(GET_DEF) ?: cur, cur)
+    }
+
+    /** Sets [control] to [value]; returns whether the camera accepted it. */
+    fun set(connection: UsbDeviceConnection, controls: Controls, control: Control, value: Int): Boolean {
+        val data = ByteArray(control.size) { (value ushr (8 * it)).toByte() }
+        return connection.controlTransfer(
+            SET_REQUEST, SET_CUR, control.selector shl 8, (control.unitId shl 8) or controls.interfaceNumber, data, data.size, 500,
+        ) >= 0
+    }
+
+    private fun ByteArray.decode(control: Control): Int {
+        var v = 0
+        for (k in 0 until control.size) v = v or (this[k].u8() shl (8 * k))
+        if (control.signed && control.size < 4) {
+            val shift = 32 - 8 * control.size
+            v = (v shl shift) shr shift
+        }
+        return v
+    }
+
+    private fun Long.bit(i: Int) = (this shr i) and 1L == 1L
+
+    private fun ByteArray.bits(start: Int, count: Int): Long {
+        var v = 0L
+        for (k in 0 until minOf(count, 8)) if (start + k < size) v = v or (this[start + k].u8().toLong() shl (8 * k))
+        return v
+    }
+
+    const val AE_MODE = "auto exposure mode"
+    const val EXPOSURE = "exposure time"
+    const val GAIN = "gain"
+    const val BRIGHTNESS = "brightness"
+
+    /** CT_AE_MODE values: a bitmap with one bit set. */
+    const val AE_MANUAL = 1
+    const val AE_AUTO = 2
+    const val AE_SHUTTER_PRIORITY = 4
+    const val AE_APERTURE_PRIORITY = 8
+
+    private val CT_NAMES = mapOf(
+        0 to "scanning mode", 1 to "auto exposure mode", 2 to "auto exposure priority", 3 to "exposure time (absolute)",
+        4 to "exposure time (relative)", 5 to "focus (absolute)", 6 to "focus (relative)", 7 to "iris (absolute)",
+        8 to "iris (relative)", 9 to "zoom (absolute)", 10 to "zoom (relative)", 11 to "pan/tilt (absolute)",
+        12 to "pan/tilt (relative)", 13 to "roll (absolute)", 14 to "roll (relative)", 17 to "focus auto", 18 to "privacy",
+    )
+    private val PU_NAMES = mapOf(
+        0 to "brightness", 1 to "contrast", 2 to "hue", 3 to "saturation", 4 to "sharpness", 5 to "gamma",
+        6 to "white balance temperature", 7 to "white balance component", 8 to "backlight compensation", 9 to "gain",
+        10 to "power line frequency", 11 to "hue auto", 12 to "white balance temperature auto",
+        13 to "white balance component auto", 14 to "digital multiplier", 15 to "digital multiplier limit",
+    )
 
     /** Result of [negotiate]: the stream parameters the camera committed to. */
     class Negotiation(
@@ -307,7 +436,17 @@ object Uvc {
 
     private const val DESC_INTERFACE = 0x04
     private const val DESC_CS_INTERFACE = 0x24
+    private const val SUBCLASS_CONTROL = 0x01
     private const val SUBCLASS_STREAMING = 0x02
+    private const val VC_INPUT_TERMINAL = 0x02
+    private const val VC_OUTPUT_TERMINAL = 0x03
+    private const val VC_PROCESSING_UNIT = 0x05
+    private const val VC_EXTENSION_UNIT = 0x06
+    private const val ITT_CAMERA = 0x0201
+    private const val CT_AE_MODE = 0x02
+    private const val CT_EXPOSURE_ABSOLUTE = 0x04
+    private const val PU_BRIGHTNESS = 0x02
+    private const val PU_GAIN = 0x04
     private const val VS_FORMAT_UNCOMPRESSED = 0x04
     private const val VS_FRAME_UNCOMPRESSED = 0x05
     private const val VS_FORMAT_MJPEG = 0x06
@@ -320,4 +459,8 @@ object Uvc {
     private const val GET_REQUEST = 0xA1 // class request to an interface, device to host
     private const val SET_CUR = 0x01
     private const val GET_CUR = 0x81
+    private const val GET_MIN = 0x82
+    private const val GET_MAX = 0x83
+    private const val GET_RES = 0x84
+    private const val GET_DEF = 0x87
 }

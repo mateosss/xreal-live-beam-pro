@@ -91,10 +91,15 @@ class StereoRenderer(
     var geometrySummary: String = "not streaming"
         private set
 
+    /** The glasses cameras' rectification, for the Info dialog. */
+    val glassesGeometrySummary: String get() = glassesGeometry.summary
+
     // GL thread state
     private var shader: StereoShader? = null
     private var grayShader: GrayShader? = null
     private var shownGlassesFrame: GlassesDevice.StereoFrame? = null
+    private var newGlassesFrame = false
+    private val glassesGeometry = GlassesGeometry()
     private val textureIds = IntArray(2)
     private var surfaceTextures: List<SurfaceTexture> = emptyList()
     private val stMatrices = Array(2) { FloatArray(16).also { Matrix.setIdentityM(it, 0) } }
@@ -244,7 +249,12 @@ class StereoRenderer(
             recording?.let { record(it, shader, geometry, models, s, fresh, stabilization) }
 
             if (alignmentCallback != null && fresh[0] && fresh[1]) {
-                measureAlignment(shader, geometry, models, tanH, tanV, zoom, s, stabilization)
+                measureAlignment(tanH, tanV, zoom) { camera ->
+                    val ray = geometry.rayMatrix(
+                        camera, tanH, tanV, 0.0, zoom, s.alignPitchDeg.toDouble(), s.alignRollDeg.toDouble(), stabilization,
+                    )
+                    shader.draw(textureIds[camera], ray, models[camera], stMatrices[camera])
+                }
                 GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
             }
 
@@ -267,8 +277,9 @@ class StereoRenderer(
     }
 
     /**
-     * Shows the glasses' left and right tracking-camera images in the two eyes, fitted
-     * according to the scale mode (1:1 behaves like Fit, as their angles are unknown here).
+     * Shows the glasses' left and right tracking-camera images in the two eyes: rectified
+     * through [GlassesGeometry] (with zoom, convergence and alignment like the Beam Pro view),
+     * or as they come, fitted by the scale mode and shifted by the convergence.
      */
     private fun drawGlasses() {
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
@@ -276,8 +287,12 @@ class StereoRenderer(
         GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
         val gray = grayShader ?: return
-        val frame = glassesFrame ?: return
-        if (frame !== shownGlassesFrame) {
+        val frame = glassesFrame ?: run {
+            viewDescription = "glasses cameras: no frames yet"
+            return
+        }
+        newGlassesFrame = frame !== shownGlassesFrame
+        if (newGlassesFrame) {
             gray.upload(0, frame.left.image, IMAGE_W, IMAGE_H)
             gray.upload(1, frame.right.image, IMAGE_W, IMAGE_H)
             shownGlassesFrame = frame
@@ -292,8 +307,31 @@ class StereoRenderer(
             SbsLayout.AUTO -> width.toFloat() / height < 3f
         }
         val eyeAspect = eyeWidth.toFloat() * (if (halfSbs) 2 else 1) / height
-        val imageAspect = IMAGE_W.toFloat() / IMAGE_H
         val zoom = s.depth.coerceIn(StereoSettings.DEPTH_MIN, StereoSettings.DEPTH_MAX)
+        if (s.glassesRectify) {
+            val geometry = glassesGeometry
+            val (tanH, tanV) = geometry.displayTangents(s.scaleMode, eyeAspect.toDouble(), s.glassesFovDeg.toDouble())
+            viewDescription = "glasses cameras rectified, eye %.1f°×%.1f° %s, %s".format(
+                Math.toDegrees(2 * atan(tanH / zoom)), Math.toDegrees(2 * atan(tanV / zoom)),
+                s.scaleMode.label, if (halfSbs) "half SBS" else "full SBS",
+            )
+            val pitch = s.alignPitchDeg.toDouble()
+            val roll = s.alignRollDeg.toDouble()
+            if (alignmentCallback != null && newGlassesFrame) {
+                measureAlignment(tanH, tanV, zoom.toDouble()) { camera ->
+                    gray.drawRectified(camera, geometry.rayMatrix(camera, tanH, tanV, 0.0, zoom.toDouble(), pitch, roll), geometry.cameras[camera])
+                }
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+            }
+            for (viewport in 0..1) {
+                val camera = if (s.swapEyes) 1 - viewport else viewport
+                val shift = (if (viewport == 0) 1.0 else -1.0) * s.convergencePx / eyeWidth
+                GLES20.glViewport(viewport * eyeWidth, 0, eyeWidth, height)
+                gray.drawRectified(camera, geometry.rayMatrix(camera, tanH, tanV, shift, zoom.toDouble(), pitch, roll), geometry.cameras[camera])
+            }
+            return
+        }
+        val imageAspect = IMAGE_W.toFloat() / IMAGE_H
         val (sx, sy) = when (s.scaleMode) {
             ScaleMode.STRETCH -> 1f to 1f
             ScaleMode.FILL -> if (imageAspect > eyeAspect) imageAspect / eyeAspect to 1f else 1f to eyeAspect / imageAspect
@@ -302,8 +340,10 @@ class StereoRenderer(
         viewDescription = "glasses cameras ${IMAGE_W}×$IMAGE_H, ${s.scaleMode.label}, ${if (halfSbs) "half SBS" else "full SBS"}"
         for (viewport in 0..1) {
             val slot = if (s.swapEyes) 1 - viewport else viewport
+            // Positive convergence moves the left image left and the right image right.
+            val offset = (if (viewport == 0) -1f else 1f) * s.convergencePx / eyeWidth
             GLES20.glViewport(viewport * eyeWidth, 0, eyeWidth, height)
-            gray.draw(slot, sx * zoom, sy * zoom)
+            gray.draw(slot, sx * zoom, sy * zoom, offset)
         }
     }
 
@@ -362,25 +402,16 @@ class StereoRenderer(
             }
     }
 
-    /** Renders both eyes small and unswapped, and compares them; see [AlignmentEstimator]. */
-    private fun measureAlignment(
-        shader: StereoShader,
-        geometry: StereoGeometry,
-        models: List<CameraModel>,
-        tanH: Double,
-        tanV: Double,
-        zoom: Double,
-        s: StereoSettings,
-        stabilization: DoubleArray,
-    ) {
+    /**
+     * Renders both eyes small, unswapped and without convergence, and compares them; see
+     * [AlignmentEstimator]. [drawEye] draws camera i (with no shift) into the current viewport.
+     */
+    private fun measureAlignment(tanH: Double, tanV: Double, zoom: Double, drawEye: (Int) -> Unit) {
         ensureAlignmentFramebuffer()
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, alignmentFramebuffer)
         GLES20.glViewport(0, 0, ALIGN_WIDTH, ALIGN_HEIGHT)
         val images = List(2) { camera ->
-            val ray = geometry.rayMatrix(
-                camera, tanH, tanV, 0.0, zoom, s.alignPitchDeg.toDouble(), s.alignRollDeg.toDouble(), stabilization,
-            )
-            shader.draw(textureIds[camera], ray, models[camera], stMatrices[camera])
+            drawEye(camera)
             readLuminance()
         }
         alignmentAttempts++

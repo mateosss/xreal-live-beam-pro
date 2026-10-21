@@ -49,4 +49,12 @@ object Dialogs {
             .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
+
+    fun info(context: Context, title: String, message: String) {
+        MaterialAlertDialogBuilder(context)
+            .setTitle(title)
+            .setMessage(message)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
 }

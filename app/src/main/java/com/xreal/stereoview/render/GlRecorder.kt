@@ -13,7 +13,7 @@ import javax.microedition.khronos.egl.EGLDisplay
 /**
  * GL-thread half of a [Recording]: renders frames into each output's video encoder surface
  * (an EGL window surface sharing the renderer's context, stamped with the camera timestamp),
- * or into a framebuffer that is read back for JPEG.
+ * or into a framebuffer that is read back for JPEG or PNG images.
  */
 class GlRecorder(private val recording: Recording) {
     private val display = EGL14.eglGetCurrentDisplay()
@@ -32,7 +32,7 @@ class GlRecorder(private val recording: Recording) {
                 }
                 surfaces[i] = surface
             }
-            if (o.jpeg != null) createFramebuffer(i, o.size.width, o.size.height)
+            if (o.images != null) createFramebuffer(i, o.size.width, o.size.height)
         }
     }
 
@@ -59,13 +59,13 @@ class GlRecorder(private val recording: Recording) {
                 EGL14.eglMakeCurrent(display, drawSurface, readSurface, context)
             }
         }
-        val jpeg = o.jpeg ?: return false
+        val images = o.images ?: return false
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, framebuffers[index])
         GLES20.glViewport(0, 0, o.size.width, o.size.height)
         GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
         draw(true)
-        val stored = jpeg.submit(timestampNs) { buffer ->
+        val stored = images.submit(recording.eurocNs(timestampNs)) { buffer ->
             GLES20.glReadPixels(0, 0, o.size.width, o.size.height, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, buffer)
         }
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)

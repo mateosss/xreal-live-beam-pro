@@ -301,7 +301,17 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     /** Measures and corrects the eyes' vertical offset and roll; repeats once to refine. */
     override fun onAutoAlign() {
         val renderer = renderer ?: return
-        if (streamSize == null) {
+        val s0 = viewModel.settings.value
+        if (s0.cameraSource == CameraSource.GLASSES) {
+            if (!glasses.isRunning) {
+                controls.setStatus("Auto-align needs the glasses cameras running")
+                return
+            }
+            if (!s0.glassesRectify) {
+                controls.setStatus("Auto-align works on the rectified view: turn on Settings → Rectify glasses cameras")
+                return
+            }
+        } else if (streamSize == null) {
             controls.setStatus("Auto-align needs the cameras running")
             return
         }
@@ -378,6 +388,8 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         ) {
             stopRecording("Recording stopped: camera settings changed")
             startCamera()
+        } else if (s.cameraSource == CameraSource.GLASSES) {
+            if (glassesExposureOf(s) != glassesExposureOf(previous) && glasses.isRunning) glasses.setExposure(glassesExposureOf(s))
         } else if (exposureOf(s) != exposureOf(previous)) {
             camera.setExposure(exposureOf(s))
         }
@@ -385,6 +397,9 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
 
     private fun exposureOf(s: StereoSettings) =
         CameraController.Exposure(s.exposure, s.manualExposure, s.exposureTimeNs, s.iso, s.focusMode == FocusMode.INFINITY)
+
+    private fun glassesExposureOf(s: StereoSettings) =
+        GlassesDevice.Exposure(s.glassesManualExposure, s.glassesExposure100us, s.glassesGain)
 
     private var captureStats = ""
 
@@ -446,6 +461,8 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             appendLine("Active rig: ${rig?.description ?: "none"}")
             appendLine("Stream size: ${streamSize ?: "-"}, sensor orientation ${rig?.sensorOrientation ?: "-"}°")
             appendLine("Rectification: ${renderer?.geometrySummary ?: "-"}")
+            appendLine("Glasses rectification: ${renderer?.glassesGeometrySummary ?: "-"}")
+            appendLine("Glasses camera controls: ${glasses.controls?.report ?: "glasses cameras not started"}")
             renderer?.cameras?.let { cams ->
                 appendLine("  " + cams.left.describe())
                 if (cams.right !== cams.left) appendLine("  " + cams.right.describe())
@@ -704,6 +721,10 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             Log.i(TAG, "Glasses calibration: ${json.length} bytes")
             (recording as? GlassesRecording)?.onCalibration(json)
         }
+
+        override fun onControls(controls: GlassesDevice.CameraControls) {
+            runOnUiThread { this@MainActivity.controls.setGlassesControls(controls) }
+        }
     }
 
     /**
@@ -725,7 +746,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             if (!playing || viewModel.settings.value.cameraSource != CameraSource.GLASSES) return@requestPermission
             glassesImuActive = withImu
             glassesStatsTime = android.os.SystemClock.elapsedRealtime()
-            glasses.start(device, withImu)
+            glasses.start(device, withImu, glassesExposureOf(viewModel.settings.value))
             controls.setStatus("Starting the glasses cameras…")
             updateStatus()
         }
@@ -757,6 +778,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         glasses.stop()
         renderer?.glassesFrame = null
         glassesImuActive = false
+        controls.setGlassesControls(null)
     }
 
     // endregion
@@ -777,6 +799,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             put("camera_models", JSONArray(listOf(cams.left, cams.right).distinct().map { it.describe() }))
         }
         put("camera_report", runCatching { CameraUtils.describeCameras(cameraManager) }.getOrElse { it.toString() })
+        glasses.controls?.let { put("glasses_camera_controls", it.report) }
     }
 
     // endregion

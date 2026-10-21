@@ -157,34 +157,50 @@ class StereoGeometry(
         rollDeg: Double,
         stabilization: DoubleArray,
     ): DoubleArray {
-        val sx = 2 * tanH / zoom
-        val sy = 2 * tanV / zoom
-        val fromOutput = doubleArrayOf(
-            sx, 0.0, (shift - 0.5) * sx,
-            0.0, -sy, sy / 2,
-            0.0, 0.0, 1.0,
-        )
-        return Mat3.mul(cameraFromVirtual(camera, pitchDeg, rollDeg), stabilization, fromOutput)
+        return Mat3.mul(cameraFromVirtual(camera, pitchDeg, rollDeg), stabilization, outputToRay(tanH, tanV, shift, zoom))
     }
 
     /**
      * Rotation from the eye's virtual (rectified, aligned) camera to the real camera [camera],
      * both with x right, y down, z forward: a ray in the rectified image maps to this times it.
      */
-    fun cameraFromVirtual(camera: Int, pitchDeg: Double, rollDeg: Double): DoubleArray {
-        val sign = if (camera == 0) -0.5 else 0.5
-        val align = Mat3.mul(Mat3.rotX(Math.toRadians(sign * pitchDeg)), Mat3.rotZ(Math.toRadians(sign * rollDeg)))
-        return Mat3.mul(cameraFromRect[camera], align)
-    }
+    fun cameraFromVirtual(camera: Int, pitchDeg: Double, rollDeg: Double): DoubleArray =
+        Mat3.mul(cameraFromRect[camera], alignment(camera, pitchDeg, rollDeg))
 
     /**
      * Pinhole intrinsics (fx, fy, cx, cy) in pixels, row 0 at the top, of an eye image of
      * [width]×[height] drawn by [rayMatrix] with the same tangents, shift and zoom.
      */
-    fun rectifiedIntrinsics(width: Int, height: Int, tanH: Double, tanV: Double, shift: Double, zoom: Double): DoubleArray {
-        val sx = 2 * tanH / zoom
-        val sy = 2 * tanV / zoom
-        return doubleArrayOf(width / sx, height / sy, width * (0.5 - shift), height / 2.0)
+    fun rectifiedIntrinsics(width: Int, height: Int, tanH: Double, tanV: Double, shift: Double, zoom: Double): DoubleArray =
+        pinholeIntrinsics(width, height, tanH, tanV, shift, zoom)
+
+    companion object {
+        /**
+         * Maps output coordinates (u, v, 1) of an eye (u right, v up, 0..1) to a ray of its
+         * virtual camera (x right, y down, z forward) showing half-FOV tangents [tanH], [tanV].
+         */
+        fun outputToRay(tanH: Double, tanV: Double, shift: Double, zoom: Double): DoubleArray {
+            val sx = 2 * tanH / zoom
+            val sy = 2 * tanV / zoom
+            return doubleArrayOf(
+                sx, 0.0, (shift - 0.5) * sx,
+                0.0, -sy, sy / 2,
+                0.0, 0.0, 1.0,
+            )
+        }
+
+        /** Alignment correction of eye [camera]: half the pitch and roll each, in opposite directions. */
+        fun alignment(camera: Int, pitchDeg: Double, rollDeg: Double): DoubleArray {
+            val sign = if (camera == 0) -0.5 else 0.5
+            return Mat3.mul(Mat3.rotX(Math.toRadians(sign * pitchDeg)), Mat3.rotZ(Math.toRadians(sign * rollDeg)))
+        }
+
+        /** Pinhole intrinsics (fx, fy, cx, cy) in pixels of a [width]×[height] image drawn with [outputToRay]. */
+        fun pinholeIntrinsics(width: Int, height: Int, tanH: Double, tanV: Double, shift: Double, zoom: Double): DoubleArray {
+            val sx = 2 * tanH / zoom
+            val sy = 2 * tanV / zoom
+            return doubleArrayOf(width / sx, height / sy, width * (0.5 - shift), height / 2.0)
+        }
     }
 
     private fun screenRightInDevice(rotation: Int): DoubleArray = when (rotation) {

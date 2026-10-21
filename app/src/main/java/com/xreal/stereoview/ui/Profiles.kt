@@ -18,6 +18,8 @@ data class Profile(val name: String, val settings: StereoSettings) {
             if (cameraSource == CameraSource.GLASSES) {
                 return@with listOf(
                     "glasses cameras 30 fps per eye",
+                    if (glassesManualExposure) "exposure %.1f ms".format(glassesExposure100us / 10.0) else "auto exposure",
+                    if (glassesRectify) "rectified preview" else "raw preview",
                     if (glassesImu) "glasses IMU taken over" else "glasses IMU left to the system",
                     "IMU ${imuRate.label.substringBefore(" (").replaceFirstChar { it.lowercase() }}",
                 ).joinToString(" · ")
@@ -62,6 +64,7 @@ data class Profile(val name: String, val settings: StereoSettings) {
                         base.copy(
                             cameraSource = CameraSource.GLASSES,
                             glassesImu = true,
+                            convergencePx = 0f,
                             scaleMode = ScaleMode.FIT,
                             stabilization = Stabilization.OFF,
                             imuRate = ImuRate.DIRECT_VERY_FAST,
@@ -98,6 +101,10 @@ data class Profile(val name: String, val settings: StereoSettings) {
                 put("imuStreams", s.imuStreams)
                 put("cameraSource", s.cameraSource.name)
                 put("glassesImu", s.glassesImu)
+                put("glassesRectify", s.glassesRectify)
+                put("glassesManualExposure", s.glassesManualExposure)
+                put("glassesExposure100us", s.glassesExposure100us)
+                put("glassesGain", s.glassesGain)
             })
         }).toString()
 
@@ -130,6 +137,10 @@ data class Profile(val name: String, val settings: StereoSettings) {
                         imuStreams = j.optString("imuStreams", d.imuStreams),
                         cameraSource = enumOr(j.optString("cameraSource"), d.cameraSource),
                         glassesImu = j.optBoolean("glassesImu", d.glassesImu),
+                        glassesRectify = j.optBoolean("glassesRectify", d.glassesRectify),
+                        glassesManualExposure = j.optBoolean("glassesManualExposure", d.glassesManualExposure),
+                        glassesExposure100us = j.optInt("glassesExposure100us", d.glassesExposure100us),
+                        glassesGain = j.optInt("glassesGain", d.glassesGain),
                     ),
                 )
             }
@@ -161,4 +172,8 @@ fun StereoSettings.withProfile(profile: StereoSettings) = copy(
     imuStreams = profile.imuStreams,
     cameraSource = profile.cameraSource,
     glassesImu = profile.glassesImu,
+    glassesRectify = profile.glassesRectify,
+    glassesManualExposure = profile.glassesManualExposure,
+    glassesExposure100us = profile.glassesExposure100us,
+    glassesGain = profile.glassesGain,
 )

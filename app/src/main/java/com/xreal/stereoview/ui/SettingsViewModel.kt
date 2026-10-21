@@ -67,6 +67,7 @@ enum class RecordFormat(val label: String, val mime: String?) {
     H264("H.264 video", "video/avc"),
     HEVC("H.265 video", "video/hevc"),
     JPEG("JPEG images (one file per frame, may drop frames)", null),
+    PNG("PNG grayscale images, as EuRoC (lossless, may drop frames)", null),
 }
 
 /**
@@ -133,6 +134,14 @@ data class StereoSettings(
     val cameraSource: CameraSource = CameraSource.BEAM_PRO,
     /** With the glasses cameras: also take over the glasses' IMU (stops XREAL's head tracking until replugged). */
     val glassesImu: Boolean = false,
+    /** Show the glasses cameras undistorted and rectified (preview only; recordings stay raw). */
+    val glassesRectify: Boolean = true,
+    /** Glasses cameras: fixed exposure time and gain instead of their auto exposure (if they offer it). */
+    val glassesManualExposure: Boolean = false,
+    /** Glasses exposure time in UVC units of 100 µs. */
+    val glassesExposure100us: Int = 50,
+    /** Glasses camera gain, or -1 for the camera's default. */
+    val glassesGain: Int = -1,
 ) {
     companion object {
         const val CONVERGENCE_RANGE = 200f
@@ -175,6 +184,10 @@ class SettingsRepository(private val context: Context) {
         val IMU_STREAMS = stringPreferencesKey("imu_streams")
         val CAMERA_SOURCE = stringPreferencesKey("camera_source")
         val GLASSES_IMU = booleanPreferencesKey("glasses_imu")
+        val GLASSES_RECTIFY = booleanPreferencesKey("glasses_rectify")
+        val GLASSES_MANUAL_EXPOSURE = booleanPreferencesKey("glasses_manual_exposure")
+        val GLASSES_EXPOSURE = intPreferencesKey("glasses_exposure_100us")
+        val GLASSES_GAIN = intPreferencesKey("glasses_gain")
         val PROFILES = stringPreferencesKey("profiles")
         val ACTIVE_PROFILE = stringPreferencesKey("active_profile")
         val BUILTINS_SEEN = stringPreferencesKey("builtin_profiles_seen")
@@ -230,6 +243,10 @@ class SettingsRepository(private val context: Context) {
             imuStreams = p[Keys.IMU_STREAMS] ?: defaults.imuStreams,
             cameraSource = enumOrDefault(p[Keys.CAMERA_SOURCE], defaults.cameraSource),
             glassesImu = p[Keys.GLASSES_IMU] ?: defaults.glassesImu,
+            glassesRectify = p[Keys.GLASSES_RECTIFY] ?: defaults.glassesRectify,
+            glassesManualExposure = p[Keys.GLASSES_MANUAL_EXPOSURE] ?: defaults.glassesManualExposure,
+            glassesExposure100us = p[Keys.GLASSES_EXPOSURE] ?: defaults.glassesExposure100us,
+            glassesGain = p[Keys.GLASSES_GAIN] ?: defaults.glassesGain,
         )
     }
 
@@ -264,6 +281,10 @@ class SettingsRepository(private val context: Context) {
             p[Keys.IMU_STREAMS] = s.imuStreams
             p[Keys.CAMERA_SOURCE] = s.cameraSource.name
             p[Keys.GLASSES_IMU] = s.glassesImu
+            p[Keys.GLASSES_RECTIFY] = s.glassesRectify
+            p[Keys.GLASSES_MANUAL_EXPOSURE] = s.glassesManualExposure
+            p[Keys.GLASSES_EXPOSURE] = s.glassesExposure100us
+            p[Keys.GLASSES_GAIN] = s.glassesGain
         }
     }
 

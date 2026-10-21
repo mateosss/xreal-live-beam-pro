@@ -27,4 +27,18 @@ class UvcTest {
         assertEquals(640 * 480, f.frames[0].maxFrameBytes)
         assertEquals(listOf(30.0, 60.0), f.frames[0].fps.map { Math.round(it).toDouble() })
     }
+
+    /** A VideoControl interface with a camera terminal (AE mode + exposure) and a processing unit (brightness + gain). */
+    @Test
+    fun parsesCameraControls() {
+        val iface = intArrayOf(9, 0x04, 3, 0, 0, 0x0e, 0x01, 0, 0)
+        val header = intArrayOf(13, 0x24, 0x01) + u16(0x0110) + u16(13 + 18 + 11) + u32(48_000_000) + intArrayOf(1, 4)
+        val camera = intArrayOf(18, 0x24, 0x02, 1) + u16(0x0201) + intArrayOf(0, 0) + u16(0) + u16(0) + u16(0) + intArrayOf(3, 0x0a, 0, 0)
+        val processing = intArrayOf(11, 0x24, 0x05, 2, 1) + u16(0) + intArrayOf(2) + u16(0x0201) + intArrayOf(0)
+        val controls = Uvc.parseControls(bytes(*(iface + header + camera + processing)))!!
+        assertEquals(3, controls.interfaceNumber)
+        assertEquals(listOf(Uvc.AE_MODE, Uvc.EXPOSURE, Uvc.BRIGHTNESS, Uvc.GAIN), controls.available.map { it.name })
+        assertEquals(1, controls.find(Uvc.EXPOSURE)!!.unitId)
+        assertEquals(2, controls.find(Uvc.GAIN)!!.unitId)
+    }
 }

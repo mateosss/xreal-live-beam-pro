@@ -39,10 +39,31 @@ class GlassesDevice(private val context: Context, private val listener: Listener
         fun onImu(sample: GlassesProtocol.ImuSample, arrivalNs: Long)
         /** The glasses' factory calibration (JSON), read before the IMU stream starts. */
         fun onCalibration(json: String)
+        /** The camera controls the glasses offer, once the stream runs. */
+        fun onControls(controls: CameraControls)
     }
 
-    /** One camera image; [timestampNs] is on the glasses' clock, [arrivalNs] on CLOCK_BOOTTIME. */
-    class Eye(val image: ByteArray, val timestampNs: Long, val sequence: Long, val arrivalNs: Long)
+    /**
+     * One camera image; [timestampNs] is on the glasses' clock, [arrivalNs] on CLOCK_BOOTTIME.
+     * [meta] is the start of the frame's metadata row, kept for analysis.
+     */
+    class Eye(val image: ByteArray, val timestampNs: Long, val sequence: Long, val arrivalNs: Long, val meta: ByteArray)
+
+    /**
+     * The exposure controls the camera advertises over UVC, with their ranges (null when not
+     * offered). [aeModes] is the bitmap of supported auto-exposure modes (Uvc.AE_*).
+     */
+    class CameraControls(
+        val exposure: Uvc.ControlRange?,
+        val gain: Uvc.ControlRange?,
+        val aeModes: Int?,
+        val report: String,
+    ) {
+        val any: Boolean get() = exposure != null || gain != null
+    }
+
+    /** Requested exposure: the camera's own auto exposure, or a fixed time (100 µs units) and gain (-1 = the camera's default). */
+    data class Exposure(val manual: Boolean, val exposure100us: Int, val gain: Int)
 
     class StereoFrame(val left: Eye, val right: Eye)
 
@@ -61,6 +82,18 @@ class GlassesDevice(private val context: Context, private val listener: Listener
     private val dropped = AtomicInteger()
     private val imuSamples = AtomicInteger()
     private val bytes = java.util.concurrent.atomic.AtomicLong()
+
+    // Camera controls: set from any thread, applied on their own thread.
+    @Volatile
+    private var connection: UsbDeviceConnection? = null
+    @Volatile
+    private var uvcControls: Uvc.Controls? = null
+    @Volatile
+    var controls: CameraControls? = null
+        private set
+    @Volatile
+    private var requestedExposure: Exposure? = null
+    private val controlExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "GlassesControls") }
 
     /** The first attached Air 2 Ultra, if any. */
     fun find(): UsbDevice? = manager?.deviceList?.values?.firstOrNull {
@@ -88,16 +121,53 @@ class GlassesDevice(private val context: Context, private val listener: Listener
 
     val isRunning: Boolean get() = running
 
-    /** Starts streaming; [device] must already have USB permission. */
-    fun start(device: UsbDevice, withImu: Boolean) {
+    /** Starts streaming; [device] must already have USB permission. [exposure] is applied once the camera runs. */
+    fun start(device: UsbDevice, withImu: Boolean, exposure: Exposure) {
         if (running) return
         running = true
+        requestedExposure = exposure
+        controls = null
         val decode = HandlerThread("GlassesDecode", Process.THREAD_PRIORITY_DISPLAY).apply { start() }
         decodeThread = decode
         ioThread = Thread({ run(device, withImu, Handler(decode.looper)) }, "GlassesUsb").apply {
             priority = Thread.MAX_PRIORITY
             start()
         }
+    }
+
+    /** Applies [exposure] to the camera, as far as its controls allow. */
+    fun setExposure(exposure: Exposure) {
+        requestedExposure = exposure
+        controlExecutor.execute(::applyExposure)
+    }
+
+    private fun applyExposure() {
+        val connection = connection ?: return
+        val uvc = uvcControls ?: return
+        val e = requestedExposure ?: return
+        val c = controls ?: return
+        val log = StringBuilder()
+        uvc.find(Uvc.AE_MODE)?.let { mode ->
+            val modes = c.aeModes ?: 0
+            val wanted = if (e.manual) {
+                Uvc.AE_MANUAL
+            } else {
+                listOf(Uvc.AE_AUTO, Uvc.AE_APERTURE_PRIORITY).firstOrNull { modes and it != 0 } ?: Uvc.AE_AUTO
+            }
+            if (!Uvc.set(connection, uvc, mode, wanted)) log.append("auto exposure mode $wanted rejected; ")
+        }
+        if (e.manual) {
+            val exposure = uvc.find(Uvc.EXPOSURE)
+            c.exposure?.let { r ->
+                if (exposure != null && !Uvc.set(connection, uvc, exposure, e.exposure100us.coerceIn(r.min, r.max))) log.append("exposure rejected; ")
+            }
+        }
+        val gain = uvc.find(Uvc.GAIN)
+        c.gain?.let { r ->
+            val value = if (e.gain < 0) r.default else e.gain.coerceIn(r.min, r.max)
+            if (gain != null && !Uvc.set(connection, uvc, gain, value)) log.append("gain rejected; ")
+        }
+        if (log.isNotEmpty()) Log.w(TAG, "Glasses exposure: $log")
     }
 
     fun stop() {
@@ -156,6 +226,7 @@ class GlassesDevice(private val context: Context, private val listener: Listener
             val negotiation = Uvc.negotiate(connection, streaming, formats)
             if (!negotiation.ok) return fail("Camera did not start: ${negotiation.log}")
             listener.onStatus("Glasses cameras: %.0f fps%s".format(negotiation.fps, if (imu != null) ", IMU on" else ""))
+            readControls(connection, connection.rawDescriptors ?: ByteArray(0))
             repeat(CAMERA_REQUESTS) { requests += queue(connection, cameraIn, negotiation.payloadBytes) }
 
             val assembler = Assembler(decoder)
@@ -182,6 +253,8 @@ class GlassesDevice(private val context: Context, private val listener: Listener
             Log.e(TAG, "Glasses streaming failed", e)
             listener.onError("Glasses streaming failed: ${e.message}")
         } finally {
+            this.connection = null
+            uvcControls = null
             requests.forEach { it.cancel() }
             requests.forEach { it.close() }
             streaming?.let { connection.setInterface(it) } // alternate setting 0 stops the stream
@@ -189,6 +262,38 @@ class GlassesDevice(private val context: Context, private val listener: Listener
             connection.close()
             running = false
         }
+    }
+
+    /** Finds the camera's exposure and gain controls, reports them and applies the requested exposure. */
+    private fun readControls(connection: UsbDeviceConnection, descriptors: ByteArray) {
+        val uvc = Uvc.parseControls(descriptors)
+        val report = StringBuilder()
+        var exposure: Uvc.ControlRange? = null
+        var gain: Uvc.ControlRange? = null
+        var aeModes: Int? = null
+        if (uvc == null) {
+            report.append("no VideoControl interface")
+        } else {
+            report.appendLine("VideoControl interface ${uvc.interfaceNumber}:")
+            uvc.units.forEach { report.appendLine("  $it") }
+            for (control in uvc.available) {
+                val range = Uvc.range(connection, uvc, control)
+                report.appendLine("  ${control.name}: ${range ?: "not readable"}")
+                when (control.name) {
+                    Uvc.EXPOSURE -> exposure = range
+                    Uvc.GAIN -> gain = range
+                    Uvc.AE_MODE -> aeModes = range?.step // GET_RES of the AE mode is the bitmap of supported modes
+                }
+            }
+            if (uvc.available.isEmpty()) report.append("  no exposure or gain controls advertised")
+        }
+        Log.i(TAG, "Glasses camera controls: $report")
+        this.connection = connection
+        uvcControls = uvc
+        val c = CameraControls(exposure, gain, aeModes, report.toString().trimEnd())
+        controls = c
+        listener.onControls(c)
+        if (c.any) controlExecutor.execute(::applyExposure)
     }
 
     private fun fail(message: String) {
@@ -247,9 +352,10 @@ class GlassesDevice(private val context: Context, private val listener: Listener
             decoder.post {
                 val info = GlassesProtocol.frameInfo(frame)
                 val upright = GlassesProtocol.rotate(GlassesProtocol.descramble(frame), info.isRight)
+                val meta = frame.copyOfRange(GlassesProtocol.IMAGE_BYTES, GlassesProtocol.IMAGE_BYTES + META_BYTES)
                 pool.offer(frame)
                 frames.incrementAndGet()
-                pairing.add(Eye(upright, info.timestampNs, info.sequence, arrival), info.isRight)
+                pairing.add(Eye(upright, info.timestampNs, info.sequence, arrival, meta), info.isRight)
             }
         }
     }
@@ -347,6 +453,8 @@ class GlassesDevice(private val context: Context, private val listener: Listener
         const val TAG = "GlassesDevice"
         const val CAMERA_REQUESTS = 12
         const val IMU_REQUESTS = 4
+        /** Bytes of each frame's metadata row kept in [Eye.meta]. */
+        const val META_BYTES = 64
         const val ACTION_PERMISSION = "com.xreal.stereoview.GLASSES_USB_PERMISSION"
     }
 }
