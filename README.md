@@ -1,11 +1,13 @@
 # XREAL Beam Pro — Stereo Camera Passthrough
 
+Built with Claude Code from the prompt in
+[gabriellupu/xreal-glasses-live-beam-pro](https://github.com/gabriellupu/xreal-glasses-live-beam-pro),
+copied to [`docs/xreal_beampro_stereo_passthrough_spec.md`](docs/xreal_beampro_stereo_passthrough_spec.md).
+That file is not covered by this project's license.
+
 Android app for the XREAL Beam Pro. It opens both rear cameras, places their feeds side by side
 (left eye | right eye) and shows the result full-screen on connected XREAL Air glasses, for
 real-time 3D passthrough.
-
-Built from the spec in [`docs/xreal_beampro_stereo_passthrough_spec.md`](docs/xreal_beampro_stereo_passthrough_spec.md)
-(from [gabriellupu/xreal-glasses-live-beam-pro](https://github.com/gabriellupu/xreal-glasses-live-beam-pro)).
 
 Kotlin · Camera2 · OpenGL ES 2.0 · minSdk 31 / targetSdk 34 · no XREAL SDK required.
 
@@ -92,4 +94,4 @@ that aren't crashes, **Info** shares the camera setup together with the app's re
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE), except for `docs/xreal_beampro_stereo_passthrough_spec.md`.
