@@ -141,7 +141,7 @@ glasses cameras need different corrections). Six profiles are built in:
 |---|---|
 | **Passthrough** | Live 3D viewing: 1:1 scale, medium stabilization, autofocus, up to 1080p |
 | **OAK passthrough** / **OAK EuRoC dataset** | Luxonis OAK camera: live mono pair, or SLAM recordings with mono pair, color JPEGs and the OAK IMU (see *OAK cameras*) |
-| **Glasses passthrough** | Live view through the glasses' own cameras: rectified, 1:1 scale, glasses IMU left to the system |
+| **Glasses passthrough** | Live view through the glasses' own cameras: rectified, Fill, glasses IMU left to the system |
 | **Glasses EuRoC dataset** | SLAM recordings from the Air 2 Ultra's own tracking cameras and IMU, rectified preview, no convergence shift (see below) |
 | **EuRoC dataset** | SLAM recordings: raw images, focus locked at infinity, no stabilization, ≤720p at 30 fps, 60 Mbit/s H.264, IMU through the direct channel (fastest listener where unsupported) with calibrated and raw accelerometer/gyroscope, raw magnetometer and game rotation vector |
 
@@ -167,7 +167,7 @@ the app releases the cameras as before. Configure it under *Settings → Recordi
 | Video bitrate | 10–100 Mbit/s per camera |
 | IMU rate | Fastest the sensors allow, 500/200/100 Hz through a listener, or a shared-memory direct channel (~800 or ~200 Hz) where the sensor supports it |
 | IMU streams | Accelerometer, gyroscope, their uncalibrated versions with bias, magnetometer (calibrated or not), game/rotation vector, gravity, linear acceleration, barometer |
-| Recordings… | Lists recordings (folders and zips) with their sizes. Per recording: **Copy path** (to the clipboard), **Zip** / **Unzip** (the other form is deleted once the new one is complete), **To Downloads** (copies to `Download/XREAL Stereo/`, adding `.nomedia` to folders so galleries don't index thousands of images), **Share** (zips first if needed, then the Android share sheet) and **Delete** |
+| Recordings | Opens the Recordings screen (also on the start screen): see *Recordings screen and preview* |
 
 **Writing.** No capture thread waits for storage. CSV files are buffered in memory and
 written by a background thread a few times a second; encoded video is copied out of the
@@ -181,6 +181,29 @@ storage is left.
 *Settings → Focus → Locked at infinity* keeps the intrinsics fixed, which SLAM needs. For SLAM,
 also turn stabilization off when recording rectified images, or each frame is rotated by
 its logged `stab_q`.
+
+### Recordings screen and preview
+
+**Recordings** (start screen, or *Settings → Recordings*) lists every recording, folders and
+zips, with its size, source, duration and status. Per recording: **Preview**, **Copy path**,
+**Zip** / **Unzip** (the other form is deleted once the new one is complete), **To Downloads**
+(copies to `Download/XREAL Stereo/`, adding `.nomedia` to folders so galleries don't index
+thousands of images), **Share** (zips first if needed) and, under ⋮, **Delete**.
+
+**Preview** plays a recording back:
+- every camera (whole images, any number of them) and imu0's gyroscope and accelerometer curves
+  around the cursor, with their values at the cursor and a 1/5/20/60 s span;
+- a timeline to drag (or drag the curves), ⏮/⏭ to step frames of cam0, ▶ to play in real
+  time, *Next gap* to jump to the next missing samples, and the current time and frame;
+- one lane per camera and imu0 under the timeline, marking where samples are missing;
+- **Statistics**: per camera, imu0 and raw IMU stream: samples, rate, duration, Δt min / median /
+  max, missing samples (gaps longer than 1.5 × the median Δt, each counting Δt / median − 1),
+  drops the recorder reported, and out-of-order timestamps. Tap a sensor to jump to its first gap;
+- **Trim**: drag the two handles (or *Start here* / *End here* at the cursor) and *Save as new…*
+  writes the range as a new recording in the same layout: data.csv rows, images or the video
+  (cut without re-encoding, from the keyframe at or before the start), imu0, frames.csv,
+  capture_results.csv, the raw IMU streams (shifted onto the phone's clock for glasses and OAK
+  recordings) and descriptions; metadata.json records `trimmed_from`. The original is kept.
 
 **Storage.** Recordings are written to the app's own storage: the fastest place on the
 device (no MediaStore, no permissions, no media scanning), but deleted on uninstall. Zip a
@@ -238,8 +261,9 @@ each `data.mp4` into `data/<timestamp>.png` in place. Image recordings need no c
 
 The app works in portrait and landscape and rotates without interrupting the cameras or a
 recording. On the glasses display the view is always side by side. On the phone screen in
-portrait the two eyes are stacked (left above right, 16:9 each) as a preview, and the panel's
-actions move to a scrollable row of their own. The Beam Pro's two cameras sit side by side only
+portrait the view is a preview that always shows the whole images: Fit regardless of the
+profile's scale, without zoom or convergence shift, side by side for tall images (the
+glasses cameras) and stacked for wide ones; the panel's actions move to a scrollable row. The Beam Pro's two cameras sit side by side only
 when it is held in landscape: in portrait the view stays upright but the stereo baseline is
 vertical, and the status line says so. Its cameras reopen for the new orientation when the
 device turns (after the recording, if one is running).

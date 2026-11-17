@@ -55,9 +55,8 @@ class ControlsOverlay(
         override fun setStatus(text: CharSequence) = this@ControlsOverlay.setStatus(text)
         override fun showProfiles() = profilesDialog.show()
         override fun probeUsb() = actions.onUsbProbe()
-        override fun showRecordings() = recordingsDialog.show()
+        override fun showRecordings() = RecordingsActivity.open(context, actions.recordingDir())
     })
-    private val recordingsDialog = RecordingsDialog(context, actions::recordingDir, ::setStatus)
     private val profilesDialog = ProfilesDialog(context, viewModel, actions::isRecording, ::setStatus)
 
     init {

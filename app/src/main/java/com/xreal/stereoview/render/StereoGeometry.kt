@@ -123,6 +123,11 @@ class StereoGeometry(
         Mat3.mul(rectFromDevice, deviceRotation, Mat3.transpose(rectFromDevice))
 
     /** Half-FOV tangents (horizontal, vertical) each eye shows, for an eye of physical aspect [eyeAspect]. */
+    /** Width / height of the upright camera view (both cameras' common field of view). */
+    val viewAspect: Double
+        get() = cameras.minOf { if (imageXIsHorizontal) it.tanHalfFovX else it.tanHalfFovY } /
+            cameras.minOf { if (imageXIsHorizontal) it.tanHalfFovY else it.tanHalfFovX }
+
     fun displayTangents(mode: ScaleMode, eyeAspect: Double, glassesFovDeg: Double): Pair<Double, Double> {
         val camH = cameras.minOf { if (imageXIsHorizontal) it.tanHalfFovX else it.tanHalfFovY }
         val camV = cameras.minOf { if (imageXIsHorizontal) it.tanHalfFovY else it.tanHalfFovX }

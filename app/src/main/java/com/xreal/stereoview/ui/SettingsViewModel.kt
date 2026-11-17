@@ -252,7 +252,7 @@ class SettingsRepository(private val context: Context) {
     /** Saved profiles (the built-in ones until anything is saved) and the active one's name. */
     /** Built-in profiles added in later versions are appended once; deleted ones stay deleted. */
     val profiles = context.dataStore.data.map { p ->
-        val stored = p[Keys.PROFILES]?.let { runCatching { Profile.fromJson(it) }.getOrNull() }
+        val stored = p[Keys.PROFILES]?.let { runCatching { Profile.migrate(Profile.fromJson(it)) }.getOrNull() }
         val seen = p[Keys.BUILTINS_SEEN]?.split('\n')?.toSet()
             ?: if (stored != null) setOf(Profile.PASSTHROUGH, Profile.EUROC) else emptySet()
         val list = (stored ?: emptyList()) + Profile.defaults.filter { d -> d.name !in seen && stored?.none { it.name == d.name } != false }

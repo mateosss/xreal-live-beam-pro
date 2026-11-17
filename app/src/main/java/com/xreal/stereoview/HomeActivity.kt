@@ -33,7 +33,7 @@ import com.xreal.stereoview.ui.CameraSource
 import com.xreal.stereoview.ui.Dialogs
 import com.xreal.stereoview.ui.DraftSettings
 import com.xreal.stereoview.ui.Profile
-import com.xreal.stereoview.ui.RecordingsDialog
+import com.xreal.stereoview.ui.RecordingsActivity
 import com.xreal.stereoview.ui.SettingsSheet
 import com.xreal.stereoview.ui.SettingsViewModel
 import com.xreal.stereoview.ui.StereoSettings
@@ -161,7 +161,7 @@ class HomeActivity : AppCompatActivity() {
         }
         tools.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
             text = "Recordings"
-            setOnClickListener { RecordingsDialog(this@HomeActivity, { null }, ::toast).show() }
+            setOnClickListener { RecordingsActivity.open(this@HomeActivity, null) }
         })
         page.addView(tools)
     }
@@ -358,7 +358,7 @@ class HomeActivity : AppCompatActivity() {
         override fun setStatus(text: CharSequence) = toast(text)
         override fun showProfiles() = Unit
         override fun probeUsb() = Unit
-        override fun showRecordings() = RecordingsDialog(this@HomeActivity, { null }, ::toast).show()
+        override fun showRecordings() = RecordingsActivity.open(this@HomeActivity, null)
     }
 
     // endregion

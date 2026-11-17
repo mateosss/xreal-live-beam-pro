@@ -102,7 +102,7 @@ data class Profile(val name: String, val settings: StereoSettings) {
                             cameraSource = CameraSource.GLASSES,
                             glassesImu = false,
                             convergencePx = 0f,
-                            scaleMode = ScaleMode.REAL,
+                            scaleMode = ScaleMode.FILL,
                         ),
                     ),
                     Profile(
@@ -111,7 +111,7 @@ data class Profile(val name: String, val settings: StereoSettings) {
                             cameraSource = CameraSource.GLASSES,
                             glassesImu = true,
                             convergencePx = 0f,
-                            scaleMode = ScaleMode.FIT,
+                            scaleMode = ScaleMode.FILL,
                             stabilization = Stabilization.OFF,
                             imuRate = ImuRate.DIRECT_VERY_FAST,
                             imuStreams = listOf("ACCELEROMETER", "GYROSCOPE", "ACCELEROMETER_UNCALIBRATED", "GYROSCOPE_UNCALIBRATED")
@@ -120,6 +120,21 @@ data class Profile(val name: String, val settings: StereoSettings) {
                     ),
                 )
             }
+
+        /**
+         * Updates stored copies of built-in profiles whose defaults changed, if they still hold
+         * exactly the old defaults (never touched by the user): the glasses profiles now use Fill.
+         */
+        fun migrate(profiles: List<Profile>): List<Profile> {
+            val old = mapOf(GLASSES_PASSTHROUGH to ScaleMode.REAL, GLASSES_EUROC to ScaleMode.FIT)
+            val base = StereoSettings()
+            return profiles.map { p ->
+                val oldScale = old[p.name] ?: return@map p
+                val current = defaults.firstOrNull { it.name == p.name } ?: return@map p
+                val oldDefault = current.settings.copy(scaleMode = oldScale)
+                if (base.withProfile(p.settings) == base.withProfile(oldDefault)) current else p
+            }
+        }
 
         const val PASSTHROUGH = "Passthrough"
         const val EUROC = "EuRoC dataset"

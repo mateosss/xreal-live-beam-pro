@@ -42,3 +42,14 @@ class ProfilesTest {
         assertFalse(euroc.differsFrom(applied.copy(showHud = true, glassesFovDeg = 57f)))
     }
 }
+
+class ProfileMigrationTest {
+    @Test
+    fun untouchedGlassesProfilesMoveToFillButEditedOnesStay() {
+        val euroc = Profile.defaults.first { it.name == Profile.GLASSES_EUROC }
+        val untouched = euroc.copy(settings = euroc.settings.copy(scaleMode = ScaleMode.FIT))
+        val edited = euroc.copy(settings = euroc.settings.copy(scaleMode = ScaleMode.FIT, convergencePx = 10f))
+        assertEquals(ScaleMode.FILL, Profile.migrate(listOf(untouched))[0].settings.scaleMode)
+        assertEquals(ScaleMode.FIT, Profile.migrate(listOf(edited))[0].settings.scaleMode)
+    }
+}

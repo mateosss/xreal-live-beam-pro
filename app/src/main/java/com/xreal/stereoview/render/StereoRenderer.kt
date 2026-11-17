@@ -238,17 +238,17 @@ class StereoRenderer(
             val s = settings
             val geometry = geometryFor(cams, s)
             val models = listOf(cams.left, cams.right)
-            val eyes = eyeLayout(s)
+            val eyes = eyeLayout(s, geometry.viewAspect.toFloat())
             val eyeWidth = eyes.width
             val eyeAspect = eyes.aspect.toDouble()
-            val (tanH, tanV) = geometry.displayTangents(s.scaleMode, eyeAspect, s.glassesFovDeg.toDouble())
-            val zoom = s.depth.coerceIn(StereoSettings.DEPTH_MIN, StereoSettings.DEPTH_MAX).toDouble()
+            val (tanH, tanV) = geometry.displayTangents(eyes.mode(s), eyeAspect, s.glassesFovDeg.toDouble())
+            val zoom = eyes.zoom(s).toDouble()
             val deviceCorrection = stabilizer?.correction(surfaceTextures[0].timestamp, s.stabilization.timeConstantSec)
                 ?: Mat3.identity()
             val stabilization = geometry.toRectFrame(deviceCorrection)
             viewDescription = "eye %.1f°×%.1f° %s, %s".format(
                 Math.toDegrees(2 * atan(tanH / zoom)), Math.toDegrees(2 * atan(tanV / zoom)),
-                s.scaleMode.label, eyes.label,
+                eyes.mode(s).label, eyes.label,
             )
 
             recording?.let { record(it, shader, geometry, models, s, fresh, stabilization) }
@@ -266,7 +266,7 @@ class StereoRenderer(
             for (viewport in 0..1) {
                 val camera = if (s.swapEyes) 1 - viewport else viewport
                 // Positive convergence moves the left image left and the right image right.
-                val shift = (if (viewport == 0) 1.0 else -1.0) * s.convergencePx / eyeWidth
+                val shift = (if (viewport == 0) 1.0 else -1.0) * eyes.convergencePx(s) / eyeWidth
                 val ray = geometry.rayMatrix(
                     camera, tanH, tanV, shift, zoom,
                     s.alignPitchDeg.toDouble(), s.alignRollDeg.toDouble(), stabilization,
@@ -305,16 +305,16 @@ class StereoRenderer(
             newFrames[1]++
         }
         val s = settings
-        val eyes = eyeLayout(s)
+        val eyes = eyeLayout(s, IMAGE_W.toFloat() / IMAGE_H)
         val eyeWidth = eyes.width
         val eyeAspect = eyes.aspect
-        val zoom = s.depth.coerceIn(StereoSettings.DEPTH_MIN, StereoSettings.DEPTH_MAX)
+        val zoom = eyes.zoom(s)
         if (s.glassesRectify) {
             val geometry = glassesGeometry
-            val (tanH, tanV) = geometry.displayTangents(s.scaleMode, eyeAspect.toDouble(), s.glassesFovDeg.toDouble())
+            val (tanH, tanV) = geometry.displayTangents(eyes.mode(s), eyeAspect.toDouble(), s.glassesFovDeg.toDouble())
             viewDescription = "glasses cameras rectified, eye %.1f°×%.1f° %s, %s".format(
                 Math.toDegrees(2 * atan(tanH / zoom)), Math.toDegrees(2 * atan(tanV / zoom)),
-                s.scaleMode.label, eyes.label,
+                eyes.mode(s).label, eyes.label,
             )
             val pitch = s.alignPitchDeg.toDouble()
             val roll = s.alignRollDeg.toDouble()
@@ -326,7 +326,7 @@ class StereoRenderer(
             }
             for (viewport in 0..1) {
                 val camera = if (s.swapEyes) 1 - viewport else viewport
-                val shift = (if (viewport == 0) 1.0 else -1.0) * s.convergencePx / eyeWidth
+                val shift = (if (viewport == 0) 1.0 else -1.0) * eyes.convergencePx(s) / eyeWidth
                 eyes.apply(viewport)
                 gray.drawRectified(camera, geometry.rayMatrix(camera, tanH, tanV, shift, zoom.toDouble(), pitch, roll), geometry.cameras[camera])
             }
@@ -353,23 +353,46 @@ class StereoRenderer(
             newFrames[0]++
             newFrames[1]++
         }
-        val zoom = settings.depth.coerceIn(StereoSettings.DEPTH_MIN, StereoSettings.DEPTH_MAX)
-        drawGrayRaw(gray, frame.left.width, frame.left.height, "OAK mono cameras", eyeLayout(settings), zoom)
+        val eyes = eyeLayout(settings, frame.left.width.toFloat() / frame.left.height)
+        drawGrayRaw(gray, frame.left.width, frame.left.height, "OAK mono cameras", eyes, eyes.zoom(settings))
     }
 
     /**
-     * Where the two eyes go on the surface: side by side (SBS, for the glasses), or on a portrait
-     * surface (the phone held upright) stacked, left above right, each a 16:9 band across the
-     * width at the top, so the preview stays usable above the controls.
+     * Where the two eyes go on the surface. Landscape: side by side (SBS, what the glasses
+     * show), with the profile's scale mode. Portrait (the phone held upright, a preview only):
+     * whole images always ([mode] is Fit), sized to the image's shape in the top ~60% of the
+     * screen above the controls: tall images side by side, wide ones stacked (left above right).
      */
-    private class EyeLayout(val width: Int, val height: Int, val aspect: Float, val label: String, private val x: IntArray, private val y: IntArray) {
+    private class EyeLayout(
+        val width: Int, val height: Int, val aspect: Float, val label: String,
+        private val x: IntArray, private val y: IntArray, private val portraitPreview: Boolean,
+    ) {
         fun apply(eye: Int) = GLES20.glViewport(x[eye], y[eye], width, height)
+        fun mode(s: StereoSettings): ScaleMode = if (portraitPreview) ScaleMode.FIT else s.scaleMode
+        /** Depth zoom and convergence shift crop the image, so the portrait preview leaves them out. */
+        fun zoom(s: StereoSettings): Float = if (portraitPreview) 1f else s.depth.coerceIn(StereoSettings.DEPTH_MIN, StereoSettings.DEPTH_MAX)
+        fun convergencePx(s: StereoSettings): Float = if (portraitPreview) 0f else s.convergencePx
     }
 
-    private fun eyeLayout(s: StereoSettings): EyeLayout {
+    /** [imageAspect]: width / height of what each eye shows, as it appears upright. */
+    private fun eyeLayout(s: StereoSettings, imageAspect: Float): EyeLayout {
         if (height > width) {
-            val h = minOf(height / 2, width * 9 / 16)
-            return EyeLayout(width, h, width.toFloat() / h, "stacked (portrait preview)", intArrayOf(0, 0), intArrayOf(height - h, height - 2 * h))
+            val available = height * 3 / 5
+            return if (imageAspect < 1f) {
+                var w = width / 2
+                var h = (w / imageAspect).toInt()
+                if (h > available) { h = available; w = (h * imageAspect).toInt() }
+                val x0 = (width / 2 - w) / 2
+                EyeLayout(w, h, w.toFloat() / h, "side by side (portrait preview, whole image)",
+                    intArrayOf(x0, width / 2 + x0), intArrayOf(height - h, height - h), true)
+            } else {
+                var w = width
+                var h = (w / imageAspect).toInt()
+                if (h > available / 2) { h = available / 2; w = (h * imageAspect).toInt() }
+                val x0 = (width - w) / 2
+                EyeLayout(w, h, w.toFloat() / h, "stacked (portrait preview, whole image)",
+                    intArrayOf(x0, x0), intArrayOf(height - h, height - 2 * h), true)
+            }
         }
         val eyeWidth = width / 2
         val halfSbs = when (s.sbsLayout) {
@@ -379,7 +402,7 @@ class StereoRenderer(
         }
         return EyeLayout(
             eyeWidth, height, eyeWidth.toFloat() * (if (halfSbs) 2 else 1) / height,
-            if (halfSbs) "half SBS" else "full SBS", intArrayOf(0, eyeWidth), intArrayOf(0, 0),
+            if (halfSbs) "half SBS" else "full SBS", intArrayOf(0, eyeWidth), intArrayOf(0, 0), false,
         )
     }
 
@@ -389,16 +412,16 @@ class StereoRenderer(
         val eyeWidth = eyes.width
         val eyeAspect = eyes.aspect
         val imageAspect = w.toFloat() / h
-        val (sx, sy) = when (s.scaleMode) {
+        val (sx, sy) = when (eyes.mode(s)) {
             ScaleMode.STRETCH -> 1f to 1f
             ScaleMode.FILL -> if (imageAspect > eyeAspect) imageAspect / eyeAspect to 1f else 1f to eyeAspect / imageAspect
             ScaleMode.FIT, ScaleMode.REAL -> if (imageAspect > eyeAspect) 1f to eyeAspect / imageAspect else imageAspect / eyeAspect to 1f
         }
-        viewDescription = "$label ${w}×$h, ${s.scaleMode.label}, ${eyes.label}"
+        viewDescription = "$label ${w}×$h, ${eyes.mode(s).label}, ${eyes.label}"
         for (viewport in 0..1) {
             val slot = if (s.swapEyes) 1 - viewport else viewport
             // Positive convergence moves the left image left and the right image right.
-            val offset = (if (viewport == 0) -1f else 1f) * s.convergencePx / eyeWidth
+            val offset = (if (viewport == 0) -1f else 1f) * eyes.convergencePx(s) / eyeWidth
             eyes.apply(viewport)
             gray.draw(slot, sx * zoom, sy * zoom, offset)
         }

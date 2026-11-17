@@ -34,6 +34,18 @@
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|density"
             android:screenOrientation="fullUser" />
 
+        <activity
+            android:name=".ui.RecordingsActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize"
+            android:screenOrientation="fullUser" />
+
+        <activity
+            android:name=".preview.RecordingPreviewActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize"
+            android:screenOrientation="fullUser" />
+
         <!-- Start screen: choose a device, then a profile. -->
         <activity
             android:name=".HomeActivity"
