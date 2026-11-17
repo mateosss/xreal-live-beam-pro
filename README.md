@@ -139,7 +139,11 @@ names the profile it used.
 ## Recording datasets (stereo + IMU, for SLAM)
 
 **Rec** records both cameras and the IMU until pressed again; the button turns red and shows
-the elapsed time. Configure it under *Settings → Recording*:
+the elapsed time. Recording continues with the screen locked or the app in the background: a
+notification (with a Stop button) shows while it runs, and a foreground service with a wake
+lock keeps the cameras, sensors and glasses connection alive. Rendering runs on the app's own
+GL thread, so the encoders keep receiving frames with no screen. Without a recording, leaving
+the app releases the cameras as before. Configure it under *Settings → Recording*:
 
 | Option | Choices |
 |---|---|

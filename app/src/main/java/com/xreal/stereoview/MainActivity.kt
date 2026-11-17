@@ -6,7 +6,6 @@ import android.graphics.Rect
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraManager
 import android.hardware.display.DisplayManager
-import android.opengl.GLSurfaceView
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -16,6 +15,8 @@ import android.view.Display
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -38,7 +39,8 @@ import com.xreal.stereoview.glasses.GlassesProtocol
 import com.xreal.stereoview.record.ActiveRecording
 import com.xreal.stereoview.record.GlassesRecording
 import com.xreal.stereoview.record.Recording
-import com.xreal.stereoview.render.GlRecorder
+import com.xreal.stereoview.record.RecordingService
+import com.xreal.stereoview.render.RenderThread
 import com.xreal.stereoview.render.StereoPresentation
 import com.xreal.stereoview.render.StereoRenderer
 import com.xreal.stereoview.render.Stabilizer
@@ -75,7 +77,8 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     private lateinit var cameraManager: CameraManager
     private lateinit var displayManager: DisplayManager
 
-    private var glView: GLSurfaceView? = null
+    private var glView: SurfaceView? = null
+    private var renderThread: RenderThread? = null
     private var renderer: StereoRenderer? = null
     private var presentation: StereoPresentation? = null
     private var outputDisplay: Display? = null
@@ -157,11 +160,15 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
 
     override fun onPause() {
         displayManager.unregisterDisplayListener(displayListener)
-        teardownOutput()
+        // A recording keeps everything running (screen locked, app in the background), held
+        // by RecordingService; otherwise the cameras are released for other apps.
+        if (recording == null) teardownOutput()
         super.onPause()
     }
 
     override fun onDestroy() {
+        // E.g. swiped away from recents while recording in the background: save what was recorded.
+        if (recording != null) teardownOutput()
         camera.release()
         super.onDestroy()
     }
@@ -177,13 +184,16 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         val settings = viewModel.settings.value
         val display = if (settings.outputMode == OutputMode.AUTO) DisplayUtils.findGlassesDisplay(displayManager) else null
         val renderer = StereoRenderer(this, stabilizer).also { it.settings = settings }
-        val view = GLSurfaceView(this).apply {
-            setEGLContextClientVersion(2)
-            setEGLConfigChooser(GlRecorder.ConfigChooser())
-            setRenderer(renderer)
-            renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
+        val renderThread = RenderThread(renderer)
+        val view = SurfaceView(this).apply {
+            holder.addCallback(object : SurfaceHolder.Callback {
+                override fun surfaceCreated(holder: SurfaceHolder) = Unit
+                override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) =
+                    renderThread.setWindow(holder.surface, width, height)
+                override fun surfaceDestroyed(holder: SurfaceHolder) = renderThread.setWindow(null, 0, 0)
+            })
         }
-        renderer.attach(view)
+        this.renderThread = renderThread
 
         if (display != null) {
             presentation = StereoPresentation(this, display, view).also { it.show() }
@@ -207,9 +217,10 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         stopGlasses()
         camera.stopBlocking()
         stabilizer.stop()
-        glView?.onPause()
         presentation?.dismiss()
         binding.glContainer.removeAllViews()
+        renderThread?.quit()
+        renderThread = null
         renderer?.release()
         presentation = null
         glView = null
@@ -607,6 +618,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         recording = rec
         camera.resultListener = rec
         renderer.startRecording(rec)
+        keepRecordingInBackground(rec, usb = false)
         controls.setStatus("Recording to ${rec.dir.name}")
         Log.i(TAG, "Recording to ${rec.dir}")
         updateRecordingTimer()
@@ -638,6 +650,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     private fun stopRecording(reason: String?, waitForGl: Boolean = false) {
         val rec = recording ?: return
         recording = null
+        RecordingService.onStopRequested = null
         camera.resultListener = null
         val glRecording = rec as? Recording
         controls.setRecording(null)
@@ -650,7 +663,14 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
                 "⚠ Saving ${rec.dir.name} failed: ${e.message}"
             }
             Log.i(TAG, summary)
-            runOnUiThread { controls.setStatus(summary) }
+            runOnUiThread {
+                // The service keeps the process alive until the files are complete.
+                if (recording == null) RecordingService.stop(applicationContext)
+                if (isDestroyed) return@runOnUiThread
+                controls.setStatus(summary)
+                // Stopped while in the background: now release the cameras as onPause would have.
+                if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) && recording == null) teardownOutput()
+            }
         }
         val renderer = renderer
         if (renderer == null || glRecording == null) {
@@ -667,6 +687,24 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             finish()
         }
     }
+
+    /**
+     * Starts [RecordingService] so the recording continues with the screen locked; asks once
+     * for the notification permission that lets its notification (with a Stop button) show.
+     */
+    private fun keepRecordingInBackground(rec: ActiveRecording, usb: Boolean) {
+        RecordingService.onStopRequested = { if (recording === rec) stopRecording("Recording stopped from the notification") }
+        RecordingService.start(this, rec.dir.name, usb)
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED &&
+            !notificationPermissionAsked
+        ) {
+            notificationPermissionAsked = true
+            requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    private var notificationPermissionAsked = false
+    private val requestNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     private fun startGlassesRecording() {
         val device = glasses.find()
@@ -688,6 +726,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         }
         glassesCalibration?.let(rec::onCalibration)
         recording = rec
+        keepRecordingInBackground(rec, usb = true)
         controls.setStatus("Recording glasses cameras to ${rec.dir.name}")
         Log.i(TAG, "Recording to ${rec.dir}")
         updateRecordingTimer()

@@ -5,10 +5,7 @@ import android.opengl.EGLConfig
 import android.opengl.EGLExt
 import android.opengl.EGLSurface
 import android.opengl.GLES20
-import android.opengl.GLSurfaceView
 import com.xreal.stereoview.record.Recording
-import javax.microedition.khronos.egl.EGL10
-import javax.microedition.khronos.egl.EGLDisplay
 
 /**
  * GL-thread half of a [Recording]: renders frames into each output's video encoder surface
@@ -102,33 +99,5 @@ class GlRecorder(private val recording: Recording) {
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, framebuffers[i])
         GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, textures[i], 0)
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
-    }
-
-    /**
-     * Picks an RGB(A)8888 ES2 config flagged EGL_RECORDABLE_ANDROID, so video encoder surfaces
-     * can share the view's context; falls back to any 8-bit ES2 config.
-     */
-    class ConfigChooser : GLSurfaceView.EGLConfigChooser {
-        override fun chooseConfig(egl: EGL10, display: EGLDisplay): javax.microedition.khronos.egl.EGLConfig {
-            for (recordable in listOf(true, false)) {
-                for (alpha in listOf(8, 0)) {
-                    val attributes = mutableListOf(
-                        EGL10.EGL_RED_SIZE, 8,
-                        EGL10.EGL_GREEN_SIZE, 8,
-                        EGL10.EGL_BLUE_SIZE, 8,
-                        EGL10.EGL_ALPHA_SIZE, alpha,
-                        EGL10.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
-                    )
-                    if (recordable) attributes += listOf(EGLExt.EGL_RECORDABLE_ANDROID, 1)
-                    attributes += EGL10.EGL_NONE
-                    val configs = arrayOfNulls<javax.microedition.khronos.egl.EGLConfig>(1)
-                    val count = IntArray(1)
-                    if (egl.eglChooseConfig(display, attributes.toIntArray(), configs, 1, count) && count[0] > 0) {
-                        return configs[0]!!
-                    }
-                }
-            }
-            error("No EGL config with 8-bit color and OpenGL ES 2")
-        }
     }
 }

@@ -131,10 +131,10 @@ class StereoRenderer(
     private var drawNanos = 0L
     private var statsStart = SystemClock.elapsedRealtime()
 
-    /** Binds the renderer to its view; draws are only requested when frames arrive. */
-    fun attach(view: GLSurfaceView) {
-        requestRender = view::requestRender
-        queueEvent = view::queueEvent
+    /** Binds the renderer to its GL thread; draws are only requested when frames arrive. */
+    fun attach(requestRender: () -> Unit, queueEvent: (Runnable) -> Unit) {
+        this.requestRender = requestRender
+        this.queueEvent = queueEvent
     }
 
     /** Starts storing every new camera frame into [recording]'s outputs. */
@@ -499,7 +499,7 @@ class StereoRenderer(
         mainHandler.post { listener.onRenderStats(stats) }
     }
 
-    /** Call from the main thread after the GLSurfaceView is paused or detached. */
+    /** Call from the main thread after the [RenderThread] has quit. */
     fun release() {
         recording = null
         surfaceTextures.forEach { it.release() }
