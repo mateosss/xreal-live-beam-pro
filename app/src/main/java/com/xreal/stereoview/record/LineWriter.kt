@@ -7,8 +7,9 @@ import java.io.IOException
 
 /**
  * A text file written line by line without ever blocking the caller on storage: [line] only
- * appends to a memory buffer, and a shared background thread ([DiskWriter]) moves buffered
- * text to the file a few times a second. [close] writes the rest and closes the file.
+ * appends to a memory buffer, and a shared background thread ([DiskWriter]) writes buffered
+ * text to the file every 0.1 s and fsyncs it every 2 s, so a crash (of the app or the phone)
+ * loses at most the last seconds. [close] writes the rest and closes the file.
  * Thread-safe.
  */
 class LineWriter(file: File, header: String? = null) {
@@ -69,6 +70,17 @@ class LineWriter(file: File, header: String? = null) {
         }
     }
 
+    /** Asks the kernel to put written data on storage, so it survives a phone crash too. */
+    internal fun sync() {
+        synchronized(ioLock) {
+            if (closed) return
+            try {
+                out.fd.sync()
+            } catch (_: IOException) {
+            }
+        }
+    }
+
     fun close() {
         synchronized(this) {
             if (closed) return
@@ -92,6 +104,9 @@ class LineWriter(file: File, header: String? = null) {
  */
 object DiskWriter {
     private const val PERIOD_MS = 100L
+    /** fsync every 2 s: lines reach the file within 0.1 s (safe from an app crash) and storage within ~2 s. */
+    private const val SYNC_EVERY = 20
+    private var ticks = 0
     private val writers = LinkedHashSet<LineWriter>()
     private var thread: Thread? = null
 
@@ -122,6 +137,7 @@ object DiskWriter {
                 writers.toList()
             }
             snapshot.forEach { it.drain() }
+            if (++ticks % SYNC_EVERY == 0) snapshot.forEach { it.sync() }
             Thread.sleep(PERIOD_MS)
         }
     }

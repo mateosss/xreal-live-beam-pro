@@ -139,7 +139,7 @@ glasses cameras need different corrections). Six profiles are built in:
 
 | Profile | For |
 |---|---|
-| **Passthrough** | Live 3D viewing: 1:1 scale, medium stabilization, autofocus, up to 1080p |
+| **Passthrough** | Live 3D viewing: 1:1 scale, no stabilization, autofocus, up to 1080p |
 | **OAK passthrough** / **OAK EuRoC dataset** | Luxonis OAK camera: live mono pair, or SLAM recordings with mono pair, color JPEGs and the OAK IMU (see *OAK cameras*) |
 | **Glasses passthrough** | Live view through the glasses' own cameras: rectified, Fill, glasses IMU left to the system |
 | **Glasses EuRoC dataset** | SLAM recordings from the Air 2 Ultra's own tracking cameras and IMU, rectified preview, no convergence shift (see below) |
@@ -168,6 +168,12 @@ the app releases the cameras as before. Configure it under *Settings → Recordi
 | IMU rate | Fastest the sensors allow, 500/200/100 Hz through a listener, or a shared-memory direct channel (~800 or ~200 Hz) where the sensor supports it |
 | IMU streams | Accelerometer, gyroscope, their uncalibrated versions with bias, magnetometer (calibrated or not), game/rotation vector, gravity, linear acceleration, barometer |
 | Recordings | Opens the Recordings screen (also on the start screen): see *Recordings screen and preview* |
+
+**Crashes.** Everything a recording writes is usable if the app or the phone dies midway:
+CSV files (data.csv, frames.csv, every IMU stream and `imu0`, which is merged live as samples
+arrive) reach the file within 0.1 s and are fsync'd every 2 s, and every sensor.yaml is
+written at the start (`imu0`'s rate_hz is 0 until the recording ends normally).
+`metadata.json` then still says `"status": "recording"`.
 
 **Writing.** No capture thread waits for storage. CSV files are buffered in memory and
 written by a background thread a few times a second; encoded video is copied out of the
@@ -232,7 +238,7 @@ mav0/
                           distortion correction modes, per-frame intrinsics, arrival time
   imu0/
     data.csv              EuRoC IMU: gyroscope timestamps, accelerometer interpolated
-                          (built when the recording stops)
+                          (merged live while recording)
     sensor.yaml           EuRoC IMU (noise values are placeholders)
 imu/<stream>.csv          every recorded IMU stream as delivered: timestamp_ns, arrival_ns,
                           values…, accuracy

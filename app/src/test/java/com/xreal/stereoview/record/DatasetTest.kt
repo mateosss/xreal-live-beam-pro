@@ -66,3 +66,38 @@ class DatasetTest {
         assertFalse(File(target.parentFile, "trimmed.part").exists())
     }
 }
+
+class LiveImu0Test {
+    @Test
+    fun liveMergeMatchesTheMergeAtTheEnd() {
+        val dir = Files.createTempDirectory("imu").toFile()
+        val gyro = File(dir, "g.csv")
+        val accel = File(dir, "a.csv")
+        val g = (0 until 300).map { 1_000_000L + it * 2_500_000L to floatArrayOf(it * 0.01f, -it * 0.02f, 0.5f) }
+        val a = (0 until 120).map { 3_000_000L + it * 6_000_000L to floatArrayOf(it.toFloat(), 9.8f, -it * 0.1f) }
+        gyro.writeText("timestamp_ns,arrival_ns,wx,wy,wz\n" + g.joinToString("") { (t, v) -> "$t,0,${v[0]},${v[1]},${v[2]}\n" })
+        accel.writeText("timestamp_ns,arrival_ns,ax,ay,az\n" + a.joinToString("") { (t, v) -> "$t,0,${v[0]},${v[1]},${v[2]}\n" })
+        Euroc.mergeImu(gyro, accel, File(dir, "end.csv"))
+        val live = LiveImu0(File(dir, "live.csv"))
+        // Interleave as two threads might: accel in bursts, gyro steadily.
+        var j = 0
+        for ((t, v) in g) {
+            live.gyro(t, v[0].toDouble(), v[1].toDouble(), v[2].toDouble())
+            while (j < a.size && a[j].first <= t + 10_000_000L) {
+                val (ta, va) = a[j++]
+                live.accel(ta, va[0].toDouble(), va[1].toDouble(), va[2].toDouble())
+            }
+        }
+        while (j < a.size) a[j++].let { (ta, va) -> live.accel(ta, va[0].toDouble(), va[1].toDouble(), va[2].toDouble()) }
+        live.close()
+        val end = File(dir, "end.csv").readLines()
+        val got = File(dir, "live.csv").readLines()
+        assertEquals(end.size, got.size)
+        for ((x, y) in end.zip(got).drop(1)) {
+            val p = x.split(',').map { it.toDouble() }
+            val q = y.split(',').map { it.toDouble() }
+            assertEquals(p[0], q[0], 0.0)
+            for (k in 1 until 7) assertEquals(p[k], q[k], 1e-5)
+        }
+    }
+}

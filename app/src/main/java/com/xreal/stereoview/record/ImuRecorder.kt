@@ -69,6 +69,8 @@ class ImuRecorder(
     private val dir: File,
     streams: List<ImuStream>,
     private val rate: ImuRate,
+    /** If set, mav0/imu0/data.csv is written here live from the gyroscope and accelerometer. */
+    imu0File: File? = null,
 ) {
     private inner class Track(val stream: ImuStream, val sensor: Sensor) {
         val writer = LineWriter(
@@ -101,6 +103,13 @@ class ImuRecorder(
             line.append(',')
             if (accuracy != null) line.append(accuracy)
             writer.line(line)
+            imu0?.let { m ->
+                when (stream) {
+                    imu0Pair?.first -> m.gyro(timestampNs, values[0].toDouble(), values[1].toDouble(), values[2].toDouble())
+                    imu0Pair?.second -> m.accel(timestampNs, values[0].toDouble(), values[1].toDouble(), values[2].toDouble())
+                    else -> Unit
+                }
+            }
         }
 
         fun toJson() = JSONObject().apply {
@@ -139,6 +148,20 @@ class ImuRecorder(
         tracks = found.mapNotNull { (stream, sensor) -> sensor?.let { Track(stream, it) } }
         missing = found.filter { it.second == null }.map { it.first }
         byType = tracks.associateBy { it.stream.type }
+    }
+
+    /** The gyroscope and accelerometer streams imu0 is built from: calibrated if both are recorded, else uncalibrated. */
+    val imu0Pair: Pair<ImuStream, ImuStream>? = listOf(
+        ImuStream.GYROSCOPE to ImuStream.ACCELEROMETER,
+        ImuStream.GYROSCOPE_UNCALIBRATED to ImuStream.ACCELEROMETER_UNCALIBRATED,
+    ).firstOrNull { (g, a) -> tracks.any { it.stream == g } && tracks.any { it.stream == a } }
+
+    /** The live imu0 writer, if requested and a gyroscope/accelerometer pair is recorded. */
+    val imu0: LiveImu0? = if (imu0File != null && imu0Pair != null) {
+        imu0File.parentFile?.mkdirs()
+        LiveImu0(imu0File)
+    } else {
+        null
     }
 
     private val listener = object : SensorEventListener {
@@ -262,6 +285,7 @@ class ImuRecorder(
         drained.await(1, TimeUnit.SECONDS)
         thread.quitSafely()
         tracks.forEach { it.writer.close() }
+        imu0?.close()
         return JSONObject().apply {
             put("rate", rate.name)
             put("rate_label", rate.label)

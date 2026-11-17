@@ -49,7 +49,7 @@ data class Profile(val name: String, val settings: StereoSettings) {
             get() {
                 val base = StereoSettings()
                 return listOf(
-                    Profile(PASSTHROUGH, base),
+                    Profile(PASSTHROUGH, base.copy(stabilization = Stabilization.OFF)),
                     Profile(
                         EUROC,
                         base.copy(
@@ -123,16 +123,21 @@ data class Profile(val name: String, val settings: StereoSettings) {
 
         /**
          * Updates stored copies of built-in profiles whose defaults changed, if they still hold
-         * exactly the old defaults (never touched by the user): the glasses profiles now use Fill.
+         * one of their old defaults (never touched by the user): the glasses profiles now use
+         * Fill (0.13), Passthrough has no stabilization (0.14).
          */
         fun migrate(profiles: List<Profile>): List<Profile> {
-            val old = mapOf(GLASSES_PASSTHROUGH to ScaleMode.REAL, GLASSES_EUROC to ScaleMode.FIT)
+            val old: Map<String, List<(StereoSettings) -> StereoSettings>> = mapOf(
+                GLASSES_PASSTHROUGH to listOf({ s -> s.copy(scaleMode = ScaleMode.REAL) }),
+                GLASSES_EUROC to listOf({ s -> s.copy(scaleMode = ScaleMode.FIT) }),
+                PASSTHROUGH to listOf({ s -> s.copy(stabilization = Stabilization.MEDIUM) }),
+            )
             val base = StereoSettings()
             return profiles.map { p ->
-                val oldScale = old[p.name] ?: return@map p
+                val olds = old[p.name] ?: return@map p
                 val current = defaults.firstOrNull { it.name == p.name } ?: return@map p
-                val oldDefault = current.settings.copy(scaleMode = oldScale)
-                if (base.withProfile(p.settings) == base.withProfile(oldDefault)) current else p
+                val stored = base.withProfile(p.settings)
+                if (olds.any { stored == base.withProfile(it(current.settings)) }) current else p
             }
         }
 

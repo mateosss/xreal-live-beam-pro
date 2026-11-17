@@ -246,32 +246,32 @@ class Recording private constructor(
     }
 
     /**
-     * Builds mav0/imu0 from the recorded gyroscope and accelerometer (calibrated if recorded,
-     * else uncalibrated). Returns a summary for metadata.json.
+     * Completes mav0/imu0, written live from the gyroscope and accelerometer (calibrated if
+     * both were recorded, else uncalibrated): its sensor.yaml with the measured rate. Returns a
+     * summary for metadata.json.
      */
     private fun writeImu0(): JSONObject {
-        val imuDir = File(dir, "imu")
-        val pair = listOf("" to "calibrated", "_uncalibrated" to "uncalibrated").map { (suffix, kind) ->
-            Triple(File(imuDir, "gyroscope$suffix.csv"), File(imuDir, "accelerometer$suffix.csv"), kind)
-        }.firstOrNull { it.first.exists() && it.second.exists() }
-            ?: return JSONObject().put("samples", 0).put("note", "record the gyroscope and accelerometer streams")
-        val out = File(Euroc.mav(dir), "imu0").apply { mkdirs() }
-        return try {
-            val (rows, rate) = Euroc.mergeImu(pair.first, pair.second, File(out, "data.csv"))
-            File(out, "sensor.yaml").writeText(Euroc.imuYaml(
-                listOf(
-                    "Beam Pro IMU (${pair.third} Android gyroscope + accelerometer), CLOCK_BOOTTIME.",
-                    "Body frame = this IMU = Android device sensor frame (x right, y up, z out of the screen).",
-                ),
-                "Beam Pro gyroscope timestamps, accelerometer linearly interpolated", Euroc.transform(Mat3.identity(), null), rate,
-            ))
-            JSONObject().put("samples", rows).put("rate_hz", rate).put("source", "${pair.first.name} + ${pair.second.name}")
-        } catch (e: Exception) {
-            JSONObject().put("samples", 0).put("note", "building imu0 failed: $e")
-        }
+        val live = imu.imu0 ?: return JSONObject().put("samples", 0).put("note", "record the gyroscope and accelerometer streams")
+        val pair = imu.imu0Pair!!
+        writeImu0Yaml(dir, imu, live.rateHz)
+        return JSONObject().put("samples", live.rows).put("rate_hz", live.rateHz)
+            .put("source", "imu/${pair.first.file}.csv + imu/${pair.second.file}.csv, written live")
     }
 
     companion object {
+        /** imu0/sensor.yaml; written at the start (rate 0 = not measured yet) and again at the end. */
+        private fun writeImu0Yaml(dir: File, imu: ImuRecorder, rateHz: Double) {
+            val pair = imu.imu0Pair ?: return
+            val kind = if (pair.first == ImuStream.GYROSCOPE) "calibrated" else "uncalibrated"
+            File(Euroc.mav(dir), "imu0/sensor.yaml").writeText(Euroc.imuYaml(
+                listOf(
+                    "Beam Pro IMU ($kind Android gyroscope + accelerometer), CLOCK_BOOTTIME.",
+                    "Body frame = this IMU = Android device sensor frame (x right, y up, z out of the screen).",
+                ) + if (rateHz == 0.0) listOf("rate_hz is measured when the recording ends (0 = the recording did not end normally).") else emptyList(),
+                "Beam Pro gyroscope timestamps, accelerometer linearly interpolated", Euroc.transform(Mat3.identity(), null), rateHz,
+            ))
+        }
+
         /** Where recordings go: app-specific external storage, reachable over USB (MTP) and adb. */
         fun root(context: Context): File = File(context.getExternalFilesDir(null), "recordings")
 
@@ -351,7 +351,11 @@ class Recording private constructor(
             }
 
             val sensorManager = context.getSystemService(SensorManager::class.java)
-            val imu = ImuRecorder(sensorManager, File(dir, "imu"), ImuStream.parse(s.imuStreams), s.imuRate)
+            val imu = ImuRecorder(
+                sensorManager, File(dir, "imu"), ImuStream.parse(s.imuStreams), s.imuRate,
+                imu0File = File(Euroc.mav(dir), "imu0/data.csv"),
+            )
+            if (imu.imu0 != null) writeImu0Yaml(dir, imu, 0.0)
 
             val timestamps = timestampInfo(cameraManager, rig)
             val metadata = JSONObject().apply {

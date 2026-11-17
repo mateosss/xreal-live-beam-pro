@@ -175,13 +175,7 @@ class GlassesRecording private constructor(
         settingsLog.close()
         if (imu0 != null) {
             val rate = if (imuSamples > 1) (imuSamples - 1) * 1e9 / (imuLastNs - imuFirstNs) else 0.0
-            File(Euroc.mav(dir), "imu0/sensor.yaml").writeText(Euroc.imuYaml(
-                listOf(
-                    "XREAL Air 2 Ultra IMU in its own axes, uncalibrated (biases and scales: glasses_calibration.json).",
-                    "Same clock as the cameras (glasses clock). Body frame = this IMU.",
-                ),
-                "glasses IMU", Euroc.transform(com.xreal.stereoview.util.Mat3.identity(), null), rate,
-            ))
+            writeImu0Yaml(dir, rate)
         }
 
         metadata.put("status", if (error == null) "complete" else "stopped with error: $error")
@@ -230,6 +224,17 @@ class GlassesRecording private constructor(
         private const val TAG = "GlassesRecording"
         private const val IMAGE_W = 480
         private const val IMAGE_H = 640
+
+        /** imu0/sensor.yaml; written at the start (rate 0 = not measured yet) and again at the end. */
+        private fun writeImu0Yaml(dir: File, rateHz: Double) {
+            File(Euroc.mav(dir), "imu0/sensor.yaml").writeText(Euroc.imuYaml(
+                listOf(
+                    "XREAL Air 2 Ultra IMU in its own axes, uncalibrated (biases and scales: glasses_calibration.json).",
+                    "Same clock as the cameras (glasses clock). Body frame = this IMU.",
+                ) + if (rateHz == 0.0) listOf("rate_hz is measured when the recording ends (0 = the recording did not end normally).") else emptyList(),
+                "glasses IMU", Euroc.transform(com.xreal.stereoview.util.Mat3.identity(), null), rateHz,
+            ))
+        }
         /** About 4 s of both cameras. */
         private const val QUEUE_FRAMES = 240
 
@@ -250,6 +255,7 @@ class GlassesRecording private constructor(
             File(mav, "body.yaml").writeText(Euroc.bodyYaml("The body frame is the glasses IMU."))
             val imu0 = if (withImu) {
                 File(mav, "imu0").mkdirs()
+                writeImu0Yaml(dir, 0.0)
                 LineWriter(File(mav, "imu0/data.csv"), Euroc.IMU_HEADER)
             } else {
                 null

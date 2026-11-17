@@ -32,6 +32,8 @@ class OakRecording private constructor(
     private val cams: List<Cam>,
     private val accel: LineWriter?,
     private val gyro: LineWriter?,
+    /** mav0/imu0/data.csv, written live from the OAK IMU. */
+    private val imu0: LiveImu0?,
     private val imu: ImuRecorder,
     private val settingsLog: LineWriter,
     private val metadata: JSONObject,
@@ -85,10 +87,12 @@ class OakRecording private constructor(
             // Each packet carries the latest sample of both sensors; write each sample once.
             if (s.accelNs > lastAccelNs) {
                 a.line("${s.accelNs},${s.arrivalNs},${s.ax},${s.ay},${s.az},${s.accelHostNs}")
+                imu0?.accel(s.accelNs, s.ax, s.ay, s.az)
                 lastAccelNs = s.accelNs
             }
             if (s.gyroNs > lastGyroNs) {
                 g.line("${s.gyroNs},${s.arrivalNs},${s.gx},${s.gy},${s.gz},${s.gyroHostNs}")
+                imu0?.gyro(s.gyroNs, s.gx, s.gy, s.gz)
                 lastGyroNs = s.gyroNs
                 imuSamples++
             }
@@ -154,9 +158,10 @@ class OakRecording private constructor(
         synchronized(this) {
             accel?.close()
             gyro?.close()
+            imu0?.close()
         }
         settingsLog.close()
-        val imu0 = if (accel != null) writeImu0() else JSONObject().put("samples", 0).put("note", "OAK IMU off")
+        val imu0 = writeImu0()
 
         metadata.put("status", if (error == null) "complete" else "stopped with error: $error")
         metadata.put("clocks_at_end", end)
@@ -197,18 +202,10 @@ class OakRecording private constructor(
     }
 
     private fun writeImu0(): JSONObject {
-        val out = File(Euroc.mav(dir), "imu0").apply { mkdirs() }
-        return try {
-            val (rows, rate) = Euroc.mergeImu(File(dir, "imu/oak_gyroscope.csv"), File(dir, "imu/oak_accelerometer.csv"), File(out, "data.csv"))
-            File(out, "sensor.yaml").writeText(Euroc.imuYaml(
-                listOf("OAK IMU (raw accelerometer + gyroscope), OAK clock. Body frame = this IMU."),
-                "OAK gyroscope timestamps, accelerometer linearly interpolated",
-                Euroc.transform(com.xreal.stereoview.util.Mat3.identity(), null), rate,
-            ))
-            JSONObject().put("samples", rows).put("rate_hz", rate).put("source", "imu/oak_gyroscope.csv + imu/oak_accelerometer.csv")
-        } catch (e: Exception) {
-            JSONObject().put("samples", 0).put("note", "building imu0 failed: $e")
-        }
+        val live = imu0 ?: return JSONObject().put("samples", 0).put("note", "OAK IMU off")
+        writeImu0Yaml(dir, live.rateHz)
+        return JSONObject().put("samples", live.rows).put("rate_hz", live.rateHz)
+            .put("source", "imu/oak_gyroscope.csv + imu/oak_accelerometer.csv, written live")
     }
 
     companion object {
@@ -217,6 +214,16 @@ class OakRecording private constructor(
         private const val QUEUE_FRAMES = 360
         private const val FRAMES_HEADER = "timestamp_ns,sequence,host_monotonic_ns,arrival_ns,exposure_us,iso,start_of_exposure_ns"
         private const val IMU_HEADER = "timestamp_ns,arrival_ns,x,y,z,host_monotonic_ns"
+
+        /** imu0/sensor.yaml; written at the start (rate 0 = not measured yet) and again at the end. */
+        private fun writeImu0Yaml(dir: File, rateHz: Double) {
+            File(Euroc.mav(dir), "imu0/sensor.yaml").writeText(Euroc.imuYaml(
+                listOf("OAK IMU (raw accelerometer + gyroscope), OAK clock. Body frame = this IMU.") +
+                    if (rateHz == 0.0) listOf("rate_hz is measured when the recording ends (0 = the recording did not end normally).") else emptyList(),
+                "OAK gyroscope timestamps, accelerometer linearly interpolated",
+                Euroc.transform(com.xreal.stereoview.util.Mat3.identity(), null), rateHz,
+            ))
+        }
 
         fun start(context: Context, s: StereoSettings, info: JSONObject, extraInfo: JSONObject): OakRecording {
             val name = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
@@ -238,6 +245,13 @@ class OakRecording private constructor(
             File(dir, "imu").mkdirs()
             val accel = if (s.oakImuRateHz > 0) LineWriter(File(dir, "imu/oak_accelerometer.csv"), IMU_HEADER) else null
             val gyro = if (s.oakImuRateHz > 0) LineWriter(File(dir, "imu/oak_gyroscope.csv"), IMU_HEADER) else null
+            val imu0 = if (s.oakImuRateHz > 0) {
+                File(mav, "imu0").mkdirs()
+                writeImu0Yaml(dir, 0.0)
+                LiveImu0(File(mav, "imu0/data.csv"))
+            } else {
+                null
+            }
             calibration?.optJSONObject("eeprom")?.let { File(dir, "oak_calibration.json").writeText(it.toString(2)) }
 
             val sensorManager = context.getSystemService(SensorManager::class.java)
@@ -282,7 +296,7 @@ class OakRecording private constructor(
                 })
             }
             File(dir, "metadata.json").writeText(metadata.toString(2))
-            val recording = OakRecording(dir, cams, accel, gyro, imu, LineWriter(File(dir, "settings.jsonl")), metadata)
+            val recording = OakRecording(dir, cams, accel, gyro, imu0, imu, LineWriter(File(dir, "settings.jsonl")), metadata)
             recording.onSettingsChanged(s)
             imu.start()
             return recording
