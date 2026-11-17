@@ -17,7 +17,7 @@ data class Profile(val name: String, val settings: StereoSettings) {
         get() = with(settings) {
             if (cameraSource == CameraSource.OAK) {
                 return@with listOf(
-                    "mono ${oakMonoHeight}p",
+                    "mono ${oakMonoHeight}p ${oakImageFormat.name}",
                     "$oakFps fps",
                     if (oakRgbHeight > 0) "color ${oakRgbHeight}p JPEG $oakJpegQuality" else "no color",
                     if (oakImuRateHz > 0) "OAK IMU $oakImuRateHz Hz" else "no OAK IMU",
@@ -26,7 +26,7 @@ data class Profile(val name: String, val settings: StereoSettings) {
             }
             if (cameraSource == CameraSource.GLASSES) {
                 return@with listOf(
-                    "glasses cameras 30 fps per eye",
+                    "glasses cameras 30 fps per eye, ${glassesImageFormat.name}",
                     if (glassesManualExposure) "exposure %.1f ms".format(glassesExposure100us / 10.0) else "auto exposure",
                     if (glassesRectify) "rectified preview" else "raw preview",
                     if (glassesImu) "glasses IMU taken over" else "glasses IMU left to the system",
@@ -180,6 +180,9 @@ data class Profile(val name: String, val settings: StereoSettings) {
                 put("oakJpegQuality", s.oakJpegQuality)
                 put("oakImuRateHz", s.oakImuRateHz)
                 put("oakUsb3", s.oakUsb3)
+                put("glassesImageFormat", s.glassesImageFormat.name)
+                put("oakImageFormat", s.oakImageFormat.name)
+                put("grayJpegQuality", s.grayJpegQuality)
             })
         }).toString()
 
@@ -222,6 +225,9 @@ data class Profile(val name: String, val settings: StereoSettings) {
                         oakJpegQuality = j.optInt("oakJpegQuality", d.oakJpegQuality),
                         oakImuRateHz = j.optInt("oakImuRateHz", d.oakImuRateHz),
                         oakUsb3 = j.optBoolean("oakUsb3", d.oakUsb3),
+                        glassesImageFormat = enumOr(j.optString("glassesImageFormat"), d.glassesImageFormat),
+                        oakImageFormat = enumOr(j.optString("oakImageFormat"), d.oakImageFormat),
+                        grayJpegQuality = j.optInt("grayJpegQuality", d.grayJpegQuality),
                     ),
                 )
             }
@@ -263,4 +269,7 @@ fun StereoSettings.withProfile(profile: StereoSettings) = copy(
     oakJpegQuality = profile.oakJpegQuality,
     oakImuRateHz = profile.oakImuRateHz,
     oakUsb3 = profile.oakUsb3,
+    glassesImageFormat = profile.glassesImageFormat,
+    oakImageFormat = profile.oakImageFormat,
+    grayJpegQuality = profile.grayJpegQuality,
 )

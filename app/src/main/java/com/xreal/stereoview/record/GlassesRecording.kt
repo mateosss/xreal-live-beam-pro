@@ -40,6 +40,8 @@ class GlassesRecording private constructor(
     private val imu: ImuRecorder,
     private val settingsLog: LineWriter,
     private val metadata: JSONObject,
+    private val format: GrayImageFormat,
+    private val jpegQuality: Int,
 ) : ActiveRecording {
     private class Cam(val name: String, val dir: File, val data: LineWriter, val frames: LineWriter) {
         var stored = 0L
@@ -99,7 +101,7 @@ class GlassesRecording private constructor(
 
     private fun store(cam: Cam, eye: GlassesDevice.Eye) {
         try {
-            PngGray.write(File(cam.dir, "data/${eye.timestampNs}.png"), eye.image, IMAGE_W, IMAGE_H)
+            GrayImages.write(File(cam.dir, "data/${eye.timestampNs}.${format.extension}"), eye.image, IMAGE_W, IMAGE_H, format, jpegQuality)
         } catch (e: Exception) {
             Log.w(TAG, "Writing a frame failed", e)
             failed.incrementAndGet()
@@ -109,7 +111,7 @@ class GlassesRecording private constructor(
             if (cam.stored == 0L) cam.firstNs = eye.timestampNs else cam.maxGapNs = maxOf(cam.maxGapNs, eye.timestampNs - cam.lastNs)
             cam.lastNs = maxOf(cam.lastNs, eye.timestampNs)
             cam.stored++
-            cam.data.line("${eye.timestampNs},${eye.timestampNs}.png")
+            cam.data.line("${eye.timestampNs},${eye.timestampNs}.${format.extension}")
             cam.frames.line("${eye.timestampNs},${eye.sequence},${eye.arrivalNs},${eye.meta.joinToString("") { "%02x".format(it) }}")
         }
     }
@@ -297,7 +299,7 @@ class GlassesRecording private constructor(
                 })
                 put("recording", JSONObject().apply {
                     put("view", "RAW")
-                    put("format", "PNG (8-bit grayscale, lossless)")
+                    put("format", if (s.glassesImageFormat == GrayImageFormat.JPEG) "JPEG quality ${s.grayJpegQuality} (grayscale as luma, neutral chroma)" else "PNG (8-bit grayscale, lossless)")
                     put("size", JSONArray(listOf(IMAGE_W, IMAGE_H)))
                     put("fps_per_camera", 30)
                     put("image_orientation", "upright: left camera rotated 90° counter-clockwise, right 90° clockwise, as in Monado")
@@ -311,7 +313,7 @@ class GlassesRecording private constructor(
                 put("all_sensors", Metadata.allSensors(sensorManager))
                 put("extra", extraInfo)
                 put("files", JSONObject().apply {
-                    put("mav0/camN/data/<timestamp_ns>.png", "camera images (8-bit grayscale), glasses clock")
+                    put("mav0/camN/data/<timestamp_ns>.${s.glassesImageFormat.extension}", "camera images (8-bit grayscale), glasses clock")
                     put("mav0/camN/data.csv", "EuRoC: timestamp, file name")
                     put("mav0/camN/sensor.yaml", "EuRoC camera description from Monado's reference calibration (another unit; recalibrate)")
                     put("mav0/camN/frames.csv", "timestamp_ns (glasses), sequence, arrival_ns (BOOTTIME), first 64 bytes of the frame's metadata row")
@@ -323,7 +325,7 @@ class GlassesRecording private constructor(
                 })
             }
             File(dir, "metadata.json").writeText(metadata.toString(2))
-            val recording = GlassesRecording(dir, cams, glassesImu, imu0, imu, LineWriter(File(dir, "settings.jsonl")), metadata)
+            val recording = GlassesRecording(dir, cams, glassesImu, imu0, imu, LineWriter(File(dir, "settings.jsonl")), metadata, s.glassesImageFormat, s.grayJpegQuality)
             recording.onSettingsChanged(s)
             imu.start()
             return recording

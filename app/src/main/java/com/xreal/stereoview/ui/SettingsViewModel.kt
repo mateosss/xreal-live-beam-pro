@@ -157,6 +157,12 @@ data class StereoSettings(
     val glassesExposure100us: Int = 50,
     /** Glasses camera gain, or -1 for the camera's default. */
     val glassesGain: Int = -1,
+    /** Glasses cameras: how recorded images are stored. */
+    val glassesImageFormat: com.xreal.stereoview.record.GrayImageFormat = com.xreal.stereoview.record.GrayImageFormat.PNG,
+    /** OAK mono cameras: how recorded images are stored. */
+    val oakImageFormat: com.xreal.stereoview.record.GrayImageFormat = com.xreal.stereoview.record.GrayImageFormat.PNG,
+    /** JPEG quality of recorded grayscale images (glasses, OAK mono). */
+    val grayJpegQuality: Int = 90,
     /** OAK: mono camera height (400, 720 or 800 rows; 1280 wide except 400p, 640). */
     val oakMonoHeight: Int = 800,
     /** OAK: frame rate of every camera. */
@@ -228,6 +234,9 @@ class SettingsRepository(private val context: Context) {
         val OAK_JPEG_QUALITY = intPreferencesKey("oak_jpeg_quality")
         val OAK_IMU_RATE = intPreferencesKey("oak_imu_rate_hz")
         val OAK_USB3 = booleanPreferencesKey("oak_usb3")
+        val GLASSES_IMAGE_FORMAT = stringPreferencesKey("glasses_image_format")
+        val OAK_IMAGE_FORMAT = stringPreferencesKey("oak_image_format")
+        val GRAY_JPEG_QUALITY = intPreferencesKey("gray_jpeg_quality")
         val TARGET_FPS = intPreferencesKey("target_fps")
         val MANUAL_EXPOSURE = booleanPreferencesKey("manual_exposure")
         val EXPOSURE_TIME = longPreferencesKey("exposure_time_ns")
@@ -297,6 +306,9 @@ class SettingsRepository(private val context: Context) {
             oakJpegQuality = p[Keys.OAK_JPEG_QUALITY] ?: defaults.oakJpegQuality,
             oakImuRateHz = p[Keys.OAK_IMU_RATE] ?: defaults.oakImuRateHz,
             oakUsb3 = p[Keys.OAK_USB3] ?: defaults.oakUsb3,
+            glassesImageFormat = enumOrDefault(p[Keys.GLASSES_IMAGE_FORMAT], defaults.glassesImageFormat),
+            oakImageFormat = enumOrDefault(p[Keys.OAK_IMAGE_FORMAT], defaults.oakImageFormat),
+            grayJpegQuality = p[Keys.GRAY_JPEG_QUALITY] ?: defaults.grayJpegQuality,
             targetFps = p[Keys.TARGET_FPS] ?: defaults.targetFps,
             manualExposure = p[Keys.MANUAL_EXPOSURE] ?: defaults.manualExposure,
             exposureTimeNs = p[Keys.EXPOSURE_TIME] ?: defaults.exposureTimeNs,
@@ -345,6 +357,9 @@ class SettingsRepository(private val context: Context) {
             p[Keys.OAK_JPEG_QUALITY] = s.oakJpegQuality
             p[Keys.OAK_IMU_RATE] = s.oakImuRateHz
             p[Keys.OAK_USB3] = s.oakUsb3
+            p[Keys.GLASSES_IMAGE_FORMAT] = s.glassesImageFormat.name
+            p[Keys.OAK_IMAGE_FORMAT] = s.oakImageFormat.name
+            p[Keys.GRAY_JPEG_QUALITY] = s.grayJpegQuality
             p[Keys.TARGET_FPS] = s.targetFps
             p[Keys.MANUAL_EXPOSURE] = s.manualExposure
             p[Keys.EXPOSURE_TIME] = s.exposureTimeNs

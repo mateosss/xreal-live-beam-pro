@@ -347,6 +347,12 @@ once per session. They stay detached from the system until the glasses are unplu
 replugged: XREAL features using the glasses' cameras, and with the IMU its head tracking,
 stop working meanwhile. The display is unaffected.
 
+**Image format (glasses and OAK mono cameras).** *Settings → Recording → Images*: PNG
+(lossless) or JPEG with a quality from 75 to 98, several times smaller, for long recordings.
+Android has no single-channel JPEG encoder, so the JPEGs carry the gray image as luma with
+neutral chroma; loading them as grayscale (e.g. OpenCV `IMREAD_GRAYSCALE`) gives exactly the
+luma.
+
 ## OAK cameras (Luxonis DepthAI)
 
 Pick **DepthAI camera** on the start screen to stream and record a Luxonis OAK (written for

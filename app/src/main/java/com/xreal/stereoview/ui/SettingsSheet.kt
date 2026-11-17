@@ -187,17 +187,15 @@ class SettingsSheet(
     private fun recordingRows(content: LinearLayout, s: StereoSettings, recording: Boolean) {
         val glassesSource = s.cameraSource == CameraSource.GLASSES
         if (s.cameraSource == CameraSource.OAK) {
+            grayFormatRows(content, s, recording, s.oakImageFormat, "Mono images") { f -> target.update { it.copy(oakImageFormat = f) } }
             row(
-                content, "Images",
-                "Mono pair as raw grayscale PNG (cam0, cam1)" +
-                    (if (s.oakRgbHeight > 0) ", color as the camera's JPEGs (cam2)" else "") +
+                content, "Layout",
+                "Mono pair in cam0, cam1" + (if (s.oakRgbHeight > 0) ", color as the camera's JPEGs in cam2" else "") +
                     "; OAK IMU as imu0; EuRoC layout on the OAK's clock",
             ) {}
         } else if (glassesSource) {
-            row(
-                content, "Images",
-                "Raw 480×640 grayscale PNG (lossless) per camera at 30 fps, EuRoC layout, timestamps on the glasses' clock",
-            ) {}
+            grayFormatRows(content, s, recording, s.glassesImageFormat, "Images") { f -> target.update { it.copy(glassesImageFormat = f) } }
+            row(content, "Layout", "Raw 480×640 grayscale per camera at 30 fps, EuRoC layout, timestamps on the glasses' clock") {}
         } else {
             row(content, "Images", s.recordView.label, locked = recording) {
                 choose("Recorded images", RecordView.entries.map { it.label }, s.recordView.ordinal) { i ->
@@ -228,6 +226,24 @@ class SettingsSheet(
         val streams = ImuStream.parse(s.imuStreams)
         row(content, "$imuPrefix streams", streams.joinToString { it.file.replace('_', ' ') }.ifEmpty { "none" }, locked = recording) {
             chooseImuStreams(sensors, streams)
+        }
+    }
+
+    /** Format of recorded grayscale images, and the JPEG quality when it applies. */
+    private fun grayFormatRows(
+        content: LinearLayout, s: StereoSettings, recording: Boolean, format: com.xreal.stereoview.record.GrayImageFormat,
+        title: String, set: (com.xreal.stereoview.record.GrayImageFormat) -> Unit,
+    ) {
+        val formats = com.xreal.stereoview.record.GrayImageFormat.entries
+        row(content, title, format.label, locked = recording) {
+            choose(title, formats.map { it.label }, formats.indexOf(format)) { i -> set(formats[i]) }
+        }
+        if (format == com.xreal.stereoview.record.GrayImageFormat.JPEG) {
+            row(content, "JPEG quality", "${s.grayJpegQuality}", locked = recording) {
+                val values = listOf(98, 95, 90, 85, 75)
+                val labels = listOf("98 (near lossless)", "95", "90 (good for SLAM features)", "85", "75 (smallest)")
+                choose("JPEG quality", labels, values.indexOf(s.grayJpegQuality)) { i -> target.update { it.copy(grayJpegQuality = values[i]) } }
+            }
         }
     }
 

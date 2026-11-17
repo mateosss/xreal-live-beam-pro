@@ -37,6 +37,8 @@ class OakRecording private constructor(
     private val imu: ImuRecorder,
     private val settingsLog: LineWriter,
     private val metadata: JSONObject,
+    private val monoFormat: GrayImageFormat,
+    private val jpegQuality: Int,
 ) : ActiveRecording {
     private class Cam(val name: String, val dir: File, val extension: String, val data: LineWriter, val frames: LineWriter) {
         var stored = 0L
@@ -65,7 +67,7 @@ class OakRecording private constructor(
         for ((cam, mono) in cams.zip(listOf(frame.left, frame.right))) {
             offset(mono.arrivalNs, mono.timestampNs, mono.hostNs)
             submit {
-                PngGray.write(File(cam.dir, "data/${mono.timestampNs}.png"), mono.image, mono.width, mono.height)
+                GrayImages.write(File(cam.dir, "data/${mono.timestampNs}.${cam.extension}"), mono.image, mono.width, mono.height, monoFormat, jpegQuality)
                 stored(cam, mono.timestampNs, "${mono.timestampNs},${mono.sequence},${mono.hostNs},${mono.arrivalNs},${mono.exposureUs},${mono.iso},${mono.startOfExposureNs}")
             }
         }
@@ -232,8 +234,8 @@ class OakRecording private constructor(
             val mav = Euroc.mav(dir)
             val calibration = info.optJSONObject("calibration")
             val specs = listOfNotNull(
-                Triple("cam0", "left", "png"),
-                Triple("cam1", "right", "png"),
+                Triple("cam0", "left", s.oakImageFormat.extension),
+                Triple("cam1", "right", s.oakImageFormat.extension),
                 if (s.oakRgbHeight > 0) Triple("cam2", "rgb", "jpg") else null,
             )
             val cams = specs.map { (camName, key, ext) ->
@@ -275,7 +277,7 @@ class OakRecording private constructor(
                     put("notes", "Left and right images with the same sequence number are a synchronized pair (same timestamp).")
                 })
                 put("recording", JSONObject().apply {
-                    put("mono", "PNG 8-bit grayscale, ${if (s.oakMonoHeight == 400) "640×400" else "1280×${s.oakMonoHeight}"}")
+                    put("mono", (if (s.oakImageFormat == GrayImageFormat.JPEG) "JPEG quality ${s.grayJpegQuality} grayscale" else "PNG 8-bit grayscale") + ", ${if (s.oakMonoHeight == 400) "640×400" else "1280×${s.oakMonoHeight}"}")
                     put("color", if (s.oakRgbHeight > 0) "JPEG 1280×${s.oakRgbHeight}, quality ${s.oakJpegQuality}, encoded on the camera" else "off")
                     put("fps", s.oakFps)
                     put("oak_imu_rate_hz", s.oakImuRateHz)
@@ -285,7 +287,7 @@ class OakRecording private constructor(
                 put("all_sensors", Metadata.allSensors(sensorManager))
                 put("extra", extraInfo)
                 put("files", JSONObject().apply {
-                    put("mav0/cam0, cam1", "left and right mono cameras: data/<timestamp_ns>.png, data.csv, sensor.yaml, frames.csv")
+                    put("mav0/cam0, cam1", "left and right mono cameras: data/<timestamp_ns>.${s.oakImageFormat.extension}, data.csv, sensor.yaml, frames.csv")
                     put("mav0/cam2", "color camera (if on): data/<timestamp_ns>.jpg as encoded on the camera")
                     put("mav0/camN/frames.csv", FRAMES_HEADER)
                     put("mav0/imu0", "EuRoC IMU from the OAK IMU: gyroscope timestamps, accelerometer interpolated (built at the end)")
@@ -296,7 +298,7 @@ class OakRecording private constructor(
                 })
             }
             File(dir, "metadata.json").writeText(metadata.toString(2))
-            val recording = OakRecording(dir, cams, accel, gyro, imu0, imu, LineWriter(File(dir, "settings.jsonl")), metadata)
+            val recording = OakRecording(dir, cams, accel, gyro, imu0, imu, LineWriter(File(dir, "settings.jsonl")), metadata, s.oakImageFormat, s.grayJpegQuality)
             recording.onSettingsChanged(s)
             imu.start()
             return recording
