@@ -11,6 +11,7 @@
 
     <!-- Toolbar: profile on the left, actions in the middle, record on the right. -->
     <LinearLayout
+        android:id="@+id/toolbarRow"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center_vertical"
@@ -28,71 +29,84 @@
             app:icon="@drawable/ic_profile"
             app:iconSize="18dp" />
 
-        <View
+        <!-- Actions: scroll if they don't fit; in portrait they move to their own row below. -->
+        <HorizontalScrollView
+            android:id="@+id/actionsScroll"
             android:layout_width="0dp"
-            android:layout_height="1dp"
-            android:layout_weight="1" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/playButton"
-            style="@style/Widget.StereoView.ToolButton"
-            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/pause"
-            app:icon="@drawable/ic_pause" />
+            android:layout_weight="1"
+            android:fillViewport="true"
+            android:scrollbars="none">
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/swapButton"
-            style="@style/Widget.StereoView.ToolButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/swap"
-            app:icon="@drawable/ic_swap" />
+            <LinearLayout
+                android:id="@+id/actionsRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="end|center_vertical"
+                android:orientation="horizontal">
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/scaleButton"
-            style="@style/Widget.StereoView.ToolButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/playButton"
+                    style="@style/Widget.StereoView.ToolButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/pause"
+                    app:icon="@drawable/ic_pause" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/alignButton"
-            style="@style/Widget.StereoView.ToolButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/align"
-            app:icon="@drawable/ic_align" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/swapButton"
+                    style="@style/Widget.StereoView.ToolButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/swap"
+                    app:icon="@drawable/ic_swap" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/hudButton"
-            style="@style/Widget.StereoView.ToolButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/hud" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/scaleButton"
+                    style="@style/Widget.StereoView.ToolButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/infoButton"
-            style="@style/Widget.StereoView.ToolButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:contentDescription="@string/info"
-            app:icon="@drawable/ic_info" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/alignButton"
+                    style="@style/Widget.StereoView.ToolButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/align"
+                    app:icon="@drawable/ic_align" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/settingsButton"
-            style="@style/Widget.StereoView.ToolButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:contentDescription="@string/settings"
-            app:icon="@drawable/ic_settings" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/hudButton"
+                    style="@style/Widget.StereoView.ToolButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/hud" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/collapseButton"
-            style="@style/Widget.StereoView.ToolButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:contentDescription="@string/collapse"
-            app:icon="@drawable/ic_expand_more" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/infoButton"
+                    style="@style/Widget.StereoView.ToolButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="@string/info"
+                    app:icon="@drawable/ic_info" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/settingsButton"
+                    style="@style/Widget.StereoView.ToolButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="@string/settings"
+                    app:icon="@drawable/ic_settings" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/collapseButton"
+                    style="@style/Widget.StereoView.ToolButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="@string/collapse"
+                    app:icon="@drawable/ic_expand_more" />
+            </LinearLayout>
+        </HorizontalScrollView>
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/recordButton"
@@ -107,6 +121,13 @@
             app:iconTint="@color/record"
             app:strokeColor="@color/record" />
     </LinearLayout>
+
+    <!-- Portrait: the actions row moves here, under the profile and record buttons. -->
+    <FrameLayout
+        android:id="@+id/portraitActions"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
 
     <!-- Sliders; hidden when the panel is collapsed. -->
     <LinearLayout

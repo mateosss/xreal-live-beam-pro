@@ -86,6 +86,16 @@ class HomeActivity : AppCompatActivity() {
         CrashReporter.showPendingReport(this)
     }
 
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val pad = if (portrait) 16 else 32
+        page.setPadding(dp(pad), dp(20), dp(pad), dp(24))
+        render()
+    }
+
+    private val portrait: Boolean
+        get() = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
+
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         device?.let { outState.putString(KEY_DEVICE, it.name) }
@@ -116,14 +126,15 @@ class HomeActivity : AppCompatActivity() {
     private fun renderDevices() {
         page.addView(title("XREAL Stereo"))
         page.addView(caption("Choose the cameras to stream and record from"))
+        // Cards side by side in landscape, stacked in portrait.
         val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+            orientation = if (portrait) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
             setPadding(0, dp(16), 0, dp(8))
         }
         for (source in CameraSource.entries) {
             val (status, ready) = status(source)
             val count = viewModel.profiles.value.profiles.count { it.settings.cameraSource == source }
-            row.addView(card(weight = 1f) { card ->
+            row.addView(card(weight = if (portrait) 0f else 1f) { card ->
                 card.addView(TextView(this).apply {
                     text = source.homeTitle
                     setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleLarge)
@@ -136,6 +147,7 @@ class HomeActivity : AppCompatActivity() {
                 })
                 card.addView(secondary("$count profile${if (count == 1) "" else "s"}").apply { setPadding(0, dp(4), 0, 0) })
             }.apply {
+                if (portrait) (layoutParams as LinearLayout.LayoutParams).bottomMargin = dp(12)
                 setOnClickListener {
                     device = source
                     render()
@@ -235,7 +247,13 @@ class HomeActivity : AppCompatActivity() {
                     if (p.name == state.active) setTypeface(typeface, Typeface.BOLD)
                 })
                 texts.addView(secondary(p.summary))
-                line.addView(texts)
+                // Portrait: name and summary on top, buttons below at the end.
+                if (portrait) {
+                    card.addView(texts, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                    line.gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                } else {
+                    line.addView(texts)
+                }
                 line.addView(MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
                     text = "Edit"
                     setOnClickListener { editProfile(p) }

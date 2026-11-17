@@ -382,6 +382,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     var loaded = false
         private set
 
+    private val _loadedFlow = MutableStateFlow(false)
+    /**
+     * Becomes true once the stored settings are in. [settings] alone can't signal it: when the
+     * stored values equal the defaults it doesn't emit again.
+     */
+    val loadedFlow: StateFlow<Boolean> = _loadedFlow.asStateFlow()
+
     /** Profile to switch to once the stored settings are in (set before they load). */
     private var startProfile: String? = null
 
@@ -399,6 +406,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             } else {
                 _settings.value = stored
             }
+            _loadedFlow.value = true
             // Follow profile edits made elsewhere (another screen saves them to the same store).
             repository.profiles.collect { _profiles.value = it }
         }

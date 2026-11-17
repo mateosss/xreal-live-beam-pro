@@ -133,6 +133,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         stabilizer = Stabilizer(this)
         controls = ControlsOverlay(binding.controls, viewModel, this)
         controls.setPlaying(playing)
+        controls.setPortrait(isPortrait())
         binding.grantButton.setOnClickListener { requestPermission.launch(Manifest.permission.CAMERA) }
         intent.getStringExtra(EXTRA_PROFILE)?.let(viewModel::startWithProfile)
         onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
@@ -159,8 +160,33 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
                 viewModel.profiles.collect { controls.render(viewModel.settings.value) }
             }
         }
+        lifecycleScope.launch {
+            viewModel.loadedFlow.collect { loaded ->
+                if (loaded && cameraStartPending) {
+                    cameraStartPending = false
+                    startCamera()
+                }
+            }
+        }
         CrashReporter.showPendingReport(this)
     }
+
+    /** Rotation (the activity handles it itself, so cameras and recordings keep running). */
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        controls.setPortrait(isPortrait())
+        hideSystemBars()
+        // The Beam Pro's stereo pair and rectification depend on how the screen is turned:
+        // reopen the cameras for the new orientation, or after the recording if one runs.
+        if (viewModel.settings.value.cameraSource == CameraSource.BEAM_PRO && playing && outputActive) {
+            if (recording == null) startCamera() else rotationRestartPending = true
+        }
+        updateStatus()
+    }
+
+    private var rotationRestartPending = false
+
+    private fun isPortrait() = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
@@ -528,7 +554,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             rig == null || streamSize == null -> "Starting cameras…"
             else -> "${rig.description} @ $streamSize"
         }
-        val warning = if (rig?.baselineVertical == true) "\n⚠ Lenses are stacked vertically in this orientation; depth will look wrong." else ""
+        val warning = if (rig?.baselineVertical == true) "\n⚠ The cameras are stacked vertically in this orientation: turn the device to landscape for stereo depth." else ""
         controls.setStatus("$output · $source$warning")
     }
 
@@ -721,6 +747,12 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         val rec = recording ?: return
         recording = null
         RecordingService.onStopRequested = null
+        if (rotationRestartPending) {
+            rotationRestartPending = false
+            mainHandler.post {
+                if (playing && outputActive && recording == null && viewModel.settings.value.cameraSource == CameraSource.BEAM_PRO) startCamera()
+            }
+        }
         camera.resultListener = null
         val glRecording = rec as? Recording
         controls.setRecording(null)

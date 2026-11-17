@@ -238,13 +238,9 @@ class StereoRenderer(
             val s = settings
             val geometry = geometryFor(cams, s)
             val models = listOf(cams.left, cams.right)
-            val eyeWidth = width / 2
-            val halfSbs = when (s.sbsLayout) {
-                SbsLayout.FULL -> false
-                SbsLayout.HALF -> true
-                SbsLayout.AUTO -> width.toFloat() / height < 3f
-            }
-            val eyeAspect = eyeWidth.toDouble() * (if (halfSbs) 2 else 1) / height
+            val eyes = eyeLayout(s)
+            val eyeWidth = eyes.width
+            val eyeAspect = eyes.aspect.toDouble()
             val (tanH, tanV) = geometry.displayTangents(s.scaleMode, eyeAspect, s.glassesFovDeg.toDouble())
             val zoom = s.depth.coerceIn(StereoSettings.DEPTH_MIN, StereoSettings.DEPTH_MAX).toDouble()
             val deviceCorrection = stabilizer?.correction(surfaceTextures[0].timestamp, s.stabilization.timeConstantSec)
@@ -252,7 +248,7 @@ class StereoRenderer(
             val stabilization = geometry.toRectFrame(deviceCorrection)
             viewDescription = "eye %.1f°×%.1f° %s, %s".format(
                 Math.toDegrees(2 * atan(tanH / zoom)), Math.toDegrees(2 * atan(tanV / zoom)),
-                s.scaleMode.label, if (halfSbs) "half SBS" else "full SBS",
+                s.scaleMode.label, eyes.label,
             )
 
             recording?.let { record(it, shader, geometry, models, s, fresh, stabilization) }
@@ -275,7 +271,7 @@ class StereoRenderer(
                     camera, tanH, tanV, shift, zoom,
                     s.alignPitchDeg.toDouble(), s.alignRollDeg.toDouble(), stabilization,
                 )
-                GLES20.glViewport(viewport * eyeWidth, 0, eyeWidth, height)
+                eyes.apply(viewport)
                 shader.draw(textureIds[camera], ray, models[camera], stMatrices[camera])
             }
         }
@@ -309,20 +305,16 @@ class StereoRenderer(
             newFrames[1]++
         }
         val s = settings
-        val eyeWidth = width / 2
-        val halfSbs = when (s.sbsLayout) {
-            SbsLayout.FULL -> false
-            SbsLayout.HALF -> true
-            SbsLayout.AUTO -> width.toFloat() / height < 3f
-        }
-        val eyeAspect = eyeWidth.toFloat() * (if (halfSbs) 2 else 1) / height
+        val eyes = eyeLayout(s)
+        val eyeWidth = eyes.width
+        val eyeAspect = eyes.aspect
         val zoom = s.depth.coerceIn(StereoSettings.DEPTH_MIN, StereoSettings.DEPTH_MAX)
         if (s.glassesRectify) {
             val geometry = glassesGeometry
             val (tanH, tanV) = geometry.displayTangents(s.scaleMode, eyeAspect.toDouble(), s.glassesFovDeg.toDouble())
             viewDescription = "glasses cameras rectified, eye %.1f°×%.1f° %s, %s".format(
                 Math.toDegrees(2 * atan(tanH / zoom)), Math.toDegrees(2 * atan(tanV / zoom)),
-                s.scaleMode.label, if (halfSbs) "half SBS" else "full SBS",
+                s.scaleMode.label, eyes.label,
             )
             val pitch = s.alignPitchDeg.toDouble()
             val roll = s.alignRollDeg.toDouble()
@@ -335,12 +327,12 @@ class StereoRenderer(
             for (viewport in 0..1) {
                 val camera = if (s.swapEyes) 1 - viewport else viewport
                 val shift = (if (viewport == 0) 1.0 else -1.0) * s.convergencePx / eyeWidth
-                GLES20.glViewport(viewport * eyeWidth, 0, eyeWidth, height)
+                eyes.apply(viewport)
                 gray.drawRectified(camera, geometry.rayMatrix(camera, tanH, tanV, shift, zoom.toDouble(), pitch, roll), geometry.cameras[camera])
             }
             return
         }
-        drawGrayRaw(gray, IMAGE_W, IMAGE_H, "glasses cameras", eyeAspect, halfSbs, zoom)
+        drawGrayRaw(gray, IMAGE_W, IMAGE_H, "glasses cameras", eyes, zoom)
     }
 
     /** Shows an OAK camera's left and right mono images as they come (not rectified). */
@@ -361,33 +353,53 @@ class StereoRenderer(
             newFrames[0]++
             newFrames[1]++
         }
-        val s = settings
+        val zoom = settings.depth.coerceIn(StereoSettings.DEPTH_MIN, StereoSettings.DEPTH_MAX)
+        drawGrayRaw(gray, frame.left.width, frame.left.height, "OAK mono cameras", eyeLayout(settings), zoom)
+    }
+
+    /**
+     * Where the two eyes go on the surface: side by side (SBS, for the glasses), or on a portrait
+     * surface (the phone held upright) stacked, left above right, each a 16:9 band across the
+     * width at the top, so the preview stays usable above the controls.
+     */
+    private class EyeLayout(val width: Int, val height: Int, val aspect: Float, val label: String, private val x: IntArray, private val y: IntArray) {
+        fun apply(eye: Int) = GLES20.glViewport(x[eye], y[eye], width, height)
+    }
+
+    private fun eyeLayout(s: StereoSettings): EyeLayout {
+        if (height > width) {
+            val h = minOf(height / 2, width * 9 / 16)
+            return EyeLayout(width, h, width.toFloat() / h, "stacked (portrait preview)", intArrayOf(0, 0), intArrayOf(height - h, height - 2 * h))
+        }
+        val eyeWidth = width / 2
         val halfSbs = when (s.sbsLayout) {
             SbsLayout.FULL -> false
             SbsLayout.HALF -> true
             SbsLayout.AUTO -> width.toFloat() / height < 3f
         }
-        val eyeAspect = (width / 2).toFloat() * (if (halfSbs) 2 else 1) / height
-        val zoom = s.depth.coerceIn(StereoSettings.DEPTH_MIN, StereoSettings.DEPTH_MAX)
-        drawGrayRaw(gray, frame.left.width, frame.left.height, "OAK mono cameras", eyeAspect, halfSbs, zoom)
+        return EyeLayout(
+            eyeWidth, height, eyeWidth.toFloat() * (if (halfSbs) 2 else 1) / height,
+            if (halfSbs) "half SBS" else "full SBS", intArrayOf(0, eyeWidth), intArrayOf(0, 0),
+        )
     }
 
     /** Two grayscale images of [w]×[h] fitted into the eyes by the scale mode, shifted by the convergence. */
-    private fun drawGrayRaw(gray: GrayShader, w: Int, h: Int, label: String, eyeAspect: Float, halfSbs: Boolean, zoom: Float) {
+    private fun drawGrayRaw(gray: GrayShader, w: Int, h: Int, label: String, eyes: EyeLayout, zoom: Float) {
         val s = settings
-        val eyeWidth = width / 2
+        val eyeWidth = eyes.width
+        val eyeAspect = eyes.aspect
         val imageAspect = w.toFloat() / h
         val (sx, sy) = when (s.scaleMode) {
             ScaleMode.STRETCH -> 1f to 1f
             ScaleMode.FILL -> if (imageAspect > eyeAspect) imageAspect / eyeAspect to 1f else 1f to eyeAspect / imageAspect
             ScaleMode.FIT, ScaleMode.REAL -> if (imageAspect > eyeAspect) 1f to eyeAspect / imageAspect else imageAspect / eyeAspect to 1f
         }
-        viewDescription = "$label ${w}×$h, ${s.scaleMode.label}, ${if (halfSbs) "half SBS" else "full SBS"}"
+        viewDescription = "$label ${w}×$h, ${s.scaleMode.label}, ${eyes.label}"
         for (viewport in 0..1) {
             val slot = if (s.swapEyes) 1 - viewport else viewport
             // Positive convergence moves the left image left and the right image right.
             val offset = (if (viewport == 0) -1f else 1f) * s.convergencePx / eyeWidth
-            GLES20.glViewport(viewport * eyeWidth, 0, eyeWidth, height)
+            eyes.apply(viewport)
             gray.draw(slot, sx * zoom, sy * zoom, offset)
         }
     }

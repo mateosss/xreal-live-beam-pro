@@ -236,6 +236,14 @@ each `data.mp4` into `data/<timestamp>.png` in place. Image recordings need no c
 
 ## Controls
 
+The app works in portrait and landscape and rotates without interrupting the cameras or a
+recording. On the glasses display the view is always side by side. On the phone screen in
+portrait the two eyes are stacked (left above right, 16:9 each) as a preview, and the panel's
+actions move to a scrollable row of their own. The Beam Pro's two cameras sit side by side only
+when it is held in landscape: in portrait the view stays upright but the stereo baseline is
+vertical, and the status line says so. Its cameras reopen for the new orientation when the
+device turns (after the recording, if one is running).
+
 The panel at the bottom of the touchscreen has a toolbar and, below it, sliders that the
 chevron button collapses. When the glasses mirror the phone, tapping the view hides or shows
 the whole panel.

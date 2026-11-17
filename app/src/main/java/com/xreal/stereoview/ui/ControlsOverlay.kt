@@ -211,6 +211,28 @@ class ControlsOverlay(
         render(viewModel.settings.value)
     }
 
+    /**
+     * Portrait (narrow screen): the actions get their own scrollable row under the profile and
+     * record buttons; landscape: they sit between them.
+     */
+    fun setPortrait(portrait: Boolean) {
+        val actions = binding.actionsScroll
+        val target = if (portrait) binding.portraitActions else binding.toolbarRow
+        if (actions.parent === target) return
+        (actions.parent as android.view.ViewGroup).removeView(actions)
+        if (portrait) {
+            target.addView(actions, android.widget.FrameLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
+            binding.toolbarRow.addView(android.view.View(context), 1, android.widget.LinearLayout.LayoutParams(0, 1, 1f))
+        } else {
+            binding.toolbarRow.removeViewAt(1) // the spacer
+            binding.toolbarRow.addView(actions, 1, android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        binding.portraitActions.visibility = if (portrait) View.VISIBLE else View.GONE
+        binding.actionsRow.gravity = (if (portrait) android.view.Gravity.START else android.view.Gravity.END) or android.view.Gravity.CENTER_VERTICAL
+    }
+
     /** OAK cameras: auto exposure with compensation −9..9, or manual shutter and ISO 100–1600. */
     fun setOakMode(on: Boolean) {
         if (!on) return

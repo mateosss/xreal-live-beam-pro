@@ -470,7 +470,10 @@ class SettingsSheet(
         row.addView(TextView(context).apply {
             text = title
             setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyLarge)
-            layoutParams = LinearLayout.LayoutParams(dp(220), LinearLayout.LayoutParams.WRAP_CONTENT)
+            // Narrow (portrait) screens give the value more room.
+            layoutParams = LinearLayout.LayoutParams(
+                dp(if (context.resources.configuration.screenWidthDp < 600) 140 else 220), LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
         })
         row.addView(TextView(context).apply {
             text = value
