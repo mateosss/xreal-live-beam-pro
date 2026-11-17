@@ -28,7 +28,7 @@ class ProfilesTest {
 
     @Test
     fun profilesLeaveDeviceSetupAlone() {
-        val device = StereoSettings().copy(swapEyes = false, rotationOverride = 90, alignPitchDeg = 1.2f, cameraPair = "2+3")
+        val device = StereoSettings().copy(swapEyes = false, rotationOverride = 90, beamProAlignPitchDeg = 1.2f, cameraPair = "2+3")
         val euroc = Profile.defaults.first { it.name == Profile.EUROC }
         val applied = device.withProfile(euroc.settings)
         assertEquals(false, applied.swapEyes)

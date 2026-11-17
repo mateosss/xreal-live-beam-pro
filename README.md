@@ -122,7 +122,8 @@ The button at the left of the control panel picks a **profile**: a named set of 
 settings (exposure, frame rate, resolution, focus, stabilization, scale, zoom, convergence,
 and every recording and IMU option). Device setup is kept separately and survives profile
 switches: camera pair, image rotation, L/R swap, eye alignment, glasses FOV, SBS layout,
-lens calibration and output. Two profiles are built in:
+lens calibration and output. Eye alignment is stored per device (the Beam Pro and the
+glasses cameras need different corrections). Three profiles are built in:
 
 | Profile | For |
 |---|---|
@@ -234,7 +235,7 @@ the whole panel.
 | Align | Measures and corrects vertical offset and roll between the eyes; point at a detailed scene and hold still |
 | HUD | Frame-rate, sync and sensor statistics |
 | ⓘ | Report of every camera (including hidden ones), the displays, camera system properties and the app log, with Share/Copy |
-| ⚙ | Settings sheet, grouped into Capture and Recording (stored in profiles), Glasses & output, and Camera setup |
+| ⚙ | Settings sheet for the current device: its profile settings (Camera, Recording, View), its setup (kept across profiles), Display settings shared by all devices, and Recordings |
 | Rec | Starts / stops a dataset recording |
 | Convergence | ±200 px horizontal shift per eye, in opposite directions |
 | Depth | Zooms each eye 1–2× about its center, which also scales disparity. Pinch on the touchscreen does the same |

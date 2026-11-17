@@ -66,30 +66,59 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
         dialog.show()
     }
 
-    /** Rebuilds the rows from the current settings, if the sheet is open. */
+    /**
+     * Rebuilds the rows from the current settings, if the sheet is open. Layout:
+     * the active profile; the current device's profile settings (camera, recording, view);
+     * that device's setup, kept across profiles; display settings shared by all devices;
+     * recordings and tools.
+     */
     fun refresh() {
         val content = content ?: return
         content.removeAllViews()
         val s = viewModel.settings.value
         val recording = host.isRecording()
+        val device = s.cameraSource
 
         profileHeader(content, s)
-
-        section(content, "Capture", "saved in profiles")
-        row(content, "Camera source", s.cameraSource.label, locked = recording) {
-            choose("Camera source (one at a time)", CameraSource.entries.map { it.label }, s.cameraSource.ordinal) { i ->
+        row(content, "Device", device.label, locked = recording) {
+            choose("Device (one at a time)", CameraSource.entries.map { it.label }, device.ordinal) { i ->
                 viewModel.update { it.copy(cameraSource = CameraSource.entries[i]) }
             }
         }
-        val glassesSource = s.cameraSource == CameraSource.GLASSES
-        if (glassesSource) glassesCaptureRows(content, s, recording) else beamProCaptureRows(content, s, recording)
+
+        section(content, "${device.shortLabel} profile", "saved in the profile")
+        subsection(content, "Camera")
+        when (device) {
+            CameraSource.GLASSES -> glassesCaptureRows(content, s, recording)
+            CameraSource.BEAM_PRO -> beamProCaptureRows(content, s, recording)
+        }
+        subsection(content, "Recording")
+        recordingRows(content, s, recording)
+        subsection(content, "View")
         row(content, "Scale", s.scaleMode.label) {
             choose("Scale", ScaleMode.entries.map { it.label }, s.scaleMode.ordinal) { i ->
                 viewModel.update { it.copy(scaleMode = ScaleMode.entries[i]) }
             }
         }
 
-        section(content, "Recording", "saved in profiles")
+        section(content, "${device.shortLabel} setup", "this device, kept across profiles")
+        if (device == CameraSource.BEAM_PRO) beamProSetupRows(content, s, recording)
+        row(content, "Eye alignment", "pitch %+.2f°, roll %+.2f° (Align measures it)".format(s.alignPitchDeg, s.alignRollDeg)) {
+            showAlignmentDialog()
+        }
+        if (device == CameraSource.GLASSES) {
+            row(content, "Glasses USB probe", "Check whether the app can reach the glasses' cameras and IMU") { host.probeUsb() }
+        }
+
+        section(content, "Display", "all devices")
+        displayRows(content, s, recording)
+
+        section(content, "Data", null)
+        row(content, "Recordings", recordingsSummary()) { host.showRecordings() }
+    }
+
+    private fun recordingRows(content: LinearLayout, s: StereoSettings, recording: Boolean) {
+        val glassesSource = s.cameraSource == CameraSource.GLASSES
         if (glassesSource) {
             row(
                 content, "Images",
@@ -115,8 +144,8 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
                 }
             }
         }
-        // With the glasses as source, the Beam Pro's IMU is recorded as an extra (it doesn't move with the head).
-        val imuPrefix = if (glassesSource) "Beam Pro IMU" else "IMU"
+        // With other devices the phone's IMU is an extra: it doesn't move with the cameras.
+        val imuPrefix = if (glassesSource) "Phone IMU (extra)" else "IMU"
         val sensors = context.getSystemService(SensorManager::class.java)
         row(content, "$imuPrefix rate", "${s.imuRate.label}\n${imuRateNote(sensors, s.imuRate)}", locked = recording) {
             val labels = ImuRate.entries.map { "${it.label}\n${imuRateNote(sensors, it)}" }
@@ -126,9 +155,9 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
         row(content, "$imuPrefix streams", streams.joinToString { it.file.replace('_', ' ') }.ifEmpty { "none" }, locked = recording) {
             chooseImuStreams(sensors, streams)
         }
-        row(content, "Recordings", recordingsSummary()) { host.showRecordings() }
+    }
 
-        section(content, "Glasses & output", null)
+    private fun displayRows(content: LinearLayout, s: StereoSettings, recording: Boolean) {
         row(content, "Glasses field of view", "%.0f° diagonal (used by 1:1 scale)".format(s.glassesFovDeg)) {
             val presets = listOf(
                 45f to "45° — Air",
@@ -150,13 +179,6 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
             choose("Output", OutputMode.entries.map { it.label }, s.outputMode.ordinal) { i ->
                 viewModel.update { it.copy(outputMode = OutputMode.entries[i]) }
             }
-        }
-        row(content, "Glasses USB probe", "Check whether the app can reach the glasses' cameras and IMU") { host.probeUsb() }
-
-        section(content, "Camera setup", "this device")
-        if (!glassesSource) beamProSetupRows(content, s, recording)
-        row(content, "Eye alignment", "pitch %+.2f°, roll %+.2f° (Align measures it)".format(s.alignPitchDeg, s.alignRollDeg)) {
-            showAlignmentDialog()
         }
         row(content, "Reset view adjustments", "Convergence, depth and brightness back to defaults") {
             val d = StereoSettings()
@@ -303,6 +325,16 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
         parent.addView(bar)
     }
 
+    private fun subsection(parent: LinearLayout, title: String) {
+        parent.addView(TextView(context).apply {
+            text = title.uppercase()
+            setTextColor(ContextCompat.getColor(context, R.color.panel_text_secondary))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            letterSpacing = 0.08f
+            setPadding(dp(16), dp(10), dp(16), dp(2))
+        })
+    }
+
     private fun section(parent: LinearLayout, title: String, note: String?) {
         parent.addView(TextView(context).apply {
             text = if (note != null) "$title  ·  $note" else title
@@ -414,15 +446,15 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
             layout.addView(slider)
         }
         val s = viewModel.settings.value
-        slider("Vertical (pitch)", s.alignPitchDeg) { d -> viewModel.update { it.copy(alignPitchDeg = d) } }
-        slider("Rotation (roll)", s.alignRollDeg) { d -> viewModel.update { it.copy(alignRollDeg = d) } }
+        slider("Vertical (pitch)", s.alignPitchDeg) { d -> viewModel.update { it.withAlignment(d, it.alignRollDeg) } }
+        slider("Rotation (roll)", s.alignRollDeg) { d -> viewModel.update { it.withAlignment(it.alignPitchDeg, d) } }
 
         MaterialAlertDialogBuilder(context)
             .setTitle("Eye alignment")
             .setMessage("Line up a distant horizontal edge so it is not doubled vertically. Align does this from the image.")
             .setView(layout)
             .setPositiveButton(android.R.string.ok, null)
-            .setNeutralButton("Reset") { _, _ -> viewModel.update { it.copy(alignPitchDeg = 0f, alignRollDeg = 0f) } }
+            .setNeutralButton("Reset") { _, _ -> viewModel.update { it.withAlignment(0f, 0f) } }
             .show()
     }
 }

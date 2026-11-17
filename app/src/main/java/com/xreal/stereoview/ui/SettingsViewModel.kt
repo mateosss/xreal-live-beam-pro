@@ -51,9 +51,9 @@ enum class FocusMode(val label: String) {
 }
 
 /** Where the stereo images come from. Only one source runs at a time. */
-enum class CameraSource(val label: String) {
-    BEAM_PRO("Beam Pro rear cameras"),
-    GLASSES("Glasses tracking cameras (Air 2 Ultra, over USB)"),
+enum class CameraSource(val label: String, val shortLabel: String) {
+    BEAM_PRO("Beam Pro / phone rear cameras", "Beam Pro"),
+    GLASSES("Glasses tracking cameras (Air 2 Ultra, over USB)", "Glasses"),
 }
 
 /** Which image a recording stores per camera. */
@@ -114,10 +114,13 @@ data class StereoSettings(
     val stabilization: Stabilization = Stabilization.MEDIUM,
     /** Use the lens poses reported by the camera; otherwise only the sensor orientation. */
     val useFactoryCalibration: Boolean = true,
-    /** Vertical alignment correction between the eyes, degrees. */
-    val alignPitchDeg: Float = 0f,
-    /** Rotational alignment correction between the eyes, degrees. */
-    val alignRollDeg: Float = 0f,
+    /** Beam Pro cameras: vertical alignment correction between the eyes, degrees. */
+    val beamProAlignPitchDeg: Float = 0f,
+    /** Beam Pro cameras: rotational alignment correction between the eyes, degrees. */
+    val beamProAlignRollDeg: Float = 0f,
+    /** Glasses cameras: the same corrections, kept separately (different cameras). */
+    val glassesAlignPitchDeg: Float = 0f,
+    val glassesAlignRollDeg: Float = 0f,
     /** Requested camera frame rate; stream sizes that can't sustain it are skipped. */
     val targetFps: Int = 30,
     /** Fixed exposure time and ISO instead of auto exposure. */
@@ -143,6 +146,16 @@ data class StereoSettings(
     /** Glasses camera gain, or -1 for the camera's default. */
     val glassesGain: Int = -1,
 ) {
+    /** Eye alignment of the current camera source. */
+    val alignPitchDeg: Float get() = if (cameraSource == CameraSource.GLASSES) glassesAlignPitchDeg else beamProAlignPitchDeg
+    val alignRollDeg: Float get() = if (cameraSource == CameraSource.GLASSES) glassesAlignRollDeg else beamProAlignRollDeg
+
+    /** These settings with the current camera source's eye alignment replaced. */
+    fun withAlignment(pitchDeg: Float, rollDeg: Float) = when (cameraSource) {
+        CameraSource.GLASSES -> copy(glassesAlignPitchDeg = pitchDeg, glassesAlignRollDeg = rollDeg)
+        else -> copy(beamProAlignPitchDeg = pitchDeg, beamProAlignRollDeg = rollDeg)
+    }
+
     companion object {
         const val CONVERGENCE_RANGE = 200f
         const val ALIGN_RANGE_DEG = 3f
@@ -172,6 +185,8 @@ class SettingsRepository(private val context: Context) {
         val FACTORY_CALIBRATION = booleanPreferencesKey("use_factory_calibration")
         val ALIGN_PITCH = floatPreferencesKey("align_pitch_deg")
         val ALIGN_ROLL = floatPreferencesKey("align_roll_deg")
+        val GLASSES_ALIGN_PITCH = floatPreferencesKey("glasses_align_pitch_deg")
+        val GLASSES_ALIGN_ROLL = floatPreferencesKey("glasses_align_roll_deg")
         val TARGET_FPS = intPreferencesKey("target_fps")
         val MANUAL_EXPOSURE = booleanPreferencesKey("manual_exposure")
         val EXPOSURE_TIME = longPreferencesKey("exposure_time_ns")
@@ -229,8 +244,10 @@ class SettingsRepository(private val context: Context) {
             sbsLayout = enumOrDefault(p[Keys.SBS_LAYOUT], defaults.sbsLayout),
             stabilization = enumOrDefault(p[Keys.STABILIZATION], defaults.stabilization),
             useFactoryCalibration = p[Keys.FACTORY_CALIBRATION] ?: defaults.useFactoryCalibration,
-            alignPitchDeg = p[Keys.ALIGN_PITCH] ?: defaults.alignPitchDeg,
-            alignRollDeg = p[Keys.ALIGN_ROLL] ?: defaults.alignRollDeg,
+            beamProAlignPitchDeg = p[Keys.ALIGN_PITCH] ?: defaults.beamProAlignPitchDeg,
+            beamProAlignRollDeg = p[Keys.ALIGN_ROLL] ?: defaults.beamProAlignRollDeg,
+            glassesAlignPitchDeg = p[Keys.GLASSES_ALIGN_PITCH] ?: defaults.glassesAlignPitchDeg,
+            glassesAlignRollDeg = p[Keys.GLASSES_ALIGN_ROLL] ?: defaults.glassesAlignRollDeg,
             targetFps = p[Keys.TARGET_FPS] ?: defaults.targetFps,
             manualExposure = p[Keys.MANUAL_EXPOSURE] ?: defaults.manualExposure,
             exposureTimeNs = p[Keys.EXPOSURE_TIME] ?: defaults.exposureTimeNs,
@@ -267,8 +284,10 @@ class SettingsRepository(private val context: Context) {
             p[Keys.SBS_LAYOUT] = s.sbsLayout.name
             p[Keys.STABILIZATION] = s.stabilization.name
             p[Keys.FACTORY_CALIBRATION] = s.useFactoryCalibration
-            p[Keys.ALIGN_PITCH] = s.alignPitchDeg
-            p[Keys.ALIGN_ROLL] = s.alignRollDeg
+            p[Keys.ALIGN_PITCH] = s.beamProAlignPitchDeg
+            p[Keys.ALIGN_ROLL] = s.beamProAlignRollDeg
+            p[Keys.GLASSES_ALIGN_PITCH] = s.glassesAlignPitchDeg
+            p[Keys.GLASSES_ALIGN_ROLL] = s.glassesAlignRollDeg
             p[Keys.TARGET_FPS] = s.targetFps
             p[Keys.MANUAL_EXPOSURE] = s.manualExposure
             p[Keys.EXPOSURE_TIME] = s.exposureTimeNs

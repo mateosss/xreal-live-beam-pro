@@ -334,10 +334,10 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
                     return@requestAlignment
                 }
                 viewModel.update {
-                    it.copy(
-                        alignPitchDeg = (it.alignPitchDeg + result.pitchDeg).toFloat()
+                    it.withAlignment(
+                        (it.alignPitchDeg + result.pitchDeg).toFloat()
                             .coerceIn(-StereoSettings.ALIGN_RANGE_DEG, StereoSettings.ALIGN_RANGE_DEG),
-                        alignRollDeg = (it.alignRollDeg + result.rollDeg).toFloat()
+                        (it.alignRollDeg + result.rollDeg).toFloat()
                             .coerceIn(-StereoSettings.ALIGN_RANGE_DEG, StereoSettings.ALIGN_RANGE_DEG),
                     )
                 }
