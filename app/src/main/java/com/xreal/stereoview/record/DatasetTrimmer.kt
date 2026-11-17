@@ -53,7 +53,7 @@ object DatasetTrimmer {
                 val video = cam.video
                 if (video != null) {
                     val cutter = cutVideo ?: throw IOException("Cutting video needs Android's media framework")
-                    val kept = cutter.cut(video, File(out, "data.mp4"), first, last)
+                    val kept = cutter.cut(video, File(out, video.name), first, last)
                     if (kept < first) {
                         notes += "${cam.name}: video starts at the keyframe %.3f s earlier".format((cam.timestamps[first] - cam.timestamps[kept]) / 1e9)
                         first = kept

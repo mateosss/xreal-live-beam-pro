@@ -21,6 +21,25 @@ class FrameLoader(private val cameras: List<Dataset.Camera>, private val onFrame
     private val pending = arrayOfNulls<Int>(cameras.size)
     private val shown = IntArray(cameras.size) { -1 }
     private val retrievers = arrayOfNulls<MediaMetadataRetriever>(cameras.size)
+    private val sampleTimes = arrayOfNulls<LongArray>(cameras.size)
+
+    /** Presentation time (µs) of every sample, in file order (= frame order: no B-frames). */
+    private fun sampleTimesOf(file: java.io.File): LongArray {
+        val ex = android.media.MediaExtractor()
+        try {
+            ex.setDataSource(file.path)
+            val track = (0 until ex.trackCount).first { ex.getTrackFormat(it).getString(android.media.MediaFormat.KEY_MIME)?.startsWith("video/") == true }
+            ex.selectTrack(track)
+            val out = ArrayList<Long>()
+            while (ex.sampleTime >= 0) {
+                out += ex.sampleTime
+                if (!ex.advance()) break
+            }
+            return out.toLongArray()
+        } finally {
+            ex.release()
+        }
+    }
     @Volatile var maxWidth = 640
 
     fun request(camera: Int, frame: Int) {
@@ -36,14 +55,23 @@ class FrameLoader(private val cameras: List<Dataset.Camera>, private val onFrame
 
     private fun decode(camera: Int) {
         val frame = synchronized(pending) { pending[camera].also { pending[camera] = null } } ?: return
-        val bitmap = try {
+        val bitmap = decodeFrame(camera, frame)
+        synchronized(pending) { shown[camera] = frame }
+        main.post { onFrame(camera, frame, bitmap) }
+    }
+
+    private fun decodeFrame(camera: Int, frame: Int): Bitmap? {
+        return try {
             val c = cameras[camera]
             if (c.video != null) {
                 val r = retrievers[camera] ?: MediaMetadataRetriever().also {
                     it.setDataSource(c.video.path)
                     retrievers[camera] = it
                 }
-                r.getFrameAtIndex(frame)?.let(::scaled)
+                // By time, not index: Matroska files carry no frame count, which index lookups need.
+                val times = sampleTimes[camera] ?: sampleTimesOf(c.video).also { sampleTimes[camera] = it }
+                val t = times.getOrNull(frame) ?: return@decodeFrame null
+                r.getFrameAtTime(t, MediaMetadataRetriever.OPTION_CLOSEST)?.let(::scaled)
             } else {
                 val file = c.imageFile(frame)
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -56,8 +84,6 @@ class FrameLoader(private val cameras: List<Dataset.Camera>, private val onFrame
             Log.w("FrameLoader", "Frame $frame of camera $camera", e)
             null
         }
-        synchronized(pending) { shown[camera] = frame }
-        main.post { onFrame(camera, frame, bitmap) }
     }
 
     private fun scaled(b: Bitmap): Bitmap =

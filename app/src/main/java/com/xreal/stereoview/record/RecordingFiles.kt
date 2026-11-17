@@ -14,7 +14,7 @@ import java.util.zip.ZipOutputStream
  */
 object RecordingFiles {
     /** Already-compressed files are stored as they are: zipping them again only costs time. */
-    private val STORED_EXTENSIONS = setOf("png", "jpg", "jpeg", "mp4", "zip")
+    private val STORED_EXTENSIONS = setOf("png", "jpg", "jpeg", "mp4", "mkv", "zip")
 
     /** File that keeps media scanners out of a folder (gallery apps, MediaStore). */
     const val NO_MEDIA = ".nomedia"

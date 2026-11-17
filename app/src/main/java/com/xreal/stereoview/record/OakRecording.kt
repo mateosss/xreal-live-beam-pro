@@ -41,6 +41,9 @@ class OakRecording private constructor(
     private val jpegQuality: Int,
 ) : ActiveRecording {
     private class Cam(val name: String, val dir: File, val extension: String, val data: LineWriter, val frames: LineWriter) {
+        /** H.264 mono recordings: the camera's encoder; data.csv rows are written as frames reach the file. */
+        var video: VideoEncoder? = null
+        val pts = VideoEncoder.Companion.PtsMap()
         var stored = 0L
         var firstNs = 0L
         var lastNs = 0L
@@ -66,6 +69,16 @@ class OakRecording private constructor(
     fun onStereoFrame(frame: OakDevice.StereoFrame) {
         for ((cam, mono) in cams.zip(listOf(frame.left, frame.right))) {
             offset(mono.arrivalNs, mono.timestampNs, mono.hostNs)
+            val video = cam.video
+            if (video != null) {
+                cam.pts.put(mono.timestampNs, mono.timestampNs)
+                if (video.submitGray(mono.timestampNs, mono.image)) {
+                    cam.frames.line("${mono.timestampNs},${mono.sequence},${mono.hostNs},${mono.arrivalNs},${mono.exposureUs},${mono.iso},${mono.startOfExposureNs}")
+                } else {
+                    dropped.incrementAndGet()
+                }
+                continue
+            }
             submit {
                 GrayImages.write(File(cam.dir, "data/${mono.timestampNs}.${cam.extension}"), mono.image, mono.width, mono.height, monoFormat, jpegQuality)
                 stored(cam, mono.timestampNs, "${mono.timestampNs},${mono.sequence},${mono.hostNs},${mono.arrivalNs},${mono.exposureUs},${mono.iso},${mono.startOfExposureNs}")
@@ -146,10 +159,28 @@ class OakRecording private constructor(
     override fun writeErrors(): String? = (cams.flatMap { listOf(it.data, it.frames) } + listOfNotNull(accel, gyro))
         .firstNotNullOfOrNull { it.error }?.toString()
 
+    /** Encoder thread: a frame of [cam] reached the video file. */
+    private fun onVideoFrame(cam: Cam, ptsUs: Long) {
+        val t = cam.pts.take(ptsUs)
+        synchronized(cam) {
+            if (cam.stored == 0L) cam.firstNs = t else cam.maxGapNs = maxOf(cam.maxGapNs, t - cam.lastNs)
+            cam.lastNs = maxOf(cam.lastNs, t)
+            cam.stored++
+            cam.data.lineNow("$t,$t.png")
+        }
+    }
+
     override fun finish(): String {
         val end = Metadata.clocks()
         writer.shutdown()
         writer.awaitTermination(5, TimeUnit.MINUTES)
+        cams.forEachIndexed { i, cam ->
+            cam.video?.let {
+                it.finish()
+                metadata.getJSONArray("cameras").optJSONObject(i)?.put("encoder_settings", it.applied)
+                it.error?.let { e -> error = error ?: "${cam.name} encoder: $e" }
+            }
+        }
         val phoneImu = imu.stop()
         cams.forEach {
             it.data.close()
@@ -238,10 +269,21 @@ class OakRecording private constructor(
                 Triple("cam1", "right", s.oakImageFormat.extension),
                 if (s.oakRgbHeight > 0) Triple("cam2", "rgb", "jpg") else null,
             )
+            lateinit var recording: OakRecording
+            val monoW = if (s.oakMonoHeight == 400) 640 else 1280
             val cams = specs.map { (camName, key, ext) ->
-                val camDir = File(mav, camName).apply { File(this, "data").mkdirs() }
+                val video = ext == GrayImageFormat.H264.extension
+                val camDir = File(mav, camName).apply { mkdirs() }
+                if (!video) File(camDir, "data").mkdirs()
                 calibration?.optJSONObject(key)?.let { c -> runCatching { File(camDir, "sensor.yaml").writeText(cameraYaml(camName, key, c, s.oakFps)) } }
-                Cam(camName, camDir, ext, LineWriter(File(camDir, "data.csv"), Euroc.CAMERA_HEADER), LineWriter(File(camDir, "frames.csv"), FRAMES_HEADER))
+                Cam(camName, camDir, ext, LineWriter(File(camDir, "data.csv"), Euroc.CAMERA_HEADER), LineWriter(File(camDir, "frames.csv"), FRAMES_HEADER)).also { cam ->
+                    if (video) {
+                        cam.video = VideoEncoder(
+                            File(camDir, "data.mkv"), "video/avc", monoW, s.oakMonoHeight, s.oakFps, s.encoderOptions(s.oakVideoBitrateMbps),
+                            grayInput = true, onWritten = { p -> recording.onVideoFrame(cam, p) },
+                        )
+                    }
+                }
             }
             File(mav, "body.yaml").writeText(Euroc.bodyYaml("The body frame is the OAK's IMU."))
             File(dir, "imu").mkdirs()
@@ -277,7 +319,11 @@ class OakRecording private constructor(
                     put("notes", "Left and right images with the same sequence number are a synchronized pair (same timestamp).")
                 })
                 put("recording", JSONObject().apply {
-                    put("mono", (if (s.oakImageFormat == GrayImageFormat.JPEG) "JPEG quality ${s.grayJpegQuality} grayscale" else "PNG 8-bit grayscale") + ", ${if (s.oakMonoHeight == 400) "640×400" else "1280×${s.oakMonoHeight}"}")
+                    put("mono", when (s.oakImageFormat) {
+                        GrayImageFormat.JPEG -> "JPEG quality ${s.grayJpegQuality} grayscale"
+                        GrayImageFormat.H264 -> "H.264 in Matroska (data.mkv, crash-safe), ${s.oakVideoBitrateMbps} Mbit/s per camera"
+                        GrayImageFormat.PNG -> "PNG 8-bit grayscale"
+                    } + ", ${if (s.oakMonoHeight == 400) "640×400" else "1280×${s.oakMonoHeight}"}")
                     put("color", if (s.oakRgbHeight > 0) "JPEG 1280×${s.oakRgbHeight}, quality ${s.oakJpegQuality}, encoded on the camera" else "off")
                     put("fps", s.oakFps)
                     put("oak_imu_rate_hz", s.oakImuRateHz)
@@ -298,7 +344,7 @@ class OakRecording private constructor(
                 })
             }
             File(dir, "metadata.json").writeText(metadata.toString(2))
-            val recording = OakRecording(dir, cams, accel, gyro, imu0, imu, LineWriter(File(dir, "settings.jsonl")), metadata, s.oakImageFormat, s.grayJpegQuality)
+            recording = OakRecording(dir, cams, accel, gyro, imu0, imu, LineWriter(File(dir, "settings.jsonl")), metadata, s.oakImageFormat, s.grayJpegQuality)
             recording.onSettingsChanged(s)
             imu.start()
             return recording

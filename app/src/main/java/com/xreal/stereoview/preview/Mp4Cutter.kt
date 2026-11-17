@@ -17,6 +17,7 @@ import java.nio.ByteBuffer
 object Mp4Cutter : DatasetTrimmer.VideoCutter {
     override fun cut(source: File, target: File, first: Int, last: Int): Int {
         val keyframe = keyframeAtOrBefore(source, first)
+        if (target.name.endsWith(".mkv")) return cutToMkv(source, target, keyframe, last)
         val extractor = MediaExtractor()
         extractor.setDataSource(source.path)
         val track = videoTrack(extractor)
@@ -46,6 +47,42 @@ object Mp4Cutter : DatasetTrimmer.VideoCutter {
             muxer.stop()
         } finally {
             muxer.release()
+            extractor.release()
+        }
+        return keyframe
+    }
+
+    /** Same cut into Matroska (H.264 recordings), with [com.xreal.stereoview.record.MkvWriter]. */
+    private fun cutToMkv(source: File, target: File, keyframe: Int, last: Int): Int {
+        val extractor = MediaExtractor()
+        try {
+            extractor.setDataSource(source.path)
+            val track = videoTrack(extractor)
+            extractor.selectTrack(track)
+            val format = extractor.getTrackFormat(track)
+            fun csd(name: String) = format.getByteBuffer(name)?.let { b -> ByteArray(b.remaining()).also { b.duplicate().get(it) } }
+                ?: throw IOException("No $name in ${source.name}")
+            val writer = com.xreal.stereoview.record.MkvWriter(
+                target, format.getInteger(MediaFormat.KEY_WIDTH), format.getInteger(MediaFormat.KEY_HEIGHT), csd("csd-0"), csd("csd-1"),
+            )
+            var buffer = ByteBuffer.allocate(8 shl 20)
+            var index = 0
+            try {
+                while (index <= last) {
+                    if (index >= keyframe) {
+                        if (extractor.sampleSize > buffer.capacity()) buffer = ByteBuffer.allocate(extractor.sampleSize.toInt())
+                        val n = extractor.readSampleData(buffer, 0)
+                        if (n < 0) break
+                        val bytes = ByteArray(n).also { buffer.position(0); buffer.get(it, 0, n) }
+                        writer.writeFrame(extractor.sampleTime, bytes, 0, n, extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0)
+                    }
+                    index++
+                    if (!extractor.advance()) break
+                }
+            } finally {
+                writer.close()
+            }
+        } finally {
             extractor.release()
         }
         return keyframe

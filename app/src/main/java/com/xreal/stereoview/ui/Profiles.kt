@@ -183,6 +183,11 @@ data class Profile(val name: String, val settings: StereoSettings) {
                 put("glassesImageFormat", s.glassesImageFormat.name)
                 put("oakImageFormat", s.oakImageFormat.name)
                 put("grayJpegQuality", s.grayJpegQuality)
+                put("videoBitrateMode", s.videoBitrateMode.name)
+                put("videoKeyframeIntervalS", s.videoKeyframeIntervalS.toDouble())
+                put("videoProfile", s.videoProfile.name)
+                put("glassesVideoBitrateMbps", s.glassesVideoBitrateMbps)
+                put("oakVideoBitrateMbps", s.oakVideoBitrateMbps)
             })
         }).toString()
 
@@ -228,6 +233,11 @@ data class Profile(val name: String, val settings: StereoSettings) {
                         glassesImageFormat = enumOr(j.optString("glassesImageFormat"), d.glassesImageFormat),
                         oakImageFormat = enumOr(j.optString("oakImageFormat"), d.oakImageFormat),
                         grayJpegQuality = j.optInt("grayJpegQuality", d.grayJpegQuality),
+                        videoBitrateMode = enumOr(j.optString("videoBitrateMode"), d.videoBitrateMode),
+                        videoKeyframeIntervalS = j.optDouble("videoKeyframeIntervalS", d.videoKeyframeIntervalS.toDouble()).toFloat(),
+                        videoProfile = enumOr(j.optString("videoProfile"), d.videoProfile),
+                        glassesVideoBitrateMbps = j.optInt("glassesVideoBitrateMbps", d.glassesVideoBitrateMbps),
+                        oakVideoBitrateMbps = j.optInt("oakVideoBitrateMbps", d.oakVideoBitrateMbps),
                     ),
                 )
             }
@@ -272,4 +282,9 @@ fun StereoSettings.withProfile(profile: StereoSettings) = copy(
     glassesImageFormat = profile.glassesImageFormat,
     oakImageFormat = profile.oakImageFormat,
     grayJpegQuality = profile.grayJpegQuality,
+    videoBitrateMode = profile.videoBitrateMode,
+    videoKeyframeIntervalS = profile.videoKeyframeIntervalS,
+    videoProfile = profile.videoProfile,
+    glassesVideoBitrateMbps = profile.glassesVideoBitrateMbps,
+    oakVideoBitrateMbps = profile.oakVideoBitrateMbps,
 )

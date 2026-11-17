@@ -61,6 +61,8 @@ class Recording private constructor(
         val data: LineWriter,
         val frames: LineWriter,
         val results: LineWriter,
+        /** Video outputs: presentation time → dataset timestamp, for data.csv rows written per encoded frame. */
+        val pts: VideoEncoder.Companion.PtsMap = VideoEncoder.Companion.PtsMap(),
     ) {
         val name: String get() = "cam$index"
         var stored = 0L
@@ -108,6 +110,14 @@ class Recording private constructor(
         return sensorNs + offset
     }
 
+    /**
+     * GL thread, before a frame of [output] at [timestampNs] goes to its encoder: video outputs
+     * remember its dataset timestamp for the data.csv row written when it reaches the file.
+     */
+    fun beforeCapture(output: Output, timestampNs: Long) {
+        if (output.video != null) output.pts.put(timestampNs, eurocNs(timestampNs))
+    }
+
     /** GL thread: a frame of [output] captured at [timestampNs] was handed to its encoder. */
     fun onFrameStored(output: Output, timestampNs: Long, intrinsics: DoubleArray?, stabilization: DoubleArray?) {
         val o = output
@@ -125,7 +135,7 @@ class Recording private constructor(
         }
         o.frames.line(line)
         val t = eurocNs(timestampNs)
-        o.data.line("$t,$t.${o.images?.extension ?: "png"}")
+        if (o.video == null) o.data.line("$t,$t.${o.images?.extension ?: "png"}")
         o.stored++
     }
 
@@ -222,6 +232,7 @@ class Recording private constructor(
                     put("video_samples", it.samples)
                     put("write_backlog_peak_mb", it.peakBacklogBytes / 1e6)
                     put("encoder", it.codecName)
+                    put("encoder_settings", it.applied)
                     it.error?.let { e -> put("encoder_error", e) }
                 }
                 o.images?.let {
@@ -320,22 +331,30 @@ class Recording private constructor(
                     val camDir = File(Euroc.mav(dir), "cam$index").apply { mkdirs() }
                     val frameColumns = mutableListOf("frame", "sensor_timestamp_ns", "timestamp_ns", "render_ns")
                     if (s.recordView == RecordView.RECTIFIED) frameColumns += listOf("fx", "fy", "cx", "cy", "stab_qw", "stab_qx", "stab_qy", "stab_qz")
+                    val data = LineWriter(File(camDir, "data.csv"), Euroc.CAMERA_HEADER)
+                    val pts = VideoEncoder.Companion.PtsMap()
                     outputs += Output(
                         index = index,
                         camera = camera,
                         target = if (camera == 0) rig.left else rig.right,
                         size = size,
                         video = s.recordFormat.mime?.let {
-                            VideoEncoder(File(camDir, "data.mp4"), it, size.width, size.height, rig.targetFps, bitrate)
+                            // data.csv rows are written as frames land in the file: row i = frame i, even after a crash.
+                            VideoEncoder(
+                                File(camDir, s.recordFormat.videoFile!!), it, size.width, size.height, rig.targetFps,
+                                s.encoderOptions(s.recordBitrateMbps),
+                                onWritten = { p -> pts.take(p).let { t -> data.lineNow("$t,$t.png") } },
+                            )
                         },
                         images = if (s.recordFormat.mime == null) {
                             ImageWriter(File(camDir, "data"), size.width, size.height, png = s.recordFormat == RecordFormat.PNG)
                         } else {
                             null
                         },
-                        data = LineWriter(File(camDir, "data.csv"), Euroc.CAMERA_HEADER),
+                        data = data,
                         frames = LineWriter(File(camDir, "frames.csv"), frameColumns.joinToString(",")),
                         results = LineWriter(File(camDir, "capture_results.csv"), RESULT_COLUMNS),
+                        pts = pts,
                     )
                 }
             } catch (e: Exception) {
@@ -408,7 +427,8 @@ class Recording private constructor(
                 put("extra", extraInfo)
                 put("files", JSONObject().apply {
                     put("mav0/camN/data.csv", "EuRoC: timestamp (IMU clock, start of exposure) and image file name of every stored frame")
-                    put("mav0/camN/data.mp4", "video modes: H.264/H.265, no B-frames; frame i = row i of data.csv (tools/to_euroc.py extracts data/<timestamp>.png)")
+                    put("mav0/camN/data.mkv | data.mp4", "video modes: H.264 in Matroska (crash-safe) or H.265 in MP4, no B-frames; " +
+                        "frame i = row i of data.csv (rows are written as frames reach the file); tools/to_euroc.py extracts data/<timestamp>.png")
                     put("mav0/camN/data/<timestamp_ns>.png|.jpg", "image modes: one file per stored frame (PNG = 8-bit grayscale)")
                     put("mav0/camN/sensor.yaml", "EuRoC camera description: intrinsics, distortion, T_BS (body = Beam Pro IMU)")
                     put("mav0/camN/frames.csv", "stored frames: sensor timestamp, dataset timestamp, and for rectified recordings the intrinsics and stabilization rotation used")

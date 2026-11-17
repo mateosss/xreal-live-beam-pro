@@ -163,8 +163,8 @@ the app releases the cameras as before. Configure it under *Settings → Recordi
 | Option | Choices |
 |---|---|
 | Images | **Raw**: each camera's stream as delivered (lens distortion intact, not rotated). **Rectified**: what each eye shows (undistorted, rectified, aligned, with the current zoom, convergence and stabilization; *1:1* scale is recorded as *Fill*) |
-| Format | H.264 or H.265 video per camera (hardware encoder, no B-frames), one 8-bit grayscale PNG per frame (as EuRoC), or one JPEG per frame. See *Writing* below |
-| Video bitrate | 10–100 Mbit/s per camera |
+| Format | **H.264 video in MKV** per camera (crash-safe, see below), H.265 in MP4 (smaller, but lost if the recording doesn't end normally), one 8-bit grayscale PNG per frame (as EuRoC), or one JPEG per frame. See *Writing* below |
+| Video options | Rate control (CBR, VBR or constant quality), bitrate per camera (10–100 Mbit/s for the Beam Pro, 2–16 for the glasses, 4–40 for OAK mono), keyframe interval (0.5–5 s) and H.264 profile (Baseline, Main, High). Encoders ignore what they don't support (the emulator's has no CBR); `metadata.json → cameras[].stats.encoder_settings` records what was used |
 | IMU rate | Fastest the sensors allow, 500/200/100 Hz through a listener, or a shared-memory direct channel (~800 or ~200 Hz) where the sensor supports it |
 | IMU streams | Accelerometer, gyroscope, their uncalibrated versions with bias, magnetometer (calibrated or not), game/rotation vector, gravity, linear acceleration, barometer |
 | Recordings | Opens the Recordings screen (also on the start screen): see *Recordings screen and preview* |
@@ -174,6 +174,15 @@ CSV files (data.csv, frames.csv, every IMU stream and `imu0`, which is merged li
 arrive) reach the file within 0.1 s and are fsync'd every 2 s, and every sensor.yaml is
 written at the start (`imu0`'s rate_hz is 0 until the recording ends normally).
 `metadata.json` then still says `"status": "recording"`.
+
+H.264 video is written as **Matroska (MKV)** by the app's own muxer: the file is appended frame
+by frame with "unknown size" headers (fsync'd every 2 s) and finalized when the recording
+stops, so a recording cut off at any point still plays up to its last frame (ffmpeg, VLC,
+OpenCV, the app's preview). Each data.csv row is written straight to the file just before its
+frame, so **row i is frame i**, and after a crash data.csv has at most one row more than the
+video has frames (drop it). No B-frames; SPS/PPS repeat before every keyframe where the encoder
+allows. The glasses and OAK mono cameras can be recorded this way too (*Images → H.264*):
+the grayscale image is the luma, with neutral chroma.
 
 **Writing.** No capture thread waits for storage. CSV files are buffered in memory and
 written by a background thread a few times a second; encoded video is copied out of the
@@ -229,7 +238,7 @@ mav0/
   cam0/, cam1/            cam0 = left eye
     data.csv              #timestamp [ns],filename   (EuRoC)
     data/<timestamp>.png  PNG (or .jpg) image formats
-    data.mp4              video formats instead of data/: frame i = row i of data.csv
+    data.mkv | data.mp4   video formats instead of data/: frame i = row i of data.csv
     sensor.yaml           EuRoC camera: intrinsics, distortion, T_BS (body = Beam Pro IMU)
     frames.csv            extra: sensor timestamp, dataset timestamp, render time
                           [, rectified fx, fy, cx, cy, stab_q…]
@@ -250,7 +259,8 @@ settings.jsonl            settings at start and after every change, with timesta
 **Timestamps.** Dataset timestamps are on the IMU's clock (CLOCK_BOOTTIME). For cameras
 they are the camera's `SENSOR_TIMESTAMP` (start of exposure of the first row), shifted onto
 BOOTTIME only if the camera clock isn't already BOOTTIME (`metadata.json → timestamps` says
-which). The MP4 presentation times are the sensor timestamps too. Every row also carries its
+which). The video presentation times are the sensor timestamps too (1 ms resolution in MKV;
+data.csv has the exact ns). Every row also carries its
 arrival time on BOOTTIME, so the clocks can be checked against each other. Join `frames.csv`
 and `capture_results.csv` on `sensor_timestamp_ns` / `timestamp_ns` for mid-exposure times
 (`+ exposure/2 + skew/2`).
@@ -261,7 +271,7 @@ and orientations, so refine them with Kalibr, and replace the placeholder IMU no
 
 **Video recordings.** Extract the frames into `data/` with
 `python3 tools/to_euroc.py REC [--gray] [--keep-video]` (Python 3 and ffmpeg). It decodes
-each `data.mp4` into `data/<timestamp>.png` in place. Image recordings need no conversion.
+each `data.mkv` / `data.mp4` into `data/<timestamp>.png` in place. Image recordings need no conversion.
 
 ## Controls
 

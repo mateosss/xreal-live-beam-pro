@@ -36,8 +36,8 @@ class Dataset(
         val timestamps: LongArray,
         val files: List<String>,
     ) {
-        /** data.mp4 for video recordings (frame i = row i), else null and images are in data/. */
-        val video: File? = File(dir, "data.mp4").takeIf { it.exists() }
+        /** data.mkv or data.mp4 for video recordings (frame i = row i), else null and images are in data/. */
+        val video: File? = listOf("data.mkv", "data.mp4").map { File(dir, it) }.firstOrNull { it.exists() }
         val format: String get() = if (video != null) "video" else files.firstOrNull()?.substringAfterLast('.') ?: "?"
 
         fun imageFile(index: Int): File = File(dir, "data/${files[index]}")

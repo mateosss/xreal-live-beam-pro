@@ -44,6 +44,9 @@ class GlassesRecording private constructor(
     private val jpegQuality: Int,
 ) : ActiveRecording {
     private class Cam(val name: String, val dir: File, val data: LineWriter, val frames: LineWriter) {
+        /** H.264 recordings: the camera's encoder; data.csv rows are written as frames reach the file. */
+        var video: VideoEncoder? = null
+        val pts = VideoEncoder.Companion.PtsMap()
         var stored = 0L
         var firstNs = 0L
         var lastNs = 0L
@@ -90,6 +93,16 @@ class GlassesRecording private constructor(
     fun onStereoFrame(frame: GlassesDevice.StereoFrame) {
         for ((cam, eye) in cams.zip(listOf(frame.left, frame.right))) {
             cameraOffset.add(eye.arrivalNs, eye.timestampNs)
+            val video = cam.video
+            if (video != null) {
+                cam.pts.put(eye.timestampNs, eye.timestampNs)
+                if (video.submitGray(eye.timestampNs, eye.image)) {
+                    cam.frames.line("${eye.timestampNs},${eye.sequence},${eye.arrivalNs},${eye.meta.joinToString("") { "%02x".format(it) }}")
+                } else {
+                    dropped.incrementAndGet()
+                }
+                continue
+            }
             try {
                 encoder.execute { store(cam, eye) }
                 encoder.queue.size.let { if (it > peakQueue) peakQueue = it }
@@ -160,10 +173,28 @@ class GlassesRecording private constructor(
     override fun writeErrors(): String? = (cams.flatMap { listOf(it.data, it.frames) } + listOfNotNull(imu0, glassesImu))
         .firstNotNullOfOrNull { it.error }?.toString()
 
+    /** Encoder thread: a frame of [cam] reached the video file. */
+    private fun onVideoFrame(cam: Cam, ptsUs: Long) {
+        val t = cam.pts.take(ptsUs)
+        synchronized(cam) {
+            if (cam.stored == 0L) cam.firstNs = t else cam.maxGapNs = maxOf(cam.maxGapNs, t - cam.lastNs)
+            cam.lastNs = maxOf(cam.lastNs, t)
+            cam.stored++
+            cam.data.lineNow("$t,$t.png")
+        }
+    }
+
     override fun finish(): String {
         val end = Metadata.clocks()
         encoder.shutdown()
         encoder.awaitTermination(5, TimeUnit.MINUTES)
+        cams.forEach { cam ->
+            cam.video?.let {
+                it.finish()
+                metadata.getJSONArray("cameras").optJSONObject(cams.indexOf(cam))?.put("encoder_settings", it.applied)
+                it.error?.let { e -> error = error ?: "${cam.name} encoder: $e" }
+            }
+        }
         val imuSummary = imu.stop()
         cams.forEach {
             it.data.close()
@@ -245,14 +276,24 @@ class GlassesRecording private constructor(
             val dir = File(Recording.root(context), name)
             check(dir.mkdirs()) { "Cannot create $dir" }
             val mav = Euroc.mav(dir)
+            val video = s.glassesImageFormat == GrayImageFormat.H264
+            lateinit var recording: GlassesRecording
             val cams = listOf("cam0", "cam1").mapIndexed { i, camName ->
-                val camDir = File(mav, camName).apply { File(this, "data").mkdirs() }
+                val camDir = File(mav, camName).apply { mkdirs() }
+                if (!video) File(camDir, "data").mkdirs()
                 File(camDir, "sensor.yaml").writeText(cameraYaml(i))
                 Cam(
                     camName, camDir,
                     LineWriter(File(camDir, "data.csv"), Euroc.CAMERA_HEADER),
                     LineWriter(File(camDir, "frames.csv"), "timestamp_ns,sequence,arrival_ns,meta_hex"),
-                )
+                ).also { cam ->
+                    if (video) {
+                        cam.video = VideoEncoder(
+                            File(camDir, "data.mkv"), "video/avc", IMAGE_W, IMAGE_H, 30, s.encoderOptions(s.glassesVideoBitrateMbps),
+                            grayInput = true, onWritten = { p -> recording.onVideoFrame(cam, p) },
+                        )
+                    }
+                }
             }
             File(mav, "body.yaml").writeText(Euroc.bodyYaml("The body frame is the glasses IMU."))
             val imu0 = if (withImu) {
@@ -299,7 +340,11 @@ class GlassesRecording private constructor(
                 })
                 put("recording", JSONObject().apply {
                     put("view", "RAW")
-                    put("format", if (s.glassesImageFormat == GrayImageFormat.JPEG) "JPEG quality ${s.grayJpegQuality} (grayscale as luma, neutral chroma)" else "PNG (8-bit grayscale, lossless)")
+                    put("format", when (s.glassesImageFormat) {
+                        GrayImageFormat.JPEG -> "JPEG quality ${s.grayJpegQuality} (grayscale as luma, neutral chroma)"
+                        GrayImageFormat.H264 -> "H.264 in Matroska (mav0/camN/data.mkv, crash-safe), ${s.glassesVideoBitrateMbps} Mbit/s per camera; frame i = row i of data.csv"
+                        GrayImageFormat.PNG -> "PNG (8-bit grayscale, lossless)"
+                    })
                     put("size", JSONArray(listOf(IMAGE_W, IMAGE_H)))
                     put("fps_per_camera", 30)
                     put("image_orientation", "upright: left camera rotated 90° counter-clockwise, right 90° clockwise, as in Monado")
@@ -325,7 +370,7 @@ class GlassesRecording private constructor(
                 })
             }
             File(dir, "metadata.json").writeText(metadata.toString(2))
-            val recording = GlassesRecording(dir, cams, glassesImu, imu0, imu, LineWriter(File(dir, "settings.jsonl")), metadata, s.glassesImageFormat, s.grayJpegQuality)
+            recording = GlassesRecording(dir, cams, glassesImu, imu0, imu, LineWriter(File(dir, "settings.jsonl")), metadata, s.glassesImageFormat, s.grayJpegQuality)
             recording.onSettingsChanged(s)
             imu.start()
             return recording

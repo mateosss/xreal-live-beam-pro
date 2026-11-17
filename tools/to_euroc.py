@@ -4,10 +4,10 @@
     python3 tools/to_euroc.py RECORDING_DIR [--gray] [--keep-video]
 
 Recordings are already in the EuRoC MAV layout (RECORDING_DIR/mav0/cam0, cam1, imu0 with
-data.csv and sensor.yaml). Image recordings (PNG or JPEG, and all glasses recordings) are
-complete as they are. Video recordings store each camera as mav0/camN/data.mp4 instead of
-mav0/camN/data/; this script decodes it into mav0/camN/data/<timestamp>.png, matching frame i
-of the video to row i of data.csv. Needs Python 3 and ffmpeg.
+data.csv and sensor.yaml). Image recordings (PNG or JPEG) are complete as they are. Video
+recordings store each camera as mav0/camN/data.mkv (H.264, crash-safe Matroska) or data.mp4
+(H.265) instead of mav0/camN/data/; this script decodes it into mav0/camN/data/<timestamp>.png,
+matching frame i of the video to row i of data.csv. Needs Python 3 and ffmpeg.
 
 Recordings from app versions before 0.8.0 (format_version 1, no mav0/) need the previous
 version of this script: git show v0.7.0:tools/to_euroc.py
@@ -23,9 +23,9 @@ from pathlib import Path
 
 
 def extract(cam_dir, gray, keep_video):
-    video = cam_dir / "data.mp4"
-    if not video.exists():
-        print(f"{cam_dir.name}: no data.mp4, images are already in data/")
+    video = next((cam_dir / n for n in ("data.mkv", "data.mp4") if (cam_dir / n).exists()), None)
+    if video is None:
+        print(f"{cam_dir.name}: no data.mkv or data.mp4, images are already in data/")
         return
     with open(cam_dir / "data.csv", newline="") as f:
         rows = [r for r in csv.reader(f) if r and not r[0].startswith("#")]

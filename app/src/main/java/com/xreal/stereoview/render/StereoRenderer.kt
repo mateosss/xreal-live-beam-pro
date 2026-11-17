@@ -450,6 +450,7 @@ class StereoRenderer(
             if (!fresh[camera]) continue
             val timestamp = surfaceTextures[camera].timestamp
             if (rec.view == RecordView.RAW) {
+                rec.beforeCapture(output, timestamp)
                 if (gl.capture(index, timestamp) { flip -> shader.drawRaw(textureIds[camera], stMatrices[camera], flip) }) {
                     rec.onFrameStored(output, timestamp, null, null)
                 }
@@ -459,6 +460,7 @@ class StereoRenderer(
                     camera, v.tanH, v.tanV, v.shift, v.zoom,
                     s.alignPitchDeg.toDouble(), s.alignRollDeg.toDouble(), stabilization,
                 )
+                rec.beforeCapture(output, timestamp)
                 val stored = gl.capture(index, timestamp) { flip ->
                     shader.draw(textureIds[camera], if (flip) Mat3.mul(ray, FLIP_Y) else ray, models[camera], stMatrices[camera])
                 }

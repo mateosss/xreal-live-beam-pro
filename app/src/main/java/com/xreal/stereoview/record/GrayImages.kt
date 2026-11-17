@@ -40,4 +40,5 @@ object GrayImages {
 enum class GrayImageFormat(val label: String, val extension: String) {
     PNG("PNG (lossless)", "png"),
     JPEG("JPEG (several times smaller; quality below)", "jpg"),
+    H264("H.264 video in MKV (crash-safe, smallest; settings below)", "mkv"),
 }

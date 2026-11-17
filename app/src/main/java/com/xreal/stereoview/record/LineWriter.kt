@@ -49,6 +49,16 @@ class LineWriter(file: File, header: String? = null) {
         }
     }
 
+    /**
+     * Appends [text] and writes it (with anything buffered) to the file before returning. For
+     * background threads only: video recordings write each data.csv row this way just before
+     * its frame, so the rows never fall behind the frames in the file.
+     */
+    fun lineNow(text: CharSequence) {
+        line(text)
+        drain()
+    }
+
     /** Writes what is buffered (background thread, or [close]). */
     internal fun drain() {
         synchronized(ioLock) {

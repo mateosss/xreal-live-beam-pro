@@ -188,6 +188,9 @@ class SettingsSheet(
         val glassesSource = s.cameraSource == CameraSource.GLASSES
         if (s.cameraSource == CameraSource.OAK) {
             grayFormatRows(content, s, recording, s.oakImageFormat, "Mono images") { f -> target.update { it.copy(oakImageFormat = f) } }
+            if (s.oakImageFormat == com.xreal.stereoview.record.GrayImageFormat.H264) {
+                videoRows(content, s, recording, s.oakVideoBitrateMbps, listOf(4, 8, 12, 20, 40), true) { v -> target.update { it.copy(oakVideoBitrateMbps = v) } }
+            }
             row(
                 content, "Layout",
                 "Mono pair in cam0, cam1" + (if (s.oakRgbHeight > 0) ", color as the camera's JPEGs in cam2" else "") +
@@ -195,6 +198,9 @@ class SettingsSheet(
             ) {}
         } else if (glassesSource) {
             grayFormatRows(content, s, recording, s.glassesImageFormat, "Images") { f -> target.update { it.copy(glassesImageFormat = f) } }
+            if (s.glassesImageFormat == com.xreal.stereoview.record.GrayImageFormat.H264) {
+                videoRows(content, s, recording, s.glassesVideoBitrateMbps, listOf(2, 4, 6, 10, 16), true) { v -> target.update { it.copy(glassesVideoBitrateMbps = v) } }
+            }
             row(content, "Layout", "Raw 480×640 grayscale per camera at 30 fps, EuRoC layout, timestamps on the glasses' clock") {}
         } else {
             row(content, "Images", s.recordView.label, locked = recording) {
@@ -208,11 +214,8 @@ class SettingsSheet(
                 }
             }
             if (s.recordFormat.mime != null) {
-                row(content, "Video bitrate", "${s.recordBitrateMbps} Mbit/s per camera", locked = recording) {
-                    val values = listOf(10, 20, 40, 60, 100)
-                    choose("Video bitrate per camera", values.map { "$it Mbit/s" }, values.indexOf(s.recordBitrateMbps)) { i ->
-                        target.update { it.copy(recordBitrateMbps = values[i]) }
-                    }
+                videoRows(content, s, recording, s.recordBitrateMbps, listOf(10, 20, 40, 60, 100), s.recordFormat == RecordFormat.H264) { v ->
+                    target.update { it.copy(recordBitrateMbps = v) }
                 }
             }
         }
@@ -226,6 +229,32 @@ class SettingsSheet(
         val streams = ImuStream.parse(s.imuStreams)
         row(content, "$imuPrefix streams", streams.joinToString { it.file.replace('_', ' ') }.ifEmpty { "none" }, locked = recording) {
             chooseImuStreams(sensors, streams)
+        }
+    }
+
+    /** Bitrate, rate control, keyframe interval and (H.264) profile of video recordings. */
+    private fun videoRows(
+        content: LinearLayout, s: StereoSettings, recording: Boolean, bitrate: Int, choices: List<Int>, h264: Boolean, setBitrate: (Int) -> Unit,
+    ) {
+        val modes = com.xreal.stereoview.record.BitrateMode.entries
+        row(content, "Rate control", s.videoBitrateMode.label.substringBefore(":"), locked = recording) {
+            choose("Rate control", modes.map { it.label }, modes.indexOf(s.videoBitrateMode)) { i -> target.update { it.copy(videoBitrateMode = modes[i]) } }
+        }
+        if (s.videoBitrateMode != com.xreal.stereoview.record.BitrateMode.CQ) {
+            row(content, "Video bitrate", "$bitrate Mbit/s per camera" + if (s.videoBitrateMode == com.xreal.stereoview.record.BitrateMode.VBR) " (average)" else "", locked = recording) {
+                choose("Video bitrate per camera", choices.map { "$it Mbit/s" }, choices.indexOf(bitrate)) { i -> setBitrate(choices[i]) }
+            }
+        }
+        val intervals = listOf(0.5f, 1f, 2f, 5f)
+        row(content, "Keyframe interval", "every %s s".format(s.videoKeyframeIntervalS.toString().removeSuffix(".0")), locked = recording) {
+            val labels = listOf("0.5 s (fast seeking, robust)", "1 s", "2 s", "5 s (smallest files)")
+            choose("Keyframe interval", labels, intervals.indexOf(s.videoKeyframeIntervalS)) { i -> target.update { it.copy(videoKeyframeIntervalS = intervals[i]) } }
+        }
+        if (h264) {
+            val profiles = com.xreal.stereoview.record.H264Profile.entries
+            row(content, "H.264 profile", s.videoProfile.label, locked = recording) {
+                choose("H.264 profile", profiles.map { it.label }, profiles.indexOf(s.videoProfile)) { i -> target.update { it.copy(videoProfile = profiles[i]) } }
+            }
         }
     }
 

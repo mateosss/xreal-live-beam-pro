@@ -7,20 +7,50 @@ import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
+import org.json.JSONObject
 import java.io.File
+import java.nio.ByteBuffer
+import java.util.ArrayDeque
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+
+/** H.264/H.265 rate control and stream structure for recordings. */
+data class EncoderOptions(
+    val bitrateBps: Int,
+    val mode: BitrateMode = BitrateMode.CBR,
+    /** Seconds between keyframes: shorter = faster seeking and less lost on corruption, larger files. */
+    val keyframeIntervalS: Float = 1f,
+    val profile: H264Profile = H264Profile.HIGH,
+)
+
+enum class BitrateMode(val label: String, val android: Int) {
+    CBR("Constant bitrate (CBR): predictable size, steady quality loss in busy scenes", MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR),
+    VBR("Variable bitrate (VBR): bitrate is the average; better quality per byte", MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR),
+    CQ("Constant quality (CQ): fixed quality, size varies a lot (not all encoders)", MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CQ),
+}
+
+enum class H264Profile(val label: String, val android: Int) {
+    BASELINE("Baseline (most compatible)", MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline),
+    MAIN("Main", MediaCodecInfo.CodecProfileLevel.AVCProfileMain),
+    HIGH("High (best compression)", MediaCodecInfo.CodecProfileLevel.AVCProfileHigh),
+}
 
 /**
- * Hardware video encoder fed through an input [Surface] and muxed into an MP4 file. Each frame's
- * presentation time is the camera timestamp set with eglPresentationTimeANDROID, so the file's
- * timestamps are the sensor's (in microseconds, relative to the first frame in most players).
- * No B-frames: decode order equals capture order, so frame i matches row i of frames.csv.
+ * Hardware video encoder for recordings. Input is either a [Surface] (frames rendered by GL,
+ * stamped with eglPresentationTimeANDROID) or 8-bit grayscale frames ([submitGray], encoded as
+ * YUV with neutral chroma). H.264 goes into a crash-safe Matroska file ([MkvWriter]); H.265 into
+ * MP4 (readable only once finished). No B-frames: frame i of the file is the i-th frame written.
  *
- * Encoded samples are copied out of the codec at once and written to the file by a separate
- * thread, so slow storage never holds up the encoder (and through it the GL thread).
+ * Encoded samples are copied out of the codec at once and written by a separate thread, so slow
+ * storage never holds up the encoder. [onWritten] gets each frame's presentation time (µs) on
+ * that thread just before the frame is written: recordings write its data.csv row there
+ * (straight to the file), so rows match the frames in the file; after a crash there may be one
+ * row more than frames, never fewer.
  */
 class VideoEncoder(
     file: File,
@@ -28,19 +58,23 @@ class VideoEncoder(
     val width: Int,
     val height: Int,
     fps: Int,
-    bitrate: Int,
+    options: EncoderOptions,
+    private val grayInput: Boolean = false,
+    private val onWritten: (ptsUs: Long) -> Unit = {},
 ) {
-    val inputSurface: Surface
+    /** The input surface (surface input only). */
+    val inputSurface: Surface?
     val codecName: String
+    /** What was actually configured (encoders ignore unsupported modes and profiles). */
+    val applied = JSONObject()
 
     private val thread = HandlerThread("VideoEncoder").apply { start() }
+    private val handler = Handler(thread.looper)
     private val codec: MediaCodec
-    private val muxer: MediaMuxer
+    private val sink: Sink
     private val done = CountDownLatch(1)
-    private var track = -1
-    private val writer = MuxerWriter()
+    private val writer = SinkWriter()
 
-    /** Samples written to the file. Only read after [finish]. */
     @Volatile
     var samples = 0
         private set
@@ -49,26 +83,49 @@ class VideoEncoder(
     var error: String? = null
         private set
 
+    private lateinit var callback: MediaCodec.Callback
+
+    /** Gray frames dropped because the encoder fell behind. */
+    val dropped = AtomicInteger()
+
+    // Gray input state (declared before init: the codec calls back as soon as it starts).
+    private class GrayFrame(val ptsUs: Long, val pixels: ByteArray)
+    private val freeInputs = ArrayDeque<Int>()
+    private val pending = ArrayDeque<GrayFrame>()
+    private var lastPtsUs = Long.MIN_VALUE
+    /** End of stream requested while no input buffer was free: sent with the next one. */
+    @Volatile
+    private var pendingEos = false
+
     init {
-        val format = MediaFormat.createVideoFormat(mime, width, height).apply {
-            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-            setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
-            setInteger(MediaFormat.KEY_FRAME_RATE, fps)
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
-            setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)
-            setInteger(MediaFormat.KEY_PRIORITY, 0) // real time
-        }
-        // The lookup must not include a frame rate (or other tuning keys), or it finds nothing.
         val name = MediaCodecList(MediaCodecList.REGULAR_CODECS).findEncoderForFormat(MediaFormat.createVideoFormat(mime, width, height))
             ?: throw IllegalArgumentException("No $mime encoder for ${width}×$height")
         codecName = name
         codec = MediaCodec.createByCodecName(name)
-        muxer = MediaMuxer(file.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        codec.setCallback(object : MediaCodec.Callback() {
-            override fun onInputBufferAvailable(codec: MediaCodec, index: Int) = Unit
+        val format = MediaFormat.createVideoFormat(mime, width, height).apply {
+            setInteger(
+                MediaFormat.KEY_COLOR_FORMAT,
+                if (grayInput) MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible else MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface,
+            )
+            setInteger(MediaFormat.KEY_FRAME_RATE, fps)
+            setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, options.keyframeIntervalS)
+            setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)
+            setInteger(MediaFormat.KEY_PRIORITY, 0) // real time
+            // SPS/PPS before every keyframe: each GOP decodes on its own.
+            setInteger(MediaFormat.KEY_PREPEND_HEADER_TO_SYNC_FRAMES, 1)
+        }
+        configureRateAndProfile(format, mime, options)
+        applied.put("encoder", name).put("container", if (mime == MediaFormat.MIMETYPE_VIDEO_AVC) "matroska (crash-safe)" else "mp4")
+            .put("keyframe_interval_s", options.keyframeIntervalS.toDouble()).put("fps", fps)
+        sink = if (mime == MediaFormat.MIMETYPE_VIDEO_AVC) MkvSink(file, width, height) else Mp4Sink(file)
+        callback = object : MediaCodec.Callback() {
+            override fun onInputBufferAvailable(codec: MediaCodec, index: Int) {
+                freeInputs.addLast(index)
+                feed()
+            }
 
             override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
-                writer.post { track = muxer.addTrack(format); muxer.start() }
+                writer.post { sink.start(format) }
             }
 
             override fun onOutputBufferAvailable(codec: MediaCodec, index: Int, info: MediaCodec.BufferInfo) {
@@ -78,14 +135,14 @@ class VideoEncoder(
                     if (buffer != null) {
                         buffer.position(info.offset)
                         buffer.limit(info.offset + info.size)
-                        val copy = java.nio.ByteBuffer.allocateDirect(info.size).put(buffer)
-                        copy.flip()
-                        val meta = MediaCodec.BufferInfo().apply { set(0, info.size, info.presentationTimeUs, info.flags) }
+                        val copy = ByteArray(info.size).also { buffer.get(it) }
+                        val pts = info.presentationTimeUs
+                        val key = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
                         writer.post(info.size) {
-                            if (track >= 0) {
-                                muxer.writeSampleData(track, copy, meta)
-                                samples++
-                            }
+                            // The data.csv row first: a crash between the two leaves one extra row, never a frame without one.
+                            onWritten(pts)
+                            sink.write(copy, pts, key)
+                            samples++
                         }
                     }
                 }
@@ -98,24 +155,175 @@ class VideoEncoder(
                 error = e.diagnosticInfo
                 done.countDown()
             }
-        }, Handler(thread.looper))
+        }
+        codec.setCallback(callback, handler)
         try {
-            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            inputSurface = codec.createInputSurface()
+            configureWithFallbacks(format)
+            inputSurface = if (grayInput) null else codec.createInputSurface()
             codec.start()
         } catch (e: Exception) {
             codec.release()
             writer.finish()
-            muxer.release()
             thread.quitSafely()
             throw IllegalArgumentException("$name can't encode ${width}×$height at $fps fps: ${e.message}", e)
         }
     }
 
-    /** Ends the stream and closes the file. Call only after the input surface's EGL surface is gone. */
+    /**
+     * Configures the codec; encoders that reject an optional setting are retried without it,
+     * in turn: SPS/PPS repetition, profile and level, rate control mode. [applied] notes what
+     * was dropped.
+     */
+    private fun configureWithFallbacks(format: MediaFormat) {
+        val optional = listOf(
+            listOf(MediaFormat.KEY_PREPEND_HEADER_TO_SYNC_FRAMES),
+            listOf(MediaFormat.KEY_PROFILE, MediaFormat.KEY_LEVEL),
+            listOf(MediaFormat.KEY_BITRATE_MODE, MediaFormat.KEY_QUALITY),
+        )
+        var lastError: Exception? = null
+        val dropped = ArrayList<String>()
+        for (step in 0..optional.size) {
+            if (step > 0) {
+                val keys = optional[step - 1]
+                if (keys.none { format.containsKey(it) }) continue
+                keys.forEach { format.removeKey(it) }
+                dropped += keys.first()
+                // Without a mode the encoder needs a bitrate (CQ had none).
+                if (!format.containsKey(MediaFormat.KEY_BIT_RATE)) format.setInteger(MediaFormat.KEY_BIT_RATE, applied.optInt("bitrate_bps", 8_000_000))
+            }
+            try {
+                codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                if (dropped.isNotEmpty()) {
+                    applied.put("rejected_by_encoder", org.json.JSONArray(dropped))
+                    if (MediaFormat.KEY_BITRATE_MODE in dropped) applied.put("bitrate_mode", "encoder default")
+                    if (MediaFormat.KEY_PROFILE in dropped) applied.put("profile", "encoder default")
+                }
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "configure failed${if (dropped.isEmpty()) "" else " without $dropped"}: $e")
+                lastError = e
+                runCatching {
+                    codec.reset()
+                    codec.setCallback(callback, handler)
+                }
+            }
+        }
+        throw lastError ?: IllegalStateException("configure failed")
+    }
+
+    /** Rate control and profile, each only if this encoder supports it (else its default). */
+    private fun configureRateAndProfile(format: MediaFormat, mime: String, o: EncoderOptions) {
+        val caps = runCatching {
+            MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.first { it.name == codecName }.getCapabilitiesForType(mime)
+        }.getOrNull()
+        val enc = caps?.encoderCapabilities
+        val mode = o.mode.takeIf { enc?.isBitrateModeSupported(it.android) != false }
+            ?: BitrateMode.VBR.takeIf { enc?.isBitrateModeSupported(it.android) == true }
+        if (mode != null) format.setInteger(MediaFormat.KEY_BITRATE_MODE, mode.android)
+        if (mode == BitrateMode.CQ) {
+            val q = enc?.qualityRange
+            format.setInteger(MediaFormat.KEY_QUALITY, q?.upper?.let { (q.lower + (it - q.lower) * 0.8).toInt() } ?: 80)
+        } else {
+            format.setInteger(MediaFormat.KEY_BIT_RATE, o.bitrateBps)
+        }
+        applied.put("bitrate_mode", mode?.name ?: "encoder default").put("bitrate_bps", o.bitrateBps)
+        if (mime == MediaFormat.MIMETYPE_VIDEO_AVC) {
+            val level = caps?.profileLevels?.filter { it.profile == o.profile.android }?.maxOfOrNull { it.level }
+            if (level != null) {
+                format.setInteger(MediaFormat.KEY_PROFILE, o.profile.android)
+                format.setInteger(MediaFormat.KEY_LEVEL, level)
+                applied.put("profile", o.profile.name)
+            } else {
+                applied.put("profile", "encoder default (${o.profile.name} unsupported)")
+            }
+        }
+    }
+
+    // region Gray input
+
+
+    /**
+     * Queues an 8-bit [width]×[height] image at [timestampNs] (increasing). Returns false if it
+     * was dropped (encoder behind, or not after the previous frame). The array must not change.
+     */
+    fun submitGray(timestampNs: Long, pixels: ByteArray): Boolean {
+        val pts = timestampNs / 1000
+        synchronized(pending) {
+            if (pts <= lastPtsUs || pending.size >= MAX_PENDING) {
+                dropped.incrementAndGet()
+                return false
+            }
+            lastPtsUs = pts
+            pending.addLast(GrayFrame(pts, pixels))
+        }
+        handler.post(::feed)
+        return true
+    }
+
+    /** Codec thread: fills free input buffers with queued gray frames. */
+    private fun feed() {
+        while (freeInputs.isNotEmpty()) {
+            val frame = synchronized(pending) { pending.pollFirst() } ?: run {
+                if (pendingEos) {
+                    pendingEos = false
+                    codec.queueInputBuffer(freeInputs.removeFirst(), 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                }
+                return
+            }
+            val index = freeInputs.removeFirst()
+            try {
+                val image = codec.getInputImage(index) ?: continue
+                val y = image.planes[0]
+                val rowStride = y.rowStride
+                val buffer = y.buffer
+                for (r in 0 until height) {
+                    buffer.position(r * rowStride)
+                    buffer.put(frame.pixels, r * width, width)
+                }
+                for (p in 1..2) fillPlane(image.planes[p], width / 2, height / 2)
+                codec.queueInputBuffer(index, 0, width * height * 3 / 2, frame.ptsUs, 0)
+            } catch (e: Exception) {
+                Log.w(TAG, "Feeding a frame failed", e)
+                error = error ?: e.toString()
+            }
+        }
+    }
+
+    private fun fillPlane(plane: android.media.Image.Plane, w: Int, h: Int) {
+        val b = plane.buffer
+        if (plane.pixelStride == 1) {
+            val row = ByteArray(w) { 128.toByte() }
+            for (r in 0 until h) {
+                b.position(r * plane.rowStride)
+                b.put(row, 0, minOf(w, b.remaining()))
+            }
+        } else {
+            for (r in 0 until h) for (c in 0 until w) {
+                val i = r * plane.rowStride + c * plane.pixelStride
+                if (i < b.limit()) b.put(i, 128.toByte())
+            }
+        }
+    }
+
+    // endregion
+
+    /** Ends the stream and closes the file. Surface input: call only after its EGL surface is gone. */
     fun finish() {
         try {
-            codec.signalEndOfInputStream()
+            if (grayInput) {
+                // Let queued frames in, then end the stream with an empty buffer.
+                val deadline = SystemClock.elapsedRealtime() + 3000
+                while (synchronized(pending) { pending.isNotEmpty() } && SystemClock.elapsedRealtime() < deadline) Thread.sleep(10)
+                val eos = CountDownLatch(1)
+                handler.post {
+                    val index = freeInputs.pollFirst()
+                    if (index != null) codec.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM) else pendingEos = true
+                    eos.countDown()
+                }
+                eos.await(1, TimeUnit.SECONDS)
+            } else {
+                codec.signalEndOfInputStream()
+            }
             if (!done.await(5, TimeUnit.SECONDS)) error = error ?: "timed out waiting for the last frames"
         } catch (e: IllegalStateException) {
             error = error ?: e.toString()
@@ -126,23 +334,85 @@ class VideoEncoder(
             Log.w(TAG, "codec.stop", e)
         }
         codec.release()
-        inputSurface.release()
+        inputSurface?.release()
         writer.finish()
         try {
-            if (track >= 0) muxer.stop()
-        } catch (e: IllegalStateException) {
-            error = error ?: "muxer: $e"
+            sink.close()
+        } catch (e: Exception) {
+            error = error ?: "closing the file: $e"
         }
-        muxer.release()
         thread.quitSafely()
     }
+
 
     /** Encoded bytes waiting for the file, and the most seen at once. */
     val backlogBytes: Long get() = writer.bytes.get()
     val peakBacklogBytes: Long get() = writer.peak
 
-    /** Runs muxer calls in order on its own thread; waits only if [MAX_BACKLOG] bytes are queued. */
-    private class MuxerWriter {
+    // region Containers
+
+    private interface Sink {
+        fun start(format: MediaFormat)
+        fun write(data: ByteArray, ptsUs: Long, keyframe: Boolean)
+        fun close()
+    }
+
+    /** Matroska: crash-safe, fsync'd every 2 s. */
+    private class MkvSink(private val file: File, private val width: Int, private val height: Int) : Sink {
+        private var mkv: MkvWriter? = null
+        private var lastSync = 0L
+
+        override fun start(format: MediaFormat) {
+            val sps = format.getByteBuffer("csd-0")?.let { bytes(it) } ?: return
+            val pps = format.getByteBuffer("csd-1")?.let { bytes(it) } ?: return
+            mkv = MkvWriter(file, width, height, sps, pps)
+        }
+
+        override fun write(data: ByteArray, ptsUs: Long, keyframe: Boolean) {
+            val w = mkv ?: return
+            w.writeFrame(ptsUs, data, 0, data.size, keyframe)
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastSync > 2000) {
+                lastSync = now
+                w.sync()
+            }
+        }
+
+        override fun close() {
+            mkv?.close()
+        }
+
+        private fun bytes(b: ByteBuffer) = ByteArray(b.remaining()).also { b.duplicate().get(it) }
+    }
+
+    /** MP4 (H.265): standard, but unreadable if the recording doesn't end normally. */
+    private class Mp4Sink(file: File) : Sink {
+        private val muxer = MediaMuxer(file.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        private var track = -1
+        private val info = MediaCodec.BufferInfo()
+
+        override fun start(format: MediaFormat) {
+            track = muxer.addTrack(format)
+            muxer.start()
+        }
+
+        override fun write(data: ByteArray, ptsUs: Long, keyframe: Boolean) {
+            if (track < 0) return
+            info.set(0, data.size, ptsUs, if (keyframe) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0)
+            muxer.writeSampleData(track, ByteBuffer.wrap(data), info)
+        }
+
+        override fun close() {
+            try {
+                if (track >= 0) muxer.stop()
+            } finally {
+                muxer.release()
+            }
+        }
+    }
+
+    /** Runs sink calls in order on its own thread; waits only if [MAX_BACKLOG] bytes are queued. */
+    private class SinkWriter {
         val bytes = java.util.concurrent.atomic.AtomicLong()
         @Volatile
         var peak = 0L
@@ -155,13 +425,13 @@ class VideoEncoder(
                 try {
                     task()
                 } catch (e: Exception) {
-                    Log.e(TAG, "Muxer write failed", e)
+                    Log.e(TAG, "Video write failed", e)
                 } finally {
                     bytes.addAndGet(-size.toLong())
                     space.release(size)
                 }
             }
-        }, "VideoMuxer").apply { start() }
+        }, "VideoWriter").apply { start() }
 
         fun post(size: Int = 0, task: () -> Unit) {
             val n = size.coerceAtMost(MAX_BACKLOG)
@@ -177,9 +447,24 @@ class VideoEncoder(
         }
     }
 
-    private companion object {
-        const val TAG = "VideoEncoder"
+    // endregion
+
+    companion object {
+        private const val TAG = "VideoEncoder"
         /** Encoded video that may wait for storage: tens of seconds at recording bitrates. */
         const val MAX_BACKLOG = 128 shl 20
+        /** Gray frames waiting for an encoder input buffer (about 1 s at 30 fps). */
+        const val MAX_PENDING = 30
+
+        /** Matches recorded presentation times (µs) back to exact ns timestamps. */
+        class PtsMap {
+            private val map = ConcurrentHashMap<Long, Long>()
+            /** The frame presented at [presentationNs] (its pts is that / 1000) has dataset time [datasetNs]. */
+            fun put(presentationNs: Long, datasetNs: Long) {
+                map[presentationNs / 1000] = datasetNs
+            }
+            fun take(ptsUs: Long): Long = map.remove(ptsUs) ?: (ptsUs * 1000)
+        }
+
     }
 }

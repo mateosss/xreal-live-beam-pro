@@ -73,9 +73,9 @@ enum class RecordView(val label: String) {
 }
 
 /** How recorded frames are encoded. */
-enum class RecordFormat(val label: String, val mime: String?) {
-    H264("H.264 video", "video/avc"),
-    HEVC("H.265 video", "video/hevc"),
+enum class RecordFormat(val label: String, val mime: String?, val videoFile: String? = null) {
+    H264("H.264 video in MKV (crash-safe, recommended for long recordings)", "video/avc", "data.mkv"),
+    HEVC("H.265 video in MP4 (smaller, but lost if the recording doesn't end normally)", "video/hevc", "data.mp4"),
     JPEG("JPEG images (one file per frame, may drop frames)", null),
     PNG("PNG grayscale images, as EuRoC (lossless, may drop frames)", null),
 }
@@ -163,6 +163,13 @@ data class StereoSettings(
     val oakImageFormat: com.xreal.stereoview.record.GrayImageFormat = com.xreal.stereoview.record.GrayImageFormat.PNG,
     /** JPEG quality of recorded grayscale images (glasses, OAK mono). */
     val grayJpegQuality: Int = 90,
+    /** Video recordings: rate control, keyframe spacing and H.264 profile (all devices). */
+    val videoBitrateMode: com.xreal.stereoview.record.BitrateMode = com.xreal.stereoview.record.BitrateMode.CBR,
+    val videoKeyframeIntervalS: Float = 1f,
+    val videoProfile: com.xreal.stereoview.record.H264Profile = com.xreal.stereoview.record.H264Profile.HIGH,
+    /** Bitrate per camera of H.264 recordings of the glasses and OAK mono cameras, Mbit/s. */
+    val glassesVideoBitrateMbps: Int = 4,
+    val oakVideoBitrateMbps: Int = 12,
     /** OAK: mono camera height (400, 720 or 800 rows; 1280 wide except 400p, 640). */
     val oakMonoHeight: Int = 800,
     /** OAK: frame rate of every camera. */
@@ -176,6 +183,10 @@ data class StereoSettings(
     /** OAK: allow USB3 (off forces USB2, for flaky cables or hubs). */
     val oakUsb3: Boolean = true,
 ) {
+    /** H.264/H.265 options for a stream at [bitrateMbps]. */
+    fun encoderOptions(bitrateMbps: Int) =
+        com.xreal.stereoview.record.EncoderOptions(bitrateMbps * 1_000_000, videoBitrateMode, videoKeyframeIntervalS, videoProfile)
+
     /** Eye alignment of the current camera source. */
     val alignPitchDeg: Float get() = when (cameraSource) {
         CameraSource.GLASSES -> glassesAlignPitchDeg
@@ -237,6 +248,11 @@ class SettingsRepository(private val context: Context) {
         val GLASSES_IMAGE_FORMAT = stringPreferencesKey("glasses_image_format")
         val OAK_IMAGE_FORMAT = stringPreferencesKey("oak_image_format")
         val GRAY_JPEG_QUALITY = intPreferencesKey("gray_jpeg_quality")
+        val VIDEO_BITRATE_MODE = stringPreferencesKey("video_bitrate_mode")
+        val VIDEO_KEYFRAME_INTERVAL = floatPreferencesKey("video_keyframe_interval_s")
+        val VIDEO_PROFILE = stringPreferencesKey("video_profile")
+        val GLASSES_VIDEO_BITRATE = intPreferencesKey("glasses_video_bitrate_mbps")
+        val OAK_VIDEO_BITRATE = intPreferencesKey("oak_video_bitrate_mbps")
         val TARGET_FPS = intPreferencesKey("target_fps")
         val MANUAL_EXPOSURE = booleanPreferencesKey("manual_exposure")
         val EXPOSURE_TIME = longPreferencesKey("exposure_time_ns")
@@ -309,6 +325,11 @@ class SettingsRepository(private val context: Context) {
             glassesImageFormat = enumOrDefault(p[Keys.GLASSES_IMAGE_FORMAT], defaults.glassesImageFormat),
             oakImageFormat = enumOrDefault(p[Keys.OAK_IMAGE_FORMAT], defaults.oakImageFormat),
             grayJpegQuality = p[Keys.GRAY_JPEG_QUALITY] ?: defaults.grayJpegQuality,
+            videoBitrateMode = enumOrDefault(p[Keys.VIDEO_BITRATE_MODE], defaults.videoBitrateMode),
+            videoKeyframeIntervalS = p[Keys.VIDEO_KEYFRAME_INTERVAL] ?: defaults.videoKeyframeIntervalS,
+            videoProfile = enumOrDefault(p[Keys.VIDEO_PROFILE], defaults.videoProfile),
+            glassesVideoBitrateMbps = p[Keys.GLASSES_VIDEO_BITRATE] ?: defaults.glassesVideoBitrateMbps,
+            oakVideoBitrateMbps = p[Keys.OAK_VIDEO_BITRATE] ?: defaults.oakVideoBitrateMbps,
             targetFps = p[Keys.TARGET_FPS] ?: defaults.targetFps,
             manualExposure = p[Keys.MANUAL_EXPOSURE] ?: defaults.manualExposure,
             exposureTimeNs = p[Keys.EXPOSURE_TIME] ?: defaults.exposureTimeNs,
@@ -360,6 +381,11 @@ class SettingsRepository(private val context: Context) {
             p[Keys.GLASSES_IMAGE_FORMAT] = s.glassesImageFormat.name
             p[Keys.OAK_IMAGE_FORMAT] = s.oakImageFormat.name
             p[Keys.GRAY_JPEG_QUALITY] = s.grayJpegQuality
+            p[Keys.VIDEO_BITRATE_MODE] = s.videoBitrateMode.name
+            p[Keys.VIDEO_KEYFRAME_INTERVAL] = s.videoKeyframeIntervalS
+            p[Keys.VIDEO_PROFILE] = s.videoProfile.name
+            p[Keys.GLASSES_VIDEO_BITRATE] = s.glassesVideoBitrateMbps
+            p[Keys.OAK_VIDEO_BITRATE] = s.oakVideoBitrateMbps
             p[Keys.TARGET_FPS] = s.targetFps
             p[Keys.MANUAL_EXPOSURE] = s.manualExposure
             p[Keys.EXPOSURE_TIME] = s.exposureTimeNs
