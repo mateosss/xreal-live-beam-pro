@@ -1,0 +1,360 @@
+// JNI glue for Luxonis OAK cameras (com.xreal.stereoview.oak.OakNative).
+//
+// One pipeline: the left and right mono cameras as raw GRAY8, optionally the color camera
+// encoded to MJPEG on the device, and the IMU (raw accelerometer + gyroscope). Kotlin threads
+// poll each output with a timeout. Timestamps are on the device's monotonic clock (the same
+// for cameras and IMU); the host-synced timestamp (CLOCK_MONOTONIC on Android) is passed too.
+
+#include <jni.h>
+#include <android/log.h>
+
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <memory>
+#include <mutex>
+#include <string>
+
+#include "depthai/depthai.hpp"
+#include "depthai/build/version.hpp"
+
+#define TAG "OakJni"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, TAG, __VA_ARGS__)
+
+namespace {
+
+JavaVM* gVm = nullptr;
+
+struct Session {
+    std::unique_ptr<dai::Device> device;
+    std::shared_ptr<dai::DataOutputQueue> left, right, rgb, imu;
+    std::shared_ptr<dai::DataInputQueue> monoControl, rgbControl;
+    int monoWidth = 0, monoHeight = 0, rgbWidth = 0, rgbHeight = 0;
+    std::string info;
+};
+
+int64_t ns(std::chrono::steady_clock::time_point t) {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(t.time_since_epoch()).count();
+}
+
+void throwJava(JNIEnv* env, const std::string& message) {
+    jclass c = env->FindClass("java/lang/IllegalStateException");
+    env->ThrowNew(c, message.c_str());
+}
+
+std::string str(JNIEnv* env, jstring s) {
+    const char* c = env->GetStringUTFChars(s, nullptr);
+    std::string out(c);
+    env->ReleaseStringUTFChars(s, c);
+    return out;
+}
+
+dai::MonoCameraProperties::SensorResolution monoResolution(int height) {
+    switch(height) {
+        case 400: return dai::MonoCameraProperties::SensorResolution::THE_400_P;
+        case 480: return dai::MonoCameraProperties::SensorResolution::THE_480_P;
+        case 720: return dai::MonoCameraProperties::SensorResolution::THE_720_P;
+        default: return dai::MonoCameraProperties::SensorResolution::THE_800_P;
+    }
+}
+
+const char* socketName(dai::CameraBoardSocket s) {
+    switch(s) {
+        case dai::CameraBoardSocket::CAM_A: return "CAM_A";
+        case dai::CameraBoardSocket::CAM_B: return "CAM_B";
+        case dai::CameraBoardSocket::CAM_C: return "CAM_C";
+        case dai::CameraBoardSocket::CAM_D: return "CAM_D";
+        default: return "OTHER";
+    }
+}
+
+/** Intrinsics, distortion and pose of one camera, at the streamed size; translations in meters. */
+nlohmann::json cameraCalibration(const dai::CalibrationHandler& cal, dai::CameraBoardSocket socket, int w, int h) {
+    nlohmann::json j;
+    j["socket"] = socketName(socket);
+    j["width"] = w;
+    j["height"] = h;
+    try {
+        j["intrinsics"] = cal.getCameraIntrinsics(socket, w, h);
+        j["distortion"] = cal.getDistortionCoefficients(socket);
+        auto model = cal.getDistortionModel(socket);
+        j["model"] = model == dai::CameraModel::Fisheye ? "fisheye" : model == dai::CameraModel::Perspective ? "perspective" : "other";
+        // Camera → IMU: x_imu = R x_cam + t (depthai uses centimeters).
+        auto m = cal.getCameraToImuExtrinsics(socket, false);
+        for(int r = 0; r < 3; r++) m[r][3] /= 100.0f;
+        j["imu_from_camera"] = m;
+        auto spec = cal.getCameraToImuExtrinsics(socket, true);
+        for(int r = 0; r < 3; r++) spec[r][3] /= 100.0f;
+        j["imu_from_camera_spec"] = spec;
+    } catch(const std::exception& e) {
+        j["error"] = e.what();
+    }
+    return j;
+}
+
+}  // namespace
+
+extern "C" {
+
+JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
+    gVm = vm;
+    return JNI_VERSION_1_6;
+}
+
+/** Initializes depthai with the JavaVM (its libusb opens devices through UsbManager). */
+JNIEXPORT jboolean JNICALL Java_com_xreal_stereoview_oak_OakNative_initialize(JNIEnv*, jclass) {
+    try {
+        return dai::initialize(gVm) ? JNI_TRUE : JNI_FALSE;
+    } catch(const std::exception& e) {
+        LOGW("initialize: %s", e.what());
+        return JNI_FALSE;
+    }
+}
+
+/**
+ * Builds the pipeline and boots the first OAK found. Blocking (seconds: firmware upload,
+ * re-enumeration). config: mono height, fps, rgb (0/1), rgb height, jpeg quality, imu rate
+ * (0 = off), auto exposure (0/1), exposure µs, iso, exposure compensation, usb3 (0/1).
+ * Returns a handle; throws IllegalStateException on failure.
+ */
+JNIEXPORT jlong JNICALL Java_com_xreal_stereoview_oak_OakNative_start(JNIEnv* env, jclass, jintArray configArray) {
+    jint c[11] = {};
+    env->GetIntArrayRegion(configArray, 0, std::min<jsize>(11, env->GetArrayLength(configArray)), c);
+    const int monoHeight = c[0], fps = c[1], withRgb = c[2], rgbHeight = c[3], quality = c[4], imuRate = c[5];
+    const bool autoExposure = c[6] != 0;
+    const int exposureUs = c[7], iso = c[8], compensation = c[9], usb3 = c[10];
+    try {
+        auto s = std::make_unique<Session>();
+        dai::Pipeline p;
+
+        auto monoControl = p.create<dai::node::XLinkIn>();
+        monoControl->setStreamName("monoControl");
+        for(auto [socket, name] : {std::pair{dai::CameraBoardSocket::CAM_B, "left"}, std::pair{dai::CameraBoardSocket::CAM_C, "right"}}) {
+            auto mono = p.create<dai::node::MonoCamera>();
+            mono->setBoardSocket(socket);
+            mono->setResolution(monoResolution(monoHeight));
+            mono->setFps(static_cast<float>(fps));
+            if(!autoExposure) mono->initialControl.setManualExposure(exposureUs, iso);
+            else if(compensation != 0) mono->initialControl.setAutoExposureCompensation(compensation);
+            monoControl->out.link(mono->inputControl);
+            auto out = p.create<dai::node::XLinkOut>();
+            out->setStreamName(name);
+            mono->out.link(out->input);
+            auto [w, h] = mono->getResolutionSize();
+            s->monoWidth = w;
+            s->monoHeight = h;
+        }
+        if(withRgb) {
+            auto cam = p.create<dai::node::ColorCamera>();
+            cam->setBoardSocket(dai::CameraBoardSocket::CAM_A);
+            cam->setResolution(rgbHeight == 720 ? dai::ColorCameraProperties::SensorResolution::THE_720_P
+                                                : dai::ColorCameraProperties::SensorResolution::THE_800_P);
+            cam->setFps(static_cast<float>(fps));
+            s->rgbWidth = 1280;
+            s->rgbHeight = rgbHeight == 720 ? 720 : 800;
+            cam->setVideoSize(s->rgbWidth, s->rgbHeight);
+            if(!autoExposure) cam->initialControl.setManualExposure(exposureUs, iso);
+            else if(compensation != 0) cam->initialControl.setAutoExposureCompensation(compensation);
+            auto control = p.create<dai::node::XLinkIn>();
+            control->setStreamName("rgbControl");
+            control->out.link(cam->inputControl);
+            auto encoder = p.create<dai::node::VideoEncoder>();
+            encoder->setDefaultProfilePreset(static_cast<float>(fps), dai::VideoEncoderProperties::Profile::MJPEG);
+            encoder->setQuality(quality);
+            cam->video.link(encoder->input);
+            auto out = p.create<dai::node::XLinkOut>();
+            out->setStreamName("rgb");
+            encoder->bitstream.link(out->input);
+        }
+        if(imuRate > 0) {
+            auto imu = p.create<dai::node::IMU>();
+            imu->enableIMUSensor({dai::IMUSensor::ACCELEROMETER_RAW, dai::IMUSensor::GYROSCOPE_RAW}, imuRate);
+            imu->setBatchReportThreshold(1);
+            imu->setMaxBatchReports(20);
+            auto out = p.create<dai::node::XLinkOut>();
+            out->setStreamName("imu");
+            imu->out.link(out->input);
+        }
+
+        LOGI("Booting OAK: mono %dp, %d fps, rgb %d, imu %d Hz", monoHeight, fps, withRgb, imuRate);
+        s->device = std::make_unique<dai::Device>(p, usb3 ? dai::UsbSpeed::SUPER : dai::UsbSpeed::HIGH);
+        auto& d = *s->device;
+        // Non-blocking queues: if the app falls behind, the oldest frames are dropped on the
+        // host side, never stalling the device (the drops show as sequence gaps).
+        s->left = d.getOutputQueue("left", 8, false);
+        s->right = d.getOutputQueue("right", 8, false);
+        if(withRgb) s->rgb = d.getOutputQueue("rgb", 8, false);
+        if(imuRate > 0) s->imu = d.getOutputQueue("imu", 50, false);
+        s->monoControl = d.getInputQueue("monoControl");
+        if(withRgb) s->rgbControl = d.getInputQueue("rgbControl");
+
+        nlohmann::json info;
+        info["mxid"] = d.getMxId();
+        try { info["device_name"] = d.getDeviceName(); } catch(...) {}
+        try { info["product_name"] = d.getProductName(); } catch(...) {}
+        auto speed = d.getUsbSpeed();
+        info["usb_speed"] = speed == dai::UsbSpeed::SUPER || speed == dai::UsbSpeed::SUPER_PLUS ? "USB3" : speed == dai::UsbSpeed::HIGH ? "USB2" : "other";
+        try { info["imu_type"] = d.getConnectedIMU(); } catch(...) {}
+        nlohmann::json cams = nlohmann::json::array();
+        for(auto socket : d.getConnectedCameras()) cams.push_back(socketName(socket));
+        info["connected_cameras"] = cams;
+        info["mono_size"] = {s->monoWidth, s->monoHeight};
+        if(withRgb) info["rgb_size"] = {s->rgbWidth, s->rgbHeight};
+        info["depthai_version"] = dai::build::VERSION;
+        try {
+            auto cal = d.readCalibration();
+            nlohmann::json cj;
+            cj["left"] = cameraCalibration(cal, dai::CameraBoardSocket::CAM_B, s->monoWidth, s->monoHeight);
+            cj["right"] = cameraCalibration(cal, dai::CameraBoardSocket::CAM_C, s->monoWidth, s->monoHeight);
+            if(withRgb) cj["rgb"] = cameraCalibration(cal, dai::CameraBoardSocket::CAM_A, s->rgbWidth, s->rgbHeight);
+            cj["eeprom"] = cal.eepromToJson();
+            info["calibration"] = cj;
+        } catch(const std::exception& e) {
+            info["calibration_error"] = e.what();
+        }
+        s->info = info.dump();
+        return reinterpret_cast<jlong>(s.release());
+    } catch(const std::exception& e) {
+        LOGW("start failed: %s", e.what());
+        throwJava(env, e.what());
+        return 0;
+    }
+}
+
+JNIEXPORT jstring JNICALL Java_com_xreal_stereoview_oak_OakNative_info(JNIEnv* env, jclass, jlong handle) {
+    auto* s = reinterpret_cast<Session*>(handle);
+    return env->NewStringUTF(s ? s->info.c_str() : "{}");
+}
+
+/**
+ * Next mono frame of camera [which] (0 left, 1 right) into [out] (width × height bytes).
+ * meta: device timestamp mid-exposure, host timestamp, sequence, width, height, exposure µs,
+ * iso, device timestamp at start of exposure. Returns bytes copied, 0 on timeout, −1 if closed.
+ */
+JNIEXPORT jint JNICALL Java_com_xreal_stereoview_oak_OakNative_pollMono(
+    JNIEnv* env, jclass, jlong handle, jint which, jbyteArray out, jlongArray meta, jint timeoutMs) {
+    auto* s = reinterpret_cast<Session*>(handle);
+    if(!s) return -1;
+    auto& q = which == 0 ? s->left : s->right;
+    try {
+        bool timedOut = false;
+        auto frame = q->get<dai::ImgFrame>(std::chrono::milliseconds(timeoutMs), timedOut);
+        if(timedOut || !frame) return 0;
+        auto& data = frame->getData();
+        jsize n = std::min<jsize>(static_cast<jsize>(data.size()), env->GetArrayLength(out));
+        env->SetByteArrayRegion(out, 0, n, reinterpret_cast<const jbyte*>(data.data()));
+        jlong m[8] = {
+            ns(frame->getTimestampDevice(dai::CameraExposureOffset::MIDDLE)),
+            ns(frame->getTimestamp(dai::CameraExposureOffset::MIDDLE)),
+            frame->getSequenceNum(),
+            static_cast<jlong>(frame->getWidth()),
+            static_cast<jlong>(frame->getHeight()),
+            static_cast<jlong>(std::chrono::duration_cast<std::chrono::microseconds>(frame->getExposureTime()).count()),
+            frame->getSensitivity(),
+            ns(frame->getTimestampDevice(dai::CameraExposureOffset::START)),
+        };
+        env->SetLongArrayRegion(meta, 0, 8, m);
+        return n;
+    } catch(const std::exception& e) {
+        LOGW("pollMono: %s", e.what());
+        return -1;
+    }
+}
+
+/** Next JPEG from the color camera; meta as [pollMono]. Returns its size (−size − 1 if [out] is too small). */
+JNIEXPORT jint JNICALL Java_com_xreal_stereoview_oak_OakNative_pollRgb(
+    JNIEnv* env, jclass, jlong handle, jbyteArray out, jlongArray meta, jint timeoutMs) {
+    auto* s = reinterpret_cast<Session*>(handle);
+    if(!s || !s->rgb) return -1;
+    try {
+        bool timedOut = false;
+        auto frame = s->rgb->get<dai::ImgFrame>(std::chrono::milliseconds(timeoutMs), timedOut);
+        if(timedOut || !frame) return 0;
+        auto& data = frame->getData();
+        jsize n = static_cast<jsize>(data.size());
+        if(n > env->GetArrayLength(out)) return -n - 1;
+        env->SetByteArrayRegion(out, 0, n, reinterpret_cast<const jbyte*>(data.data()));
+        jlong m[8] = {
+            ns(frame->getTimestampDevice(dai::CameraExposureOffset::MIDDLE)),
+            ns(frame->getTimestamp(dai::CameraExposureOffset::MIDDLE)),
+            frame->getSequenceNum(),
+            s->rgbWidth,
+            s->rgbHeight,
+            static_cast<jlong>(std::chrono::duration_cast<std::chrono::microseconds>(frame->getExposureTime()).count()),
+            frame->getSensitivity(),
+            ns(frame->getTimestampDevice(dai::CameraExposureOffset::START)),
+        };
+        env->SetLongArrayRegion(meta, 0, 8, m);
+        return n;
+    } catch(const std::exception& e) {
+        LOGW("pollRgb: %s", e.what());
+        return -1;
+    }
+}
+
+/**
+ * Next IMU packets into [out], 10 doubles each: accel device ns, ax, ay, az (m/s²),
+ * gyro device ns, gx, gy, gz (rad/s), accel host ns, gyro host ns. Returns the packet count.
+ */
+JNIEXPORT jint JNICALL Java_com_xreal_stereoview_oak_OakNative_pollImu(
+    JNIEnv* env, jclass, jlong handle, jdoubleArray out, jint timeoutMs) {
+    auto* s = reinterpret_cast<Session*>(handle);
+    if(!s || !s->imu) return -1;
+    try {
+        bool timedOut = false;
+        auto data = s->imu->get<dai::IMUData>(std::chrono::milliseconds(timeoutMs), timedOut);
+        if(timedOut || !data) return 0;
+        jsize capacity = env->GetArrayLength(out) / 10;
+        std::vector<jdouble> v;
+        int count = 0;
+        for(auto& p : data->packets) {
+            if(count >= capacity) break;
+            auto& a = p.acceleroMeter;
+            auto& g = p.gyroscope;
+            v.insert(v.end(), {static_cast<double>(ns(a.getTimestampDevice())), a.x, a.y, a.z,
+                               static_cast<double>(ns(g.getTimestampDevice())), g.x, g.y, g.z,
+                               static_cast<double>(ns(a.getTimestamp())), static_cast<double>(ns(g.getTimestamp()))});
+            count++;
+        }
+        env->SetDoubleArrayRegion(out, 0, static_cast<jsize>(v.size()), v.data());
+        return count;
+    } catch(const std::exception& e) {
+        LOGW("pollImu: %s", e.what());
+        return -1;
+    }
+}
+
+/** Auto exposure (with compensation −9..9) or manual exposure time and ISO, for all cameras. */
+JNIEXPORT void JNICALL Java_com_xreal_stereoview_oak_OakNative_setExposure(
+    JNIEnv*, jclass, jlong handle, jboolean autoExposure, jint exposureUs, jint iso, jint compensation) {
+    auto* s = reinterpret_cast<Session*>(handle);
+    if(!s) return;
+    try {
+        dai::CameraControl c;
+        if(autoExposure) {
+            c.setAutoExposureEnable();
+            c.setAutoExposureCompensation(compensation);
+        } else {
+            c.setManualExposure(static_cast<uint32_t>(exposureUs), static_cast<uint32_t>(iso));
+        }
+        if(s->monoControl) s->monoControl->send(std::make_shared<dai::CameraControl>(c));
+        if(s->rgbControl) s->rgbControl->send(std::make_shared<dai::CameraControl>(c));
+    } catch(const std::exception& e) {
+        LOGW("setExposure: %s", e.what());
+    }
+}
+
+/** Closes the device (it reboots into its bootloader) and frees the session. */
+JNIEXPORT void JNICALL Java_com_xreal_stereoview_oak_OakNative_stop(JNIEnv*, jclass, jlong handle) {
+    auto* s = reinterpret_cast<Session*>(handle);
+    if(!s) return;
+    try {
+        if(s->device) s->device->close();
+    } catch(const std::exception& e) {
+        LOGW("stop: %s", e.what());
+    }
+    delete s;
+}
+
+}  // extern "C"

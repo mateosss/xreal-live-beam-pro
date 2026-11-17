@@ -172,6 +172,15 @@ class HomeActivity : AppCompatActivity() {
                 else -> "Connect Air 2 Ultra glasses over USB" to false
             }
         }
+        CameraSource.OAK -> {
+            val reason = com.xreal.stereoview.oak.OakNative.unavailableReason
+            val found = getSystemService(UsbManager::class.java).deviceList.values.any { it.vendorId == com.xreal.stereoview.oak.OakDevice.VENDOR_ID }
+            when {
+                reason != null -> reason to false
+                found -> "OAK camera connected" to true
+                else -> "Connect an OAK camera over USB (USB3 recommended)" to false
+            }
+        }
     }
 
     // endregion

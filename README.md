@@ -119,7 +119,7 @@ how many frame pairs exceeded the threshold.
 ## Start screen: devices and profiles
 
 The app opens on **Devices**: *Beam Pro / Phone* (the rear stereo cameras) and *Glasses*
-(the Air 2 Ultra's tracking cameras over USB), each with whether it is ready (camera pairs
+(the Air 2 Ultra's tracking cameras over USB) and *DepthAI camera* (a Luxonis OAK over USB), each with whether it is ready (camera pairs
 found, glasses connected). Tapping a device lists **its** profiles: *Start* (or tapping the
 profile) opens the stereo view with it, *Edit* opens the profile's settings (only those that
 apply to that device) with Save/Cancel, ⋮ renames, duplicates or deletes it, and *New profile*
@@ -135,11 +135,12 @@ settings (exposure, frame rate, resolution, focus, stabilization, scale, zoom, c
 and every recording and IMU option). Device setup is kept separately and survives profile
 switches: camera pair, image rotation, L/R swap, eye alignment, glasses FOV, SBS layout,
 lens calibration and output. Eye alignment is stored per device (the Beam Pro and the
-glasses cameras need different corrections). Four profiles are built in:
+glasses cameras need different corrections). Six profiles are built in:
 
 | Profile | For |
 |---|---|
 | **Passthrough** | Live 3D viewing: 1:1 scale, medium stabilization, autofocus, up to 1080p |
+| **OAK passthrough** / **OAK EuRoC dataset** | Luxonis OAK camera: live mono pair, or SLAM recordings with mono pair, color JPEGs and the OAK IMU (see *OAK cameras*) |
 | **Glasses passthrough** | Live view through the glasses' own cameras: rectified, 1:1 scale, glasses IMU left to the system |
 | **Glasses EuRoC dataset** | SLAM recordings from the Air 2 Ultra's own tracking cameras and IMU, rectified preview, no convergence shift (see below) |
 | **EuRoC dataset** | SLAM recordings: raw images, focus locked at infinity, no stabilization, ≤720p at 30 fps, 60 Mbit/s H.264, IMU through the direct channel (fastest listener where unsupported) with calibrated and raw accelerometer/gyroscope, raw magnetometer and game rotation vector |
@@ -307,6 +308,38 @@ the camera interfaces (and, for the IMU, the sensor HID interface) with force af
 once per session. They stay detached from the system until the glasses are unplugged and
 replugged: XREAL features using the glasses' cameras, and with the IMU its head tracking,
 stop working meanwhile. The display is unaffected.
+
+## OAK cameras (Luxonis DepthAI)
+
+Pick **DepthAI camera** on the start screen to stream and record a Luxonis OAK (written for
+the OAK-D Pro W) over USB through Luxonis' own library, depthai-core 2.34 built for Android
+arm64 (see `third_party/depthai-android/` and `tools/build_depthai_android.sh`).
+
+- **Preview:** the left and right global-shutter mono cameras in the two eyes, as they come
+  (not rectified yet), with scale, convergence and depth like the glasses. Auto/Manual
+  exposure in the panel controls all OAK cameras (compensation −9…9, or shutter and ISO 100–1600).
+- **Profile settings:** mono resolution (1280×800, 1280×720, 640×400), frame rate (15–60 fps,
+  all cameras synchronized), color camera (1280×800 or 1280×720 as JPEG encoded on the
+  camera, or off), OAK IMU rate (100/200/250 Hz or off) and USB speed. Built-in profiles:
+  *OAK passthrough* (720p mono, no color, no IMU) and *OAK EuRoC dataset* (800p mono, color,
+  IMU 200 Hz).
+- **Recording** (EuRoC layout, all on the OAK's clock, mid-exposure):
+  `mav0/cam0` and `cam1` left/right mono PNGs, `mav0/cam2` color JPEGs written exactly as the
+  camera encoded them, `mav0/imu0` from the OAK's raw accelerometer and gyroscope (gyroscope
+  timestamps, accelerometer interpolated), `sensor.yaml` files from the camera's factory
+  calibration (body frame = OAK IMU), `oak_calibration.json` with the full calibration,
+  `frames.csv` per camera (sequence, host time, arrival time, exposure, ISO), the raw IMU streams
+  in `imu/oak_*.csv` and the phone's IMU as an extra. Perspective calibrations are written as
+  radial-tangential with k1, k2, p1, p2; depthai's other coefficients (k3–k6, …) are listed in the
+  yaml's comments and `metadata.json`, so recalibrate (e.g. Kalibr) for wide lenses.
+- **USB access:** Android asks to allow the camera twice per connection: before its firmware
+  is uploaded, and again when it re-appears as a booted device (the app waits up to 60 s). To
+  skip both, tick *Always open XREAL Stereo* when Android offers the app for the camera.
+- **Bandwidth:** two raw 800p mono streams at 30 fps need USB3 (about 60 MB/s); on USB2 use
+  640×400 or a lower frame rate. The HUD shows the USB speed and any lost mono frames.
+
+Untested with a real OAK so far: the library loads and initializes on arm64, but booting,
+streaming and recording have not run against a camera yet.
 
 ## Glasses USB probe
 

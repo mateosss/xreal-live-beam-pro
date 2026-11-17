@@ -15,6 +15,15 @@ data class Profile(val name: String, val settings: StereoSettings) {
     /** One line describing the profile, for lists. */
     val summary: String
         get() = with(settings) {
+            if (cameraSource == CameraSource.OAK) {
+                return@with listOf(
+                    "mono ${oakMonoHeight}p",
+                    "$oakFps fps",
+                    if (oakRgbHeight > 0) "color ${oakRgbHeight}p JPEG $oakJpegQuality" else "no color",
+                    if (oakImuRateHz > 0) "OAK IMU $oakImuRateHz Hz" else "no OAK IMU",
+                    if (manualExposure) "manual exposure ${exposureTimeNs / 1000} µs ISO $iso" else "auto exposure",
+                ).joinToString(" · ")
+            }
             if (cameraSource == CameraSource.GLASSES) {
                 return@with listOf(
                     "glasses cameras 30 fps per eye",
@@ -60,6 +69,34 @@ data class Profile(val name: String, val settings: StereoSettings) {
                         ),
                     ),
                     Profile(
+                        OAK_PASSTHROUGH,
+                        base.copy(
+                            cameraSource = CameraSource.OAK,
+                            convergencePx = 0f,
+                            scaleMode = ScaleMode.FIT,
+                            oakMonoHeight = 720,
+                            oakRgbHeight = 0,
+                            oakImuRateHz = 0,
+                        ),
+                    ),
+                    Profile(
+                        OAK_EUROC,
+                        base.copy(
+                            cameraSource = CameraSource.OAK,
+                            convergencePx = 0f,
+                            scaleMode = ScaleMode.FIT,
+                            stabilization = Stabilization.OFF,
+                            oakMonoHeight = 800,
+                            oakFps = 30,
+                            oakRgbHeight = 800,
+                            oakJpegQuality = 95,
+                            oakImuRateHz = 200,
+                            imuRate = ImuRate.DIRECT_VERY_FAST,
+                            imuStreams = listOf("ACCELEROMETER", "GYROSCOPE", "ACCELEROMETER_UNCALIBRATED", "GYROSCOPE_UNCALIBRATED")
+                                .joinToString(","),
+                        ),
+                    ),
+                    Profile(
                         GLASSES_PASSTHROUGH,
                         base.copy(
                             cameraSource = CameraSource.GLASSES,
@@ -88,6 +125,8 @@ data class Profile(val name: String, val settings: StereoSettings) {
         const val EUROC = "EuRoC dataset"
         const val GLASSES_EUROC = "Glasses EuRoC dataset"
         const val GLASSES_PASSTHROUGH = "Glasses passthrough"
+        const val OAK_PASSTHROUGH = "OAK passthrough"
+        const val OAK_EUROC = "OAK EuRoC dataset"
 
         fun toJson(profiles: List<Profile>): String = JSONArray(profiles.map { p ->
             JSONObject().put("name", p.name).put("settings", JSONObject().apply {
@@ -115,6 +154,12 @@ data class Profile(val name: String, val settings: StereoSettings) {
                 put("glassesManualExposure", s.glassesManualExposure)
                 put("glassesExposure100us", s.glassesExposure100us)
                 put("glassesGain", s.glassesGain)
+                put("oakMonoHeight", s.oakMonoHeight)
+                put("oakFps", s.oakFps)
+                put("oakRgbHeight", s.oakRgbHeight)
+                put("oakJpegQuality", s.oakJpegQuality)
+                put("oakImuRateHz", s.oakImuRateHz)
+                put("oakUsb3", s.oakUsb3)
             })
         }).toString()
 
@@ -151,6 +196,12 @@ data class Profile(val name: String, val settings: StereoSettings) {
                         glassesManualExposure = j.optBoolean("glassesManualExposure", d.glassesManualExposure),
                         glassesExposure100us = j.optInt("glassesExposure100us", d.glassesExposure100us),
                         glassesGain = j.optInt("glassesGain", d.glassesGain),
+                        oakMonoHeight = j.optInt("oakMonoHeight", d.oakMonoHeight),
+                        oakFps = j.optInt("oakFps", d.oakFps),
+                        oakRgbHeight = j.optInt("oakRgbHeight", d.oakRgbHeight),
+                        oakJpegQuality = j.optInt("oakJpegQuality", d.oakJpegQuality),
+                        oakImuRateHz = j.optInt("oakImuRateHz", d.oakImuRateHz),
+                        oakUsb3 = j.optBoolean("oakUsb3", d.oakUsb3),
                     ),
                 )
             }
@@ -186,4 +237,10 @@ fun StereoSettings.withProfile(profile: StereoSettings) = copy(
     glassesManualExposure = profile.glassesManualExposure,
     glassesExposure100us = profile.glassesExposure100us,
     glassesGain = profile.glassesGain,
+    oakMonoHeight = profile.oakMonoHeight,
+    oakFps = profile.oakFps,
+    oakRgbHeight = profile.oakRgbHeight,
+    oakJpegQuality = profile.oakJpegQuality,
+    oakImuRateHz = profile.oakImuRateHz,
+    oakUsb3 = profile.oakUsb3,
 )

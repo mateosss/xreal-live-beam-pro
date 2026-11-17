@@ -11,8 +11,24 @@ android {
         applicationId = "com.xreal.stereoview"
         minSdk = 31
         targetSdk = 34
-        versionCode = 17
-        versionName = "0.10.0"
+        versionCode = 18
+        versionName = "0.11.0"
+
+        // OAK (DepthAI) support: JNI glue over the prebuilt depthai-core, arm64 only.
+        externalNativeBuild {
+            cmake {
+                abiFilters("arm64-v8a")
+                arguments("-DANDROID_STL=c++_shared")
+            }
+        }
+    }
+
+    ndkVersion = "27.2.12479018"
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     // Release builds are signed with the key named by these variables (set by CI from repository

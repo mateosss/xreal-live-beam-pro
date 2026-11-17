@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Luxonis OAK cameras (Intel Movidius vendor id 0x03E7), unbooted and booted. -->
+<resources>
+    <usb-device vendor-id="999" />
+</resources>

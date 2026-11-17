@@ -162,6 +162,7 @@ class SettingsSheet(
         when (device) {
             CameraSource.GLASSES -> glassesCaptureRows(content, s, recording)
             CameraSource.BEAM_PRO -> beamProCaptureRows(content, s, recording)
+            CameraSource.OAK -> oakCaptureRows(content, s, recording)
         }
         subsection(content, "Recording")
         recordingRows(content, s, recording)
@@ -185,7 +186,14 @@ class SettingsSheet(
 
     private fun recordingRows(content: LinearLayout, s: StereoSettings, recording: Boolean) {
         val glassesSource = s.cameraSource == CameraSource.GLASSES
-        if (glassesSource) {
+        if (s.cameraSource == CameraSource.OAK) {
+            row(
+                content, "Images",
+                "Mono pair as raw grayscale PNG (cam0, cam1)" +
+                    (if (s.oakRgbHeight > 0) ", color as the camera's JPEGs (cam2)" else "") +
+                    "; OAK IMU as imu0; EuRoC layout on the OAK's clock",
+            ) {}
+        } else if (glassesSource) {
             row(
                 content, "Images",
                 "Raw 480×640 grayscale PNG (lossless) per camera at 30 fps, EuRoC layout, timestamps on the glasses' clock",
@@ -211,7 +219,7 @@ class SettingsSheet(
             }
         }
         // With other devices the phone's IMU is an extra: it doesn't move with the cameras.
-        val imuPrefix = if (glassesSource) "Phone IMU (extra)" else "IMU"
+        val imuPrefix = if (s.cameraSource != CameraSource.BEAM_PRO) "Phone IMU (extra)" else "IMU"
         val sensors = context.getSystemService(SensorManager::class.java)
         row(content, "$imuPrefix rate", "${s.imuRate.label}\n${imuRateNote(sensors, s.imuRate)}", locked = recording) {
             val labels = ImuRate.entries.map { "${it.label}\n${imuRateNote(sensors, it)}" }
@@ -290,6 +298,39 @@ class SettingsSheet(
                 target.update { it.copy(syncThresholdMs = values[i]) }
             }
         }
+    }
+
+    private fun oakCaptureRows(content: LinearLayout, s: StereoSettings, recording: Boolean) {
+        row(content, "Mono cameras", "${if (s.oakMonoHeight == 400) "640×400" else "1280×${s.oakMonoHeight}"} grayscale, global shutter", locked = recording) {
+            val values = listOf(800, 720, 400)
+            val labels = listOf("1280×800 (full sensor)", "1280×720", "640×400 (binned, least bandwidth)")
+            choose("Mono resolution", labels, values.indexOf(s.oakMonoHeight)) { i -> target.update { it.copy(oakMonoHeight = values[i]) } }
+        }
+        row(content, "Frame rate", "${s.oakFps} fps (all cameras, synchronized)", locked = recording) {
+            val values = listOf(15, 20, 30, 45, 60)
+            choose("Frame rate (USB2 limits high rates at full resolution)", values.map { "$it fps" }, values.indexOf(s.oakFps)) { i ->
+                target.update { it.copy(oakFps = values[i]) }
+            }
+        }
+        row(content, "Color camera", if (s.oakRgbHeight > 0) "1280×${s.oakRgbHeight}, JPEG quality ${s.oakJpegQuality} (encoded on the camera)" else "Off", locked = recording) {
+            val options = listOf(800 to 95, 800 to 85, 720 to 95, 0 to 95)
+            val labels = listOf("1280×800, JPEG 95", "1280×800, JPEG 85 (smaller)", "1280×720, JPEG 95", "Off (mono pair only)")
+            choose("Color camera", labels, options.indexOfFirst { it.first == s.oakRgbHeight && (it.first == 0 || it.second == s.oakJpegQuality) }) { i ->
+                target.update { it.copy(oakRgbHeight = options[i].first, oakJpegQuality = options[i].second) }
+            }
+        }
+        row(content, "OAK IMU", if (s.oakImuRateHz > 0) "${s.oakImuRateHz} Hz raw accelerometer + gyroscope" else "Off", locked = recording) {
+            val values = listOf(100, 200, 250, 0)
+            choose("OAK IMU rate", values.map { if (it == 0) "Off" else "$it Hz" }, values.indexOf(s.oakImuRateHz)) { i ->
+                target.update { it.copy(oakImuRateHz = values[i]) }
+            }
+        }
+        row(content, "USB speed", if (s.oakUsb3) "USB3 when available" else "USB2 only", locked = recording) {
+            choose("USB speed", listOf("USB3 when available", "USB2 only (for unreliable cables or hubs)"), if (s.oakUsb3) 0 else 1) { i ->
+                target.update { it.copy(oakUsb3 = i == 0) }
+            }
+        }
+        row(content, "Exposure", "Auto or manual (shutter and ISO) with the panel's controls") {}
     }
 
     private fun glassesCaptureRows(content: LinearLayout, s: StereoSettings, recording: Boolean) {

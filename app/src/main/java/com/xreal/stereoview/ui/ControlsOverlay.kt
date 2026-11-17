@@ -211,6 +211,17 @@ class ControlsOverlay(
         render(viewModel.settings.value)
     }
 
+    /** OAK cameras: auto exposure with compensation −9..9, or manual shutter and ISO 100–1600. */
+    fun setOakMode(on: Boolean) {
+        if (!on) return
+        rig = null
+        exposureRange = Range(-9, 9)
+        binding.brightnessSlider.valueFrom = -9f
+        binding.brightnessSlider.valueTo = 9f
+        binding.brightnessSlider.isEnabled = true
+        render(viewModel.settings.value)
+    }
+
     /** Adapts the exposure controls and frame-rate options to the streaming rig. */
     fun setRig(rig: StereoRig) {
         this.rig = rig
@@ -270,14 +281,16 @@ class ControlsOverlay(
     private fun shutterRange(s: StereoSettings): Pair<Long, Long> {
         val range = rig?.exposureTimeRange
         val min = maxOf(range?.lower ?: 50_000L, 50_000L)
-        val max = minOf(range?.upper ?: 33_333_333L, 1_000_000_000L / s.targetFps)
+        val fps = if (s.cameraSource == CameraSource.OAK) s.oakFps else s.targetFps
+        val max = minOf(range?.upper ?: 33_333_333L, 1_000_000_000L / fps)
         return min to maxOf(max, min + 1)
     }
 
     private fun isoRange(): Pair<Int, Int> {
         val range = rig?.sensitivityRange
         val min = range?.lower ?: 100
-        return min to maxOf(range?.upper ?: 3200, min + 1)
+        val max = if (viewModel.settings.value.cameraSource == CameraSource.OAK) 1600 else range?.upper ?: 3200
+        return min to maxOf(max, min + 1)
     }
 
     /** Position 0..1 on a log scale between [min] and [max], and back. */

@@ -86,6 +86,15 @@ class StereoRenderer(
             requestRender()
         }
 
+    /** With an OAK camera as source: the newest mono pair to show. */
+    @Volatile
+    var oakFrame: com.xreal.stereoview.oak.OakDevice.StereoFrame? = null
+        set(value) {
+            field = value
+            requestRender()
+        }
+    private var shownOakFrame: com.xreal.stereoview.oak.OakDevice.StereoFrame? = null
+
     /** Description of the current rectification, for the Info dialog. */
     @Volatile
     var geometrySummary: String = "not streaming"
@@ -195,8 +204,8 @@ class StereoRenderer(
 
     override fun onDrawFrame(gl: GL10?) {
         val start = SystemClock.elapsedRealtimeNanos()
-        if (settings.cameraSource == com.xreal.stereoview.ui.CameraSource.GLASSES) {
-            drawGlasses()
+        if (settings.cameraSource != com.xreal.stereoview.ui.CameraSource.BEAM_PRO) {
+            if (settings.cameraSource == com.xreal.stereoview.ui.CameraSource.OAK) drawOak() else drawGlasses()
             draws++
             drawNanos += SystemClock.elapsedRealtimeNanos() - start
             maybeReportStats()
@@ -331,13 +340,49 @@ class StereoRenderer(
             }
             return
         }
-        val imageAspect = IMAGE_W.toFloat() / IMAGE_H
+        drawGrayRaw(gray, IMAGE_W, IMAGE_H, "glasses cameras", eyeAspect, halfSbs, zoom)
+    }
+
+    /** Shows an OAK camera's left and right mono images as they come (not rectified). */
+    private fun drawOak() {
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+        GLES20.glViewport(0, 0, width, height)
+        GLES20.glClearColor(0f, 0f, 0f, 1f)
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+        val gray = grayShader ?: return
+        val frame = oakFrame ?: run {
+            viewDescription = "OAK camera: no frames yet"
+            return
+        }
+        if (frame !== shownOakFrame) {
+            gray.upload(0, frame.left.image, frame.left.width, frame.left.height)
+            gray.upload(1, frame.right.image, frame.right.width, frame.right.height)
+            shownOakFrame = frame
+            newFrames[0]++
+            newFrames[1]++
+        }
+        val s = settings
+        val halfSbs = when (s.sbsLayout) {
+            SbsLayout.FULL -> false
+            SbsLayout.HALF -> true
+            SbsLayout.AUTO -> width.toFloat() / height < 3f
+        }
+        val eyeAspect = (width / 2).toFloat() * (if (halfSbs) 2 else 1) / height
+        val zoom = s.depth.coerceIn(StereoSettings.DEPTH_MIN, StereoSettings.DEPTH_MAX)
+        drawGrayRaw(gray, frame.left.width, frame.left.height, "OAK mono cameras", eyeAspect, halfSbs, zoom)
+    }
+
+    /** Two grayscale images of [w]×[h] fitted into the eyes by the scale mode, shifted by the convergence. */
+    private fun drawGrayRaw(gray: GrayShader, w: Int, h: Int, label: String, eyeAspect: Float, halfSbs: Boolean, zoom: Float) {
+        val s = settings
+        val eyeWidth = width / 2
+        val imageAspect = w.toFloat() / h
         val (sx, sy) = when (s.scaleMode) {
             ScaleMode.STRETCH -> 1f to 1f
             ScaleMode.FILL -> if (imageAspect > eyeAspect) imageAspect / eyeAspect to 1f else 1f to eyeAspect / imageAspect
             ScaleMode.FIT, ScaleMode.REAL -> if (imageAspect > eyeAspect) 1f to eyeAspect / imageAspect else imageAspect / eyeAspect to 1f
         }
-        viewDescription = "glasses cameras ${IMAGE_W}×$IMAGE_H, ${s.scaleMode.label}, ${if (halfSbs) "half SBS" else "full SBS"}"
+        viewDescription = "$label ${w}×$h, ${s.scaleMode.label}, ${if (halfSbs) "half SBS" else "full SBS"}"
         for (viewport in 0..1) {
             val slot = if (s.swapEyes) 1 - viewport else viewport
             // Positive convergence moves the left image left and the right image right.

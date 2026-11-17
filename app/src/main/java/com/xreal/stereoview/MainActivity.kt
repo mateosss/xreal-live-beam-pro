@@ -38,6 +38,8 @@ import com.xreal.stereoview.glasses.GlassesDevice
 import com.xreal.stereoview.glasses.GlassesProtocol
 import com.xreal.stereoview.record.ActiveRecording
 import com.xreal.stereoview.record.GlassesRecording
+import com.xreal.stereoview.record.OakRecording
+import com.xreal.stereoview.oak.OakDevice
 import com.xreal.stereoview.record.Recording
 import com.xreal.stereoview.record.RecordingService
 import com.xreal.stereoview.render.RenderThread
@@ -96,6 +98,8 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
 
     // Glasses cameras (and IMU) over USB, when they are the camera source.
     private lateinit var glasses: GlassesDevice
+    private lateinit var oak: OakDevice
+    private var oakStatsTime = 0L
     /** The user accepted taking the glasses' camera (and IMU) from the system this session. */
     private var glassesTakeoverConfirmed = false
     @Volatile
@@ -125,6 +129,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         displayManager = getSystemService(DisplayManager::class.java)
         camera = CameraController(this, this)
         glasses = GlassesDevice(applicationContext, glassesListener)
+        oak = OakDevice(applicationContext, oakListener)
         stabilizer = Stabilizer(this)
         controls = ControlsOverlay(binding.controls, viewModel, this)
         controls.setPlaying(playing)
@@ -236,6 +241,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         stopRecording("Recording stopped: app paused", waitForGl = true)
         outputActive = false
         stopGlasses()
+        stopOak()
         camera.stopBlocking()
         stabilizer.stop()
         presentation?.dismiss()
@@ -277,15 +283,22 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     private fun startCamera() {
         val (left, right) = surfaces ?: return
         val settings = viewModel.settings.value
-        if (settings.cameraSource == CameraSource.GLASSES) {
+        if (settings.cameraSource != CameraSource.BEAM_PRO) {
             camera.pause()
             rig = null
             streamSize = null
             renderer?.cameras = null
-            startGlasses(settings.glassesImu)
+            if (settings.cameraSource == CameraSource.GLASSES) {
+                stopOak()
+                startGlasses(settings.glassesImu)
+            } else {
+                stopGlasses()
+                startOak()
+            }
             return
         }
         stopGlasses()
+        stopOak()
         val rig = CameraUtils.selectRig(
             cameraManager, displayRotation(), settings.maxResolution, settings.cameraPair, settings.targetFps,
         )
@@ -334,6 +347,10 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     override fun onAutoAlign() {
         val renderer = renderer ?: return
         val s0 = viewModel.settings.value
+        if (s0.cameraSource == CameraSource.OAK) {
+            controls.setStatus("Auto-align works on rectified views, which the OAK preview doesn't have yet; use Settings → Eye alignment")
+            return
+        }
         if (s0.cameraSource == CameraSource.GLASSES) {
             if (!glasses.isRunning) {
                 controls.setStatus("Auto-align needs the glasses cameras running")
@@ -388,6 +405,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         } else {
             camera.pause()
             stopGlasses()
+            stopOak()
         }
         updateStatus()
     }
@@ -420,6 +438,12 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         ) {
             stopRecording("Recording stopped: camera settings changed")
             startCamera()
+        } else if (s.cameraSource == CameraSource.OAK && oakConfigOf(s).copy(exposure = oakExposureOf(previous)) != oakConfigOf(previous) && playing) {
+            stopRecording("Recording stopped: OAK settings changed")
+            stopOak()
+            startOak()
+        } else if (s.cameraSource == CameraSource.OAK) {
+            if (oakExposureOf(s) != oakExposureOf(previous)) oak.setExposure(oakExposureOf(s))
         } else if (s.cameraSource == CameraSource.GLASSES) {
             if (glassesExposureOf(s) != glassesExposureOf(previous) && glasses.isRunning) glasses.setExposure(glassesExposureOf(s))
         } else if (exposureOf(s) != exposureOf(previous)) {
@@ -444,6 +468,22 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
 
     override fun onRenderStats(stats: StereoRenderer.RenderStats) {
         if (!viewModel.settings.value.showHud) return
+        if (viewModel.settings.value.cameraSource == CameraSource.OAK) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            val seconds = ((now - oakStatsTime) / 1000.0).coerceAtLeast(1e-3)
+            oakStatsTime = now
+            val o = oak.takeStats()
+            val info = oak.info
+            binding.hudText.text = buildString {
+                appendLine("OAK: %.1f pairs/s  mono %.1f/s  color %.1f/s  IMU %.0f Hz  draw %.1f fps".format(
+                    o.pairs / seconds, o.monoFrames / seconds, o.rgbFrames / seconds, o.imuSamples / seconds, stats.drawFps,
+                ))
+                appendLine("lost mono frames ${o.droppedSequences}  ${info?.optString("usb_speed") ?: ""} ${info?.optString("product_name") ?: ""}")
+                recording?.let { appendLine(it.backlog) }
+                append(stats.view)
+            }
+            return
+        }
         if (viewModel.settings.value.cameraSource == CameraSource.GLASSES) {
             val now = android.os.SystemClock.elapsedRealtime()
             val seconds = ((now - glassesStatsTime) / 1000.0).coerceAtLeast(1e-3)
@@ -482,6 +522,9 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             !playing -> "Paused"
             viewModel.settings.value.cameraSource == CameraSource.GLASSES ->
                 if (glasses.isRunning) "Glasses cameras${if (glassesImuActive) " + IMU" else ""}" else "Glasses cameras not running"
+            viewModel.settings.value.cameraSource == CameraSource.OAK ->
+                if (oak.isRunning) "OAK ${oak.info?.optString("product_name")?.ifEmpty { null } ?: "camera"} (${oak.info?.optString("usb_speed") ?: "?"})"
+                else "OAK camera not running"
             rig == null || streamSize == null -> "Starting cameras…"
             else -> "${rig.description} @ $streamSize"
         }
@@ -617,6 +660,10 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             startGlassesRecording()
             return
         }
+        if (viewModel.settings.value.cameraSource == CameraSource.OAK) {
+            startOakRecording()
+            return
+        }
         val renderer = renderer
         val rig = rig
         val size = streamSize
@@ -654,6 +701,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             return
         }
         if (rec is GlassesRecording && !glasses.isRunning) rec.error = "the glasses stream stopped"
+        if (rec is OakRecording && !oak.isRunning) rec.error = "the OAK camera stopped"
         rec.writeErrors()?.let { rec.error = "writing failed ($it)" }
         if (rec.dir.usableSpace < STOP_FREE_BYTES) rec.error = "storage is almost full"
         rec.error?.let {
@@ -844,6 +892,89 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         renderer?.glassesFrame = null
         glassesImuActive = false
         controls.setGlassesControls(null)
+    }
+
+    // endregion
+
+    // region OAK camera
+
+    private fun oakExposureOf(s: StereoSettings) =
+        OakDevice.Exposure(!s.manualExposure, (s.exposureTimeNs / 1000).toInt().coerceIn(20, 33_000), s.iso.coerceIn(100, 1600), s.exposure.coerceIn(-9, 9))
+
+    private fun oakConfigOf(s: StereoSettings) = OakDevice.Config(
+        s.oakMonoHeight, s.oakFps, s.oakRgbHeight, s.oakJpegQuality, s.oakImuRateHz, s.oakUsb3, oakExposureOf(s),
+    )
+
+    private fun startOak() {
+        oakStatsTime = android.os.SystemClock.elapsedRealtime()
+        controls.setOakMode(true)
+        oak.start(oakConfigOf(viewModel.settings.value))
+        updateStatus()
+    }
+
+    private fun stopOak() {
+        (recording as? OakRecording)?.let { stopRecording("Recording stopped: OAK camera stopped") }
+        oak.stop()
+        renderer?.oakFrame = null
+    }
+
+    private val oakListener = object : OakDevice.Listener {
+        override fun onStatus(message: String) {
+            Log.i(TAG, message)
+            runOnUiThread { controls.setStatus(message) }
+        }
+
+        override fun onError(message: String) {
+            Log.w(TAG, message)
+            runOnUiThread { controls.setStatus("⚠ $message") }
+        }
+
+        override fun onStarted(info: JSONObject) {
+            Log.i(TAG, "OAK started: ${info.optString("product_name")} ${info.optString("usb_speed")}")
+            runOnUiThread {
+                updateStatus()
+                if (info.optString("usb_speed") == "USB2") {
+                    controls.setStatus("OAK on USB2: high resolutions and frame rates may drop frames. A USB3 port and cable help.")
+                }
+            }
+        }
+
+        override fun onStereoFrame(frame: OakDevice.StereoFrame) {
+            renderer?.oakFrame = frame
+            (recording as? OakRecording)?.onStereoFrame(frame)
+        }
+
+        override fun onRgb(frame: OakDevice.Rgb) {
+            (recording as? OakRecording)?.onRgb(frame)
+        }
+
+        override fun onImu(samples: List<OakDevice.ImuSample>) {
+            (recording as? OakRecording)?.onImu(samples)
+        }
+    }
+
+    private fun startOakRecording() {
+        val info = oak.info
+        if (!playing || !oak.isRunning || info == null) {
+            controls.setStatus("Recording needs the OAK camera running")
+            return
+        }
+        val root = Recording.root(this).apply { mkdirs() }
+        if (root.usableSpace < MIN_FREE_BYTES) {
+            controls.setStatus("⚠ Not enough free space to record (%.1f GB left)".format(root.usableSpace / 1e9))
+            return
+        }
+        val rec = try {
+            OakRecording.start(this, viewModel.settings.value, info, recordingInfo())
+        } catch (e: Exception) {
+            Log.e(TAG, "Cannot start recording", e)
+            controls.setStatus("⚠ Cannot record: ${e.message}")
+            return
+        }
+        recording = rec
+        keepRecordingInBackground(rec, usb = true)
+        controls.setStatus("Recording OAK cameras to ${rec.dir.name}")
+        updateRecordingTimer()
     }
 
     // endregion

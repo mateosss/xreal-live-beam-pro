@@ -60,6 +60,10 @@ enum class CameraSource(val label: String, val shortLabel: String, val homeTitle
         "Glasses tracking cameras (Air 2 Ultra, over USB)", "Glasses", "Glasses",
         "The Air 2 Ultra's two grayscale tracking cameras (480×640, 30 fps) and its IMU, over USB",
     ),
+    OAK(
+        "Luxonis OAK camera (DepthAI, over USB)", "OAK", "DepthAI camera",
+        "A Luxonis OAK (e.g. OAK-D Pro W): global-shutter grayscale stereo pair, color camera and IMU, over USB",
+    ),
 }
 
 /** Which image a recording stores per camera. */
@@ -127,6 +131,8 @@ data class StereoSettings(
     /** Glasses cameras: the same corrections, kept separately (different cameras). */
     val glassesAlignPitchDeg: Float = 0f,
     val glassesAlignRollDeg: Float = 0f,
+    val oakAlignPitchDeg: Float = 0f,
+    val oakAlignRollDeg: Float = 0f,
     /** Requested camera frame rate; stream sizes that can't sustain it are skipped. */
     val targetFps: Int = 30,
     /** Fixed exposure time and ISO instead of auto exposure. */
@@ -151,15 +157,36 @@ data class StereoSettings(
     val glassesExposure100us: Int = 50,
     /** Glasses camera gain, or -1 for the camera's default. */
     val glassesGain: Int = -1,
+    /** OAK: mono camera height (400, 720 or 800 rows; 1280 wide except 400p, 640). */
+    val oakMonoHeight: Int = 800,
+    /** OAK: frame rate of every camera. */
+    val oakFps: Int = 30,
+    /** OAK: color camera height (800 or 720), or 0 to leave it off. */
+    val oakRgbHeight: Int = 800,
+    /** OAK: JPEG quality of the color images (encoded on the camera). */
+    val oakJpegQuality: Int = 95,
+    /** OAK: IMU rate in Hz, or 0 to leave it off. */
+    val oakImuRateHz: Int = 200,
+    /** OAK: allow USB3 (off forces USB2, for flaky cables or hubs). */
+    val oakUsb3: Boolean = true,
 ) {
     /** Eye alignment of the current camera source. */
-    val alignPitchDeg: Float get() = if (cameraSource == CameraSource.GLASSES) glassesAlignPitchDeg else beamProAlignPitchDeg
-    val alignRollDeg: Float get() = if (cameraSource == CameraSource.GLASSES) glassesAlignRollDeg else beamProAlignRollDeg
+    val alignPitchDeg: Float get() = when (cameraSource) {
+        CameraSource.GLASSES -> glassesAlignPitchDeg
+        CameraSource.OAK -> oakAlignPitchDeg
+        CameraSource.BEAM_PRO -> beamProAlignPitchDeg
+    }
+    val alignRollDeg: Float get() = when (cameraSource) {
+        CameraSource.GLASSES -> glassesAlignRollDeg
+        CameraSource.OAK -> oakAlignRollDeg
+        CameraSource.BEAM_PRO -> beamProAlignRollDeg
+    }
 
     /** These settings with the current camera source's eye alignment replaced. */
     fun withAlignment(pitchDeg: Float, rollDeg: Float) = when (cameraSource) {
         CameraSource.GLASSES -> copy(glassesAlignPitchDeg = pitchDeg, glassesAlignRollDeg = rollDeg)
-        else -> copy(beamProAlignPitchDeg = pitchDeg, beamProAlignRollDeg = rollDeg)
+        CameraSource.OAK -> copy(oakAlignPitchDeg = pitchDeg, oakAlignRollDeg = rollDeg)
+        CameraSource.BEAM_PRO -> copy(beamProAlignPitchDeg = pitchDeg, beamProAlignRollDeg = rollDeg)
     }
 
     companion object {
@@ -193,6 +220,14 @@ class SettingsRepository(private val context: Context) {
         val ALIGN_ROLL = floatPreferencesKey("align_roll_deg")
         val GLASSES_ALIGN_PITCH = floatPreferencesKey("glasses_align_pitch_deg")
         val GLASSES_ALIGN_ROLL = floatPreferencesKey("glasses_align_roll_deg")
+        val OAK_ALIGN_PITCH = floatPreferencesKey("oak_align_pitch_deg")
+        val OAK_ALIGN_ROLL = floatPreferencesKey("oak_align_roll_deg")
+        val OAK_MONO_HEIGHT = intPreferencesKey("oak_mono_height")
+        val OAK_FPS = intPreferencesKey("oak_fps")
+        val OAK_RGB_HEIGHT = intPreferencesKey("oak_rgb_height")
+        val OAK_JPEG_QUALITY = intPreferencesKey("oak_jpeg_quality")
+        val OAK_IMU_RATE = intPreferencesKey("oak_imu_rate_hz")
+        val OAK_USB3 = booleanPreferencesKey("oak_usb3")
         val TARGET_FPS = intPreferencesKey("target_fps")
         val MANUAL_EXPOSURE = booleanPreferencesKey("manual_exposure")
         val EXPOSURE_TIME = longPreferencesKey("exposure_time_ns")
@@ -254,6 +289,14 @@ class SettingsRepository(private val context: Context) {
             beamProAlignRollDeg = p[Keys.ALIGN_ROLL] ?: defaults.beamProAlignRollDeg,
             glassesAlignPitchDeg = p[Keys.GLASSES_ALIGN_PITCH] ?: defaults.glassesAlignPitchDeg,
             glassesAlignRollDeg = p[Keys.GLASSES_ALIGN_ROLL] ?: defaults.glassesAlignRollDeg,
+            oakAlignPitchDeg = p[Keys.OAK_ALIGN_PITCH] ?: defaults.oakAlignPitchDeg,
+            oakAlignRollDeg = p[Keys.OAK_ALIGN_ROLL] ?: defaults.oakAlignRollDeg,
+            oakMonoHeight = p[Keys.OAK_MONO_HEIGHT] ?: defaults.oakMonoHeight,
+            oakFps = p[Keys.OAK_FPS] ?: defaults.oakFps,
+            oakRgbHeight = p[Keys.OAK_RGB_HEIGHT] ?: defaults.oakRgbHeight,
+            oakJpegQuality = p[Keys.OAK_JPEG_QUALITY] ?: defaults.oakJpegQuality,
+            oakImuRateHz = p[Keys.OAK_IMU_RATE] ?: defaults.oakImuRateHz,
+            oakUsb3 = p[Keys.OAK_USB3] ?: defaults.oakUsb3,
             targetFps = p[Keys.TARGET_FPS] ?: defaults.targetFps,
             manualExposure = p[Keys.MANUAL_EXPOSURE] ?: defaults.manualExposure,
             exposureTimeNs = p[Keys.EXPOSURE_TIME] ?: defaults.exposureTimeNs,
@@ -294,6 +337,14 @@ class SettingsRepository(private val context: Context) {
             p[Keys.ALIGN_ROLL] = s.beamProAlignRollDeg
             p[Keys.GLASSES_ALIGN_PITCH] = s.glassesAlignPitchDeg
             p[Keys.GLASSES_ALIGN_ROLL] = s.glassesAlignRollDeg
+            p[Keys.OAK_ALIGN_PITCH] = s.oakAlignPitchDeg
+            p[Keys.OAK_ALIGN_ROLL] = s.oakAlignRollDeg
+            p[Keys.OAK_MONO_HEIGHT] = s.oakMonoHeight
+            p[Keys.OAK_FPS] = s.oakFps
+            p[Keys.OAK_RGB_HEIGHT] = s.oakRgbHeight
+            p[Keys.OAK_JPEG_QUALITY] = s.oakJpegQuality
+            p[Keys.OAK_IMU_RATE] = s.oakImuRateHz
+            p[Keys.OAK_USB3] = s.oakUsb3
             p[Keys.TARGET_FPS] = s.targetFps
             p[Keys.MANUAL_EXPOSURE] = s.manualExposure
             p[Keys.EXPOSURE_TIME] = s.exposureTimeNs
