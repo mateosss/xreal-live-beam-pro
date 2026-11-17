@@ -31,6 +31,8 @@ class ControlsOverlay(
         fun onRecord()
         fun onUsbProbe()
         fun isRecording(): Boolean
+        /** The folder being recorded into, if any. */
+        fun recordingDir(): java.io.File?
 
         /** Selectable camera pairs as (key, description), best first. */
         fun cameraPairOptions(): List<Pair<String, String>>
@@ -53,7 +55,9 @@ class ControlsOverlay(
         override fun setStatus(text: CharSequence) = this@ControlsOverlay.setStatus(text)
         override fun showProfiles() = profilesDialog.show()
         override fun probeUsb() = actions.onUsbProbe()
+        override fun showRecordings() = recordingsDialog.show()
     })
+    private val recordingsDialog = RecordingsDialog(context, actions::recordingDir, ::setStatus)
     private val profilesDialog = ProfilesDialog(context, viewModel, actions::isRecording, ::setStatus)
 
     init {

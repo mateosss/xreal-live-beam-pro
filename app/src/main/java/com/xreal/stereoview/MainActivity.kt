@@ -585,6 +585,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     // region Recording
 
     override fun isRecording() = recording != null
+    override fun recordingDir() = recording?.dir
 
     override fun onRecord() {
         if (recording != null) stopRecording(null) else startRecording()

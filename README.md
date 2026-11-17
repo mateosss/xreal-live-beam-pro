@@ -152,7 +152,7 @@ the app releases the cameras as before. Configure it under *Settings → Recordi
 | Video bitrate | 10–100 Mbit/s per camera |
 | IMU rate | Fastest the sensors allow, 500/200/100 Hz through a listener, or a shared-memory direct channel (~800 or ~200 Hz) where the sensor supports it |
 | IMU streams | Accelerometer, gyroscope, their uncalibrated versions with bias, magnetometer (calibrated or not), game/rotation vector, gravity, linear acceleration, barometer |
-| Recordings… | Lists recordings with their sizes, and deletes them |
+| Recordings… | Lists recordings (folders and zips) with their sizes. Per recording: **Copy path** (to the clipboard), **Zip** / **Unzip** (the other form is deleted once the new one is complete), **To Downloads** (copies to `Download/XREAL Stereo/`, adding `.nomedia` to folders so galleries don't index thousands of images), **Share** (zips first if needed, then the Android share sheet) and **Delete** |
 
 **Writing.** No capture thread waits for storage. CSV files are buffered in memory and
 written by a background thread a few times a second; encoded video is copied out of the
@@ -166,6 +166,12 @@ storage is left.
 *Settings → Focus → Locked at infinity* keeps the intrinsics fixed, which SLAM needs. For SLAM,
 also turn stabilization off when recording rectified images, or each frame is rotated by
 its logged `stab_q`.
+
+**Storage.** Recordings are written to the app's own storage: the fastest place on the
+device (no MediaStore, no permissions, no media scanning), but deleted on uninstall. Zip a
+recording to move it as one file (much faster over MTP than thousands of PNGs; images and
+video are stored without recompression, so zipping runs at copy speed), share the zip, or
+copy it to Downloads to keep it.
 
 Recordings go to `Android/data/com.xreal.stereoview/files/recordings/<date_time>/`,
 reachable over USB (MTP) or with

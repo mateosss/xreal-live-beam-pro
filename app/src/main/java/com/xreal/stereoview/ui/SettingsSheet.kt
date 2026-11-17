@@ -38,6 +38,7 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
         fun setStatus(text: CharSequence)
         fun showProfiles()
         fun probeUsb()
+        fun showRecordings()
     }
 
     private var dialog: BottomSheetDialog? = null
@@ -125,7 +126,7 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
         row(content, "$imuPrefix streams", streams.joinToString { it.file.replace('_', ' ') }.ifEmpty { "none" }, locked = recording) {
             chooseImuStreams(sensors, streams)
         }
-        row(content, "Recordings", recordingsSummary()) { showRecordings() }
+        row(content, "Recordings", recordingsSummary()) { host.showRecordings() }
 
         section(content, "Glasses & output", null)
         row(content, "Glasses field of view", "%.0f° diagonal (used by 1:1 scale)".format(s.glassesFovDeg)) {
@@ -381,47 +382,12 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
     }
 
     private fun recordingDirs(): List<File> =
-        Recording.root(context).listFiles()?.filter { it.isDirectory }?.sortedByDescending { it.name }.orEmpty()
+        Recording.root(context).listFiles()?.filter { it.isDirectory || it.name.endsWith(".zip") }.orEmpty()
 
     private fun recordingsSummary(): String {
         val count = recordingDirs().size
         return "%d saved · %.1f GB free".format(count, Recording.root(context).let { if (it.exists()) it.usableSpace else context.getExternalFilesDir(null)?.usableSpace ?: 0L } / 1e9)
     }
-
-    /** Lists saved recordings, newest first, with their size; tap one to delete it. */
-    private fun showRecordings() {
-        val root = Recording.root(context)
-        val dirs = recordingDirs()
-        val message = "Copy them over USB (Android/data/${context.packageName}/files/recordings) or with\n" +
-            "adb pull /sdcard/Android/data/${context.packageName}/files/recordings"
-        if (dirs.isEmpty()) {
-            MaterialAlertDialogBuilder(context).setTitle("No recordings yet").setMessage(message)
-                .setPositiveButton(android.R.string.ok, null).show()
-            return
-        }
-        val labels = dirs.map { "${it.name}   %.0f MB".format(sizeOf(it) / 1e6) }
-        MaterialAlertDialogBuilder(context)
-            .setTitle("Recordings (%.1f GB free)".format(root.usableSpace / 1e9))
-            .setItems(labels.toTypedArray()) { _, which ->
-                val dir = dirs[which]
-                MaterialAlertDialogBuilder(context)
-                    .setTitle(dir.name)
-                    .setMessage("$message\n\n${dir.path}")
-                    .setPositiveButton(android.R.string.ok, null)
-                    .setNegativeButton("Delete") { _, _ ->
-                        Dialogs.confirm(context, "Delete ${dir.name}?", "Delete") {
-                            dir.deleteRecursively()
-                            host.setStatus("Deleted ${dir.name}")
-                            refresh()
-                        }
-                    }
-                    .show()
-            }
-            .setPositiveButton(android.R.string.ok, null)
-            .show()
-    }
-
-    private fun sizeOf(dir: File): Long = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
 
     /** Sliders for the vertical and rotational alignment between the eyes. */
     private fun showAlignmentDialog() {
