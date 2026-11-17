@@ -64,7 +64,8 @@ class ProfilesDialog(
         list.removeAllViews()
         val state = viewModel.profiles.value
         val current = viewModel.settings.value
-        for (profile in state.profiles) {
+        // Only the current device's profiles: another device is chosen from the start screen.
+        for (profile in state.profiles.filter { it.settings.cameraSource == current.cameraSource }) {
             val active = profile.name == state.active
             val edited = active && profile.differsFrom(current)
             val row = LinearLayout(context).apply {

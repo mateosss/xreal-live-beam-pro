@@ -7,4 +7,6 @@
     <color name="accent">#4FC3F7</color>
     <color name="accent_container">#334FC3F7</color>
     <color name="record">#FF5252</color>
+    <color name="home_background">#0E1215</color>
+    <color name="home_card">#1B2328</color>
 </resources>

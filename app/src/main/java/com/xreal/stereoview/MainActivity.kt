@@ -129,6 +129,20 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         controls = ControlsOverlay(binding.controls, viewModel, this)
         controls.setPlaying(playing)
         binding.grantButton.setOnClickListener { requestPermission.launch(Manifest.permission.CAMERA) }
+        intent.getStringExtra(EXTRA_PROFILE)?.let(viewModel::startWithProfile)
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                // Back returns to the device's profiles; a running recording is stopped first.
+                if (recording == null) {
+                    finish()
+                } else {
+                    com.xreal.stereoview.ui.Dialogs.confirm(this@MainActivity, "Stop the recording and go back to the profiles?", "Stop and go back") {
+                        stopRecording(null)
+                        finish()
+                    }
+                }
+            }
+        })
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -141,6 +155,13 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             }
         }
         CrashReporter.showPendingReport(this)
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        // Started again from the profile list (e.g. while recording in the background).
+        val name = intent.getStringExtra(EXTRA_PROFILE) ?: return
+        if (recording == null && name != viewModel.profiles.value.active) viewModel.selectProfile(name)
     }
 
     override fun onResume() {
@@ -880,11 +901,13 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
 
     // endregion
 
-    private companion object {
-        const val TAG = "StereoView"
-        const val MIN_FREE_BYTES = 500_000_000L
+    companion object {
+        /** Name of the profile to start with (from [HomeActivity]). */
+        const val EXTRA_PROFILE = "profile"
+        private const val TAG = "StereoView"
+        private const val MIN_FREE_BYTES = 500_000_000L
         /** Recordings stop below this, leaving room to finish their files. */
-        const val STOP_FREE_BYTES = 200_000_000L
+        private const val STOP_FREE_BYTES = 200_000_000L
     }
 
     private fun displayRotation(): Int = display?.rotation ?: 0

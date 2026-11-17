@@ -11,8 +11,8 @@ android {
         applicationId = "com.xreal.stereoview"
         minSdk = 31
         targetSdk = 34
-        versionCode = 16
-        versionName = "0.9.0"
+        versionCode = 17
+        versionName = "0.10.0"
     }
 
     // Release builds are signed with the key named by these variables (set by CI from repository

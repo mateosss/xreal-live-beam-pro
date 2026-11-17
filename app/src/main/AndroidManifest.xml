@@ -29,8 +29,15 @@
         <activity
             android:name=".MainActivity"
             android:launchMode="singleTop"
+            android:exported="false"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|density"
+            android:screenOrientation="landscape" />
+
+        <!-- Start screen: choose a device, then a profile. -->
+        <activity
+            android:name=".HomeActivity"
             android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|density"
             android:screenOrientation="landscape">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

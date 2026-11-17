@@ -60,6 +60,15 @@ data class Profile(val name: String, val settings: StereoSettings) {
                         ),
                     ),
                     Profile(
+                        GLASSES_PASSTHROUGH,
+                        base.copy(
+                            cameraSource = CameraSource.GLASSES,
+                            glassesImu = false,
+                            convergencePx = 0f,
+                            scaleMode = ScaleMode.REAL,
+                        ),
+                    ),
+                    Profile(
                         GLASSES_EUROC,
                         base.copy(
                             cameraSource = CameraSource.GLASSES,
@@ -78,6 +87,7 @@ data class Profile(val name: String, val settings: StereoSettings) {
         const val PASSTHROUGH = "Passthrough"
         const val EUROC = "EuRoC dataset"
         const val GLASSES_EUROC = "Glasses EuRoC dataset"
+        const val GLASSES_PASSTHROUGH = "Glasses passthrough"
 
         fun toJson(profiles: List<Profile>): String = JSONArray(profiles.map { p ->
             JSONObject().put("name", p.name).put("settings", JSONObject().apply {

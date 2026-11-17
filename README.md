@@ -116,18 +116,31 @@ arrive within the threshold (33 ms by default), the frame is drawn anyway, so a 
 never freezes the other eye. The HUD shows each eye's fps, the left/right timestamp gap, and
 how many frame pairs exceeded the threshold.
 
+## Start screen: devices and profiles
+
+The app opens on **Devices**: *Beam Pro / Phone* (the rear stereo cameras) and *Glasses*
+(the Air 2 Ultra's tracking cameras over USB), each with whether it is ready (camera pairs
+found, glasses connected). Tapping a device lists **its** profiles: *Start* (or tapping the
+profile) opens the stereo view with it, *Edit* opens the profile's settings (only those that
+apply to that device) with Save/Cancel, ⋮ renames, duplicates or deletes it, and *New profile*
+creates one from the device's defaults. Back from the stereo view returns to the list (it
+asks first if a recording is running). *Recordings* on the device screen manages saved
+datasets.
+
 ## Profiles
 
-The button at the left of the control panel picks a **profile**: a named set of capture
+The button at the left of the control panel switches among the current device's
+**profiles**: a named set of capture
 settings (exposure, frame rate, resolution, focus, stabilization, scale, zoom, convergence,
 and every recording and IMU option). Device setup is kept separately and survives profile
 switches: camera pair, image rotation, L/R swap, eye alignment, glasses FOV, SBS layout,
 lens calibration and output. Eye alignment is stored per device (the Beam Pro and the
-glasses cameras need different corrections). Three profiles are built in:
+glasses cameras need different corrections). Four profiles are built in:
 
 | Profile | For |
 |---|---|
 | **Passthrough** | Live 3D viewing: 1:1 scale, medium stabilization, autofocus, up to 1080p |
+| **Glasses passthrough** | Live view through the glasses' own cameras: rectified, 1:1 scale, glasses IMU left to the system |
 | **Glasses EuRoC dataset** | SLAM recordings from the Air 2 Ultra's own tracking cameras and IMU, rectified preview, no convergence shift (see below) |
 | **EuRoC dataset** | SLAM recordings: raw images, focus locked at infinity, no stabilization, ≤720p at 30 fps, 60 Mbit/s H.264, IMU through the direct channel (fastest listener where unsupported) with calibrated and raw accelerometer/gyroscope, raw magnetometer and game rotation vector |
 

@@ -23,13 +23,46 @@ import com.xreal.stereoview.record.ImuStream
 import com.xreal.stereoview.record.Recording
 import java.io.File
 
+/** Settings a [SettingsSheet] shows and edits. */
+interface SettingsTarget {
+    val value: StereoSettings
+    fun update(transform: (StereoSettings) -> StereoSettings)
+}
+
+/** The live settings: changes apply at once and persist. */
+class LiveSettings(private val viewModel: SettingsViewModel) : SettingsTarget {
+    override val value: StereoSettings get() = viewModel.settings.value
+    override fun update(transform: (StereoSettings) -> StereoSettings) = viewModel.update(transform)
+}
+
+/** A copy being edited (a profile in the editor); [onChange] runs after every change. */
+class DraftSettings(initial: StereoSettings, private val onChange: () -> Unit) : SettingsTarget {
+    override var value: StereoSettings = initial
+        private set
+    override fun update(transform: (StereoSettings) -> StereoSettings) {
+        value = transform(value)
+        onChange()
+    }
+}
+
 /**
  * All settings in one sheet, grouped by what they affect. The Capture and Recording groups
  * are stored in profiles; the rest describes this device and stays when switching profiles.
  * Only the rows that apply to the selected camera source are shown. Rows show their current
  * values and update live.
  */
-class SettingsSheet(private val context: Context, private val viewModel: SettingsViewModel, private val host: Host) {
+class SettingsSheet(
+    private val context: Context,
+    private val viewModel: SettingsViewModel,
+    private val host: Host,
+    /** The settings shown and edited: the live ones, or a profile's draft in the editor. */
+    private val target: SettingsTarget = LiveSettings(viewModel),
+    /** Profile editor: only the profile's own settings, with Save and Cancel. */
+    private val editor: Editor? = null,
+) {
+    /** What the profile editor saves into. */
+    class Editor(val profileName: String, val onSave: (StereoSettings) -> Unit)
+
     interface Host {
         val rig: StereoRig?
         val glassesControls: GlassesDevice.CameraControls?
@@ -75,18 +108,56 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
     fun refresh() {
         val content = content ?: return
         content.removeAllViews()
-        val s = viewModel.settings.value
+        val s = target.value
         val recording = host.isRecording()
         val device = s.cameraSource
 
-        profileHeader(content, s)
-        row(content, "Device", device.label, locked = recording) {
-            choose("Device (one at a time)", CameraSource.entries.map { it.label }, device.ordinal) { i ->
-                viewModel.update { it.copy(cameraSource = CameraSource.entries[i]) }
+        if (editor != null) {
+            val bar = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(16), dp(12), dp(8), dp(4))
             }
+            bar.addView(TextView(context).apply {
+                text = "Edit “${editor.profileName}”"
+                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            bar.addView(MaterialButton(context, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
+                text = "Cancel"
+                setOnClickListener { dialog?.dismiss() }
+            })
+            bar.addView(MaterialButton(context).apply {
+                text = "Save"
+                setOnClickListener {
+                    editor.onSave(target.value)
+                    dialog?.dismiss()
+                }
+            })
+            content.addView(bar)
+            profileRows(content, s, recording, device, "${device.label}", null)
+            row(
+                content, "Convergence, depth, exposure",
+                "Set these with the panel's sliders while streaming, then Save to profile",
+            ) {}
+            return
         }
+        profileHeader(content, s)
+        profileRows(content, s, recording, device, device.label, "saved in the profile")
 
-        section(content, "${device.shortLabel} profile", "saved in the profile")
+        section(content, "${device.shortLabel} setup", "this device, kept across profiles")
+        setupRows(content, s, recording, device)
+
+        section(content, "Display", "all devices")
+        displayRows(content, s, recording)
+
+        section(content, "Data", null)
+        row(content, "Recordings", recordingsSummary()) { host.showRecordings() }
+    }
+
+    /** The settings a profile stores for [device]. */
+    private fun profileRows(content: LinearLayout, s: StereoSettings, recording: Boolean, device: CameraSource, title: String, note: String?) {
+        section(content, title, note)
         subsection(content, "Camera")
         when (device) {
             CameraSource.GLASSES -> glassesCaptureRows(content, s, recording)
@@ -97,11 +168,12 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
         subsection(content, "View")
         row(content, "Scale", s.scaleMode.label) {
             choose("Scale", ScaleMode.entries.map { it.label }, s.scaleMode.ordinal) { i ->
-                viewModel.update { it.copy(scaleMode = ScaleMode.entries[i]) }
+                target.update { it.copy(scaleMode = ScaleMode.entries[i]) }
             }
         }
+    }
 
-        section(content, "${device.shortLabel} setup", "this device, kept across profiles")
+    private fun setupRows(content: LinearLayout, s: StereoSettings, recording: Boolean, device: CameraSource) {
         if (device == CameraSource.BEAM_PRO) beamProSetupRows(content, s, recording)
         row(content, "Eye alignment", "pitch %+.2f°, roll %+.2f° (Align measures it)".format(s.alignPitchDeg, s.alignRollDeg)) {
             showAlignmentDialog()
@@ -109,12 +181,6 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
         if (device == CameraSource.GLASSES) {
             row(content, "Glasses USB probe", "Check whether the app can reach the glasses' cameras and IMU") { host.probeUsb() }
         }
-
-        section(content, "Display", "all devices")
-        displayRows(content, s, recording)
-
-        section(content, "Data", null)
-        row(content, "Recordings", recordingsSummary()) { host.showRecordings() }
     }
 
     private fun recordingRows(content: LinearLayout, s: StereoSettings, recording: Boolean) {
@@ -127,19 +193,19 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
         } else {
             row(content, "Images", s.recordView.label, locked = recording) {
                 choose("Recorded images", RecordView.entries.map { it.label }, s.recordView.ordinal) { i ->
-                    viewModel.update { it.copy(recordView = RecordView.entries[i]) }
+                    target.update { it.copy(recordView = RecordView.entries[i]) }
                 }
             }
             row(content, "Format", s.recordFormat.label, locked = recording) {
                 choose("Format", RecordFormat.entries.map { it.label }, s.recordFormat.ordinal) { i ->
-                    viewModel.update { it.copy(recordFormat = RecordFormat.entries[i]) }
+                    target.update { it.copy(recordFormat = RecordFormat.entries[i]) }
                 }
             }
             if (s.recordFormat.mime != null) {
                 row(content, "Video bitrate", "${s.recordBitrateMbps} Mbit/s per camera", locked = recording) {
                     val values = listOf(10, 20, 40, 60, 100)
                     choose("Video bitrate per camera", values.map { "$it Mbit/s" }, values.indexOf(s.recordBitrateMbps)) { i ->
-                        viewModel.update { it.copy(recordBitrateMbps = values[i]) }
+                        target.update { it.copy(recordBitrateMbps = values[i]) }
                     }
                 }
             }
@@ -149,7 +215,7 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
         val sensors = context.getSystemService(SensorManager::class.java)
         row(content, "$imuPrefix rate", "${s.imuRate.label}\n${imuRateNote(sensors, s.imuRate)}", locked = recording) {
             val labels = ImuRate.entries.map { "${it.label}\n${imuRateNote(sensors, it)}" }
-            choose("$imuPrefix sampling", labels, s.imuRate.ordinal) { i -> viewModel.update { it.copy(imuRate = ImuRate.entries[i]) } }
+            choose("$imuPrefix sampling", labels, s.imuRate.ordinal) { i -> target.update { it.copy(imuRate = ImuRate.entries[i]) } }
         }
         val streams = ImuStream.parse(s.imuStreams)
         row(content, "$imuPrefix streams", streams.joinToString { it.file.replace('_', ' ') }.ifEmpty { "none" }, locked = recording) {
@@ -167,22 +233,22 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
                 57f to "57° — One Pro",
             )
             choose("Glasses field of view (diagonal)", presets.map { it.second }, presets.indexOfFirst { it.first == s.glassesFovDeg }) { i ->
-                viewModel.update { it.copy(glassesFovDeg = presets[i].first) }
+                target.update { it.copy(glassesFovDeg = presets[i].first) }
             }
         }
         row(content, "SBS layout", s.sbsLayout.label) {
             choose("SBS layout", SbsLayout.entries.map { it.label }, s.sbsLayout.ordinal) { i ->
-                viewModel.update { it.copy(sbsLayout = SbsLayout.entries[i]) }
+                target.update { it.copy(sbsLayout = SbsLayout.entries[i]) }
             }
         }
         row(content, "Output", s.outputMode.label, locked = recording) {
             choose("Output", OutputMode.entries.map { it.label }, s.outputMode.ordinal) { i ->
-                viewModel.update { it.copy(outputMode = OutputMode.entries[i]) }
+                target.update { it.copy(outputMode = OutputMode.entries[i]) }
             }
         }
         row(content, "Reset view adjustments", "Convergence, depth and brightness back to defaults") {
             val d = StereoSettings()
-            viewModel.update { it.copy(convergencePx = d.convergencePx, depth = d.depth, exposure = d.exposure) }
+            target.update { it.copy(convergencePx = d.convergencePx, depth = d.depth, exposure = d.exposure) }
         }
     }
 
@@ -199,29 +265,29 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
                 fastest?.let { append("; fastest stream ${it.key} at %.0f fps".format(it.value)) }
             }
             choose("Frame rate (lower resolution if needed)$why", labels, values.indexOf(s.targetFps)) { i ->
-                viewModel.update { it.copy(targetFps = values[i]) }
+                target.update { it.copy(targetFps = values[i]) }
             }
         }
         row(content, "Max resolution", "${s.maxResolution}p", locked = recording) {
             val values = listOf(1080, 720, 480)
             choose("Max resolution", values.map { "${it}p" }, values.indexOf(s.maxResolution)) { i ->
-                viewModel.update { it.copy(maxResolution = values[i]) }
+                target.update { it.copy(maxResolution = values[i]) }
             }
         }
         row(content, "Focus", s.focusMode.label, locked = recording) {
             choose("Focus", FocusMode.entries.map { it.label }, s.focusMode.ordinal) { i ->
-                viewModel.update { it.copy(focusMode = FocusMode.entries[i]) }
+                target.update { it.copy(focusMode = FocusMode.entries[i]) }
             }
         }
         row(content, "Stabilization", s.stabilization.label) {
             choose("Stabilization", Stabilization.entries.map { it.label }, s.stabilization.ordinal) { i ->
-                viewModel.update { it.copy(stabilization = Stabilization.entries[i]) }
+                target.update { it.copy(stabilization = Stabilization.entries[i]) }
             }
         }
         row(content, "Sync wait", "${s.syncThresholdMs} ms for the partner frame") {
             val values = listOf(8, 16, 33, 50, 100)
             choose("Wait for partner frame", values.map { "$it ms" }, values.indexOf(s.syncThresholdMs)) { i ->
-                viewModel.update { it.copy(syncThresholdMs = values[i]) }
+                target.update { it.copy(syncThresholdMs = values[i]) }
             }
         }
     }
@@ -240,7 +306,7 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
                     "Take over and record it, with the factory calibration (head tracking stops until the glasses are replugged)",
                 ),
                 if (s.glassesImu) 1 else 0,
-            ) { i -> viewModel.update { it.copy(glassesImu = i == 1) } }
+            ) { i -> target.update { it.copy(glassesImu = i == 1) } }
         }
         row(
             content, "Rectify",
@@ -253,7 +319,7 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
                     "As streamed (distorted)",
                 ),
                 if (s.glassesRectify) 0 else 1,
-            ) { i -> viewModel.update { it.copy(glassesRectify = i == 0) } }
+            ) { i -> target.update { it.copy(glassesRectify = i == 0) } }
         }
         val c = host.glassesControls
         val exposure = when {
@@ -274,13 +340,13 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
             val options = listOf("" to "Auto (best pair, with fallbacks)") + host.cameraPairOptions()
             val labels = options.map { (key, description) -> if (key.isEmpty()) description else "$key\n$description" }
             choose("Camera pair", labels, options.indexOfFirst { it.first == s.cameraPair }) { i ->
-                viewModel.update { it.copy(cameraPair = options[i].first) }
+                target.update { it.copy(cameraPair = options[i].first) }
             }
         }
         row(content, "Image rotation", if (s.rotationOverride < 0) "Auto (from sensor orientation)" else "${s.rotationOverride}°") {
             val values = listOf(-1, 0, 90, 180, 270)
             choose("Image rotation", values.map { if (it < 0) "Auto (from sensor orientation)" else "$it°" }, values.indexOf(s.rotationOverride)) { i ->
-                viewModel.update { it.copy(rotationOverride = values[i]) }
+                target.update { it.copy(rotationOverride = values[i]) }
             }
         }
         row(content, "Lens calibration", if (s.useFactoryCalibration) "Factory (lens poses from the camera)" else "Sensor orientation only") {
@@ -288,7 +354,7 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
                 "Lens calibration",
                 listOf("Factory (lens poses from the camera)", "Sensor orientation only"),
                 if (s.useFactoryCalibration) 0 else 1,
-            ) { i -> viewModel.update { it.copy(useFactoryCalibration = i == 0) } }
+            ) { i -> target.update { it.copy(useFactoryCalibration = i == 0) } }
         }
     }
 
@@ -407,7 +473,7 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
             .setMultiChoiceItems(labels.toTypedArray(), checked) { _, which, isChecked -> checked[which] = isChecked }
             .setPositiveButton(android.R.string.ok) { _, _ ->
                 val names = all.filterIndexed { i, _ -> checked[i] }.joinToString(",") { it.name }
-                viewModel.update { it.copy(imuStreams = names) }
+                target.update { it.copy(imuStreams = names) }
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
@@ -445,16 +511,16 @@ class SettingsSheet(private val context: Context, private val viewModel: Setting
             layout.addView(text)
             layout.addView(slider)
         }
-        val s = viewModel.settings.value
-        slider("Vertical (pitch)", s.alignPitchDeg) { d -> viewModel.update { it.withAlignment(d, it.alignRollDeg) } }
-        slider("Rotation (roll)", s.alignRollDeg) { d -> viewModel.update { it.withAlignment(it.alignPitchDeg, d) } }
+        val s = target.value
+        slider("Vertical (pitch)", s.alignPitchDeg) { d -> target.update { it.withAlignment(d, it.alignRollDeg) } }
+        slider("Rotation (roll)", s.alignRollDeg) { d -> target.update { it.withAlignment(it.alignPitchDeg, d) } }
 
         MaterialAlertDialogBuilder(context)
             .setTitle("Eye alignment")
             .setMessage("Line up a distant horizontal edge so it is not doubled vertically. Align does this from the image.")
             .setView(layout)
             .setPositiveButton(android.R.string.ok, null)
-            .setNeutralButton("Reset") { _, _ -> viewModel.update { it.withAlignment(0f, 0f) } }
+            .setNeutralButton("Reset") { _, _ -> target.update { it.withAlignment(0f, 0f) } }
             .show()
     }
 }

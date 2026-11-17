@@ -51,9 +51,15 @@ enum class FocusMode(val label: String) {
 }
 
 /** Where the stereo images come from. Only one source runs at a time. */
-enum class CameraSource(val label: String, val shortLabel: String) {
-    BEAM_PRO("Beam Pro / phone rear cameras", "Beam Pro"),
-    GLASSES("Glasses tracking cameras (Air 2 Ultra, over USB)", "Glasses"),
+enum class CameraSource(val label: String, val shortLabel: String, val homeTitle: String, val homeDescription: String) {
+    BEAM_PRO(
+        "Beam Pro / phone rear cameras", "Beam Pro", "Beam Pro / Phone",
+        "The device's rear stereo cameras (color, up to 1080p) with its IMU",
+    ),
+    GLASSES(
+        "Glasses tracking cameras (Air 2 Ultra, over USB)", "Glasses", "Glasses",
+        "The Air 2 Ultra's two grayscale tracking cameras (480×640, 30 fps) and its IMU, over USB",
+    ),
 }
 
 /** Which image a recording stores per camera. */
@@ -325,13 +331,38 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     var loaded = false
         private set
 
+    /** Profile to switch to once the stored settings are in (set before they load). */
+    private var startProfile: String? = null
+
     init {
         viewModelScope.launch {
-            _profiles.value = repository.profiles.first()
+            val profiles = repository.profiles.first()
+            _profiles.value = profiles
             val stored = repository.settings.first()
             loaded = true
-            _settings.value = stored
+            val start = startProfile?.let(profiles::find)
+            if (start != null) {
+                _settings.value = stored.withProfile(start.settings)
+                setProfiles(profiles.copy(active = start.name))
+                repository.save(_settings.value)
+            } else {
+                _settings.value = stored
+            }
+            // Follow profile edits made elsewhere (another screen saves them to the same store).
+            repository.profiles.collect { _profiles.value = it }
         }
+    }
+
+    /** Switches to profile [name] now, or as soon as the stored settings are loaded. */
+    fun startWithProfile(name: String) {
+        if (loaded) selectProfile(name) else startProfile = name
+    }
+
+    /** Stores [profile] (new, or replacing the one with its name) without applying it. */
+    fun putProfile(profile: Profile) {
+        val state = _profiles.value
+        val list = if (state.find(profile.name) != null) state.profiles.map { if (it.name == profile.name) profile else it } else state.profiles + profile
+        setProfiles(state.copy(profiles = list))
     }
 
     /** Switches to profile [name], replacing every profile setting. */
