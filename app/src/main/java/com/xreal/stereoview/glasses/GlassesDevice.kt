@@ -315,7 +315,7 @@ class GlassesDevice(private val context: Context, private val listener: Listener
      * to the decode thread through a small pool of buffers, dropping frames when it lags.
      */
     private inner class Assembler(private val decoder: Handler) {
-        private val pool = ArrayBlockingQueue<ByteArray>(4).apply { repeat(4) { add(ByteArray(GlassesProtocol.FRAME_BYTES)) } }
+        private val pool = ArrayBlockingQueue<ByteArray>(POOL).apply { repeat(POOL) { add(ByteArray(GlassesProtocol.FRAME_BYTES)) } }
         private var current: ByteArray? = null
         private var filled = 0
         private var lastFid = -1
@@ -453,6 +453,8 @@ class GlassesDevice(private val context: Context, private val listener: Listener
         const val TAG = "GlassesDevice"
         const val CAMERA_REQUESTS = 12
         const val IMU_REQUESTS = 4
+        /** Frames being assembled or waiting for the decode thread. */
+        const val POOL = 8
         /** Bytes of each frame's metadata row kept in [Eye.meta]. */
         const val META_BYTES = 64
         const val ACTION_PERMISSION = "com.xreal.stereoview.GLASSES_USB_PERMISSION"

@@ -181,6 +181,15 @@ class Recording private constructor(
         }.toString())
     }
 
+    override val backlog: String
+        get() = "write queue " + outputs.joinToString(", ") { o ->
+            o.video?.let { "${o.name} %.1f MB".format(it.backlogBytes / 1e6) }
+                ?: o.images?.let { "${o.name} ${it.backlog}/${it.capacity} images, ${it.dropped.get()} dropped" } ?: o.name
+        }
+
+    override fun writeErrors(): String? = outputs.flatMap { listOf(it.data, it.frames, it.results) }
+        .firstNotNullOfOrNull { it.error }?.toString()
+
     /** Closes encoders and files and completes metadata.json. Blocking; call off the main thread. */
     override fun finish(): String {
         val end = Metadata.clocks()
@@ -211,6 +220,7 @@ class Recording private constructor(
                 put("max_gap_ms", o.maxGapNs / 1e6)
                 o.video?.let {
                     put("video_samples", it.samples)
+                    put("write_backlog_peak_mb", it.peakBacklogBytes / 1e6)
                     put("encoder", it.codecName)
                     it.error?.let { e -> put("encoder_error", e) }
                 }
@@ -218,6 +228,8 @@ class Recording private constructor(
                     put("images_written", it.written.get())
                     put("images_dropped", it.dropped.get())
                     put("images_failed", it.failed.get())
+                    put("write_queue_capacity", it.capacity)
+                    put("write_queue_peak", it.peakBacklog)
                 }
                 put("capture_results", o.results.lines - 1)
             })

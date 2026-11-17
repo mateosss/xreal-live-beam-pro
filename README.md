@@ -144,11 +144,20 @@ the elapsed time. Configure it under *Settings → Recording*:
 | Option | Choices |
 |---|---|
 | Images | **Raw**: each camera's stream as delivered (lens distortion intact, not rotated). **Rectified**: what each eye shows (undistorted, rectified, aligned, with the current zoom, convergence and stabilization; *1:1* scale is recorded as *Fill*) |
-| Format | H.264 or H.265 video per camera (hardware encoder, no B-frames), one 8-bit grayscale PNG per frame (as EuRoC), or one JPEG per frame. The image formats can drop frames when the writer falls behind; metadata.json counts them |
+| Format | H.264 or H.265 video per camera (hardware encoder, no B-frames), one 8-bit grayscale PNG per frame (as EuRoC), or one JPEG per frame. See *Writing* below |
 | Video bitrate | 10–100 Mbit/s per camera |
 | IMU rate | Fastest the sensors allow, 500/200/100 Hz through a listener, or a shared-memory direct channel (~800 or ~200 Hz) where the sensor supports it |
 | IMU streams | Accelerometer, gyroscope, their uncalibrated versions with bias, magnetometer (calibrated or not), game/rotation vector, gravity, linear acceleration, barometer |
 | Recordings… | Lists recordings with their sizes, and deletes them |
+
+**Writing.** No capture thread waits for storage. CSV files are buffered in memory and
+written by a background thread a few times a second; encoded video is copied out of the
+encoder and written by its own thread (up to 128 MB may wait per camera); PNG/JPEG frames
+queue for a pool of compression threads with room for about 160 MB of frames per camera (a
+few seconds at 720p), and glasses frames with room for about 4 s. A frame is dropped only when
+that queue is full, and `metadata.json` records drops and the deepest queue seen. The HUD shows
+the queues while recording. A recording stops by itself if a write fails or less than 200 MB of
+storage is left.
 
 *Settings → Focus → Locked at infinity* keeps the intrinsics fixed, which SLAM needs. For SLAM,
 also turn stabilization off when recording rectified images, or each frame is rotated by

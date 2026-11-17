@@ -423,6 +423,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
                 ))
                 appendLine("incomplete %d  dropped payloads %d".format(g.incomplete, g.dropped))
                 appendLine(if (glassesImuActive) "glasses IMU %.0f Hz".format(g.imuSamples / seconds) else "glasses IMU: left to the system")
+                recording?.let { appendLine(it.backlog) }
                 append(stats.view)
             }
             return
@@ -437,6 +438,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
                 )
             )
             appendLine(captureStats)
+            recording?.let { appendLine(it.backlog) }
             append(stats.view)
         }
     }
@@ -618,6 +620,8 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             return
         }
         if (rec is GlassesRecording && !glasses.isRunning) rec.error = "the glasses stream stopped"
+        rec.writeErrors()?.let { rec.error = "writing failed ($it)" }
+        if (rec.dir.usableSpace < STOP_FREE_BYTES) rec.error = "storage is almost full"
         rec.error?.let {
             stopRecording("⚠ Recording failed: $it")
             return
@@ -839,6 +843,8 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     private companion object {
         const val TAG = "StereoView"
         const val MIN_FREE_BYTES = 500_000_000L
+        /** Recordings stop below this, leaving room to finish their files. */
+        const val STOP_FREE_BYTES = 200_000_000L
     }
 
     private fun displayRotation(): Int = display?.rotation ?: 0

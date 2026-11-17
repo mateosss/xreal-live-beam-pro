@@ -53,8 +53,15 @@ class GlassesRecording private constructor(
     @Volatile
     override var error: String? = null
 
-    /** PNG encoding off the decode thread; frames are dropped (and counted) when it falls behind. */
-    private val encoder = ThreadPoolExecutor(2, 2, 1, TimeUnit.SECONDS, ArrayBlockingQueue(12))
+    /**
+     * PNG encoding and writing off the decode thread, with room for several seconds of frames
+     * (300 kB each) when storage stalls; only beyond that are frames dropped (and counted).
+     */
+    private val encoder = ThreadPoolExecutor(3, 3, 1, TimeUnit.SECONDS, ArrayBlockingQueue(QUEUE_FRAMES)) { r ->
+        Thread(r, "GlassesPng")
+    }
+    @Volatile
+    private var peakQueue = 0
     private val dropped = AtomicInteger()
     private val failed = AtomicInteger()
     private var imuSamples = 0L
@@ -83,6 +90,7 @@ class GlassesRecording private constructor(
             cameraOffset.add(eye.arrivalNs, eye.timestampNs)
             try {
                 encoder.execute { store(cam, eye) }
+                encoder.queue.size.let { if (it > peakQueue) peakQueue = it }
             } catch (e: java.util.concurrent.RejectedExecutionException) {
                 dropped.incrementAndGet()
             }
@@ -144,10 +152,16 @@ class GlassesRecording private constructor(
         }.toString())
     }
 
+    override val backlog: String
+        get() = "write queue ${encoder.queue.size}/$QUEUE_FRAMES images (peak $peakQueue), dropped ${dropped.get()}"
+
+    override fun writeErrors(): String? = (cams.flatMap { listOf(it.data, it.frames) } + listOfNotNull(imu0, glassesImu))
+        .firstNotNullOfOrNull { it.error }?.toString()
+
     override fun finish(): String {
         val end = Metadata.clocks()
         encoder.shutdown()
-        encoder.awaitTermination(30, TimeUnit.SECONDS)
+        encoder.awaitTermination(5, TimeUnit.MINUTES)
         val imuSummary = imu.stop()
         cams.forEach {
             it.data.close()
@@ -194,6 +208,8 @@ class GlassesRecording private constructor(
         }
         metadata.put("stats", JSONObject().apply {
             put("frames_dropped_by_encoder", dropped.get())
+            put("write_queue_capacity_frames", QUEUE_FRAMES)
+            put("write_queue_peak_frames", peakQueue)
             put("frames_failed", failed.get())
             put("glasses_imu_samples", imuSamples)
         })
@@ -214,6 +230,8 @@ class GlassesRecording private constructor(
         private const val TAG = "GlassesRecording"
         private const val IMAGE_W = 480
         private const val IMAGE_H = 640
+        /** About 4 s of both cameras. */
+        private const val QUEUE_FRAMES = 240
 
         fun start(context: Context, s: StereoSettings, device: UsbDevice, withImu: Boolean, extraInfo: JSONObject): GlassesRecording {
             val name = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())

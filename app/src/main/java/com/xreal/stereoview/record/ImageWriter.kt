@@ -14,24 +14,50 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Compresses RGBA frames to `<dir>/<timestamp_ns>.jpg`, or with [png] to 8-bit grayscale
- * `<dir>/<timestamp_ns>.png` (as EuRoC stores images), on a small thread pool. Frames are read
- * into a fixed pool of buffers; when all are busy (the encoder can't keep up) the frame is
- * dropped and counted instead of stalling the camera.
+ * `<dir>/<timestamp_ns>.png` (as EuRoC stores images), on a small thread pool. Frames are copied
+ * into a pool of buffers that grows up to [memoryBudget] bytes, so a few seconds of slow
+ * storage or compression are absorbed; only when that backlog is full is a frame dropped
+ * (and counted) instead of stalling the camera.
  */
-class ImageWriter(private val dir: File, val width: Int, val height: Int, val png: Boolean, private val quality: Int = 95) {
+class ImageWriter(
+    private val dir: File,
+    val width: Int,
+    val height: Int,
+    val png: Boolean,
+    memoryBudget: Long = 160L shl 20,
+    private val quality: Int = 95,
+) {
     val extension: String get() = if (png) "png" else "jpg"
-    private val free = ArrayBlockingQueue<ByteBuffer>(BUFFERS)
-    private val executor = Executors.newFixedThreadPool(THREADS)
+    private val frameBytes = width * height * 4
+    /** Frames that can wait at once: at least 8, about [memoryBudget] bytes in all. */
+    val capacity = (memoryBudget / frameBytes).toInt().coerceIn(8, 240)
+    private val free = ArrayBlockingQueue<ByteBuffer>(capacity)
+    private var allocated = 0
+    private val executor = Executors.newFixedThreadPool(THREADS) { r ->
+        Thread(r, "ImageWriter").apply { priority = Thread.NORM_PRIORITY }
+    }
     private val bitmaps = ThreadLocal.withInitial { Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888) }
     private val grays = ThreadLocal.withInitial { ByteArray(width * height) }
 
     val written = AtomicInteger()
     val dropped = AtomicInteger()
     val failed = AtomicInteger()
+    private val queued = AtomicInteger()
+
+    /** Frames waiting to be written now, and the most seen at once. */
+    val backlog: Int get() = queued.get()
+    @Volatile
+    var peakBacklog = 0
+        private set
 
     init {
         dir.mkdirs()
-        repeat(BUFFERS) { free.add(ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())) }
+        repeat(8) { free.add(newBuffer()) }
+    }
+
+    private fun newBuffer(): ByteBuffer {
+        allocated++
+        return ByteBuffer.allocateDirect(frameBytes).order(ByteOrder.nativeOrder())
     }
 
     /**
@@ -39,12 +65,14 @@ class ImageWriter(private val dir: File, val width: Int, val height: Int, val pn
      * frame was dropped.
      */
     fun submit(timestampNs: Long, read: (ByteBuffer) -> Unit): Boolean {
-        val buffer = free.poll() ?: run {
+        val buffer = free.poll() ?: (if (allocated < capacity) runCatching { newBuffer() }.getOrNull() else null) ?: run {
             dropped.incrementAndGet()
             return false
         }
         buffer.position(0)
         read(buffer)
+        val n = queued.incrementAndGet()
+        if (n > peakBacklog) peakBacklog = n
         executor.execute {
             try {
                 buffer.position(0)
@@ -68,6 +96,7 @@ class ImageWriter(private val dir: File, val width: Int, val height: Int, val pn
                 Log.w("ImageWriter", "Writing $timestampNs failed", e)
                 failed.incrementAndGet()
             } finally {
+                queued.decrementAndGet()
                 free.add(buffer)
             }
         }
@@ -77,11 +106,10 @@ class ImageWriter(private val dir: File, val width: Int, val height: Int, val pn
     /** Waits for queued frames to be written. */
     fun finish() {
         executor.shutdown()
-        executor.awaitTermination(30, TimeUnit.SECONDS)
+        executor.awaitTermination(5, TimeUnit.MINUTES)
     }
 
     private companion object {
-        const val BUFFERS = 8
         const val THREADS = 3
     }
 }
