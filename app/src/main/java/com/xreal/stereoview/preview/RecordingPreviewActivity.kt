@@ -275,6 +275,7 @@ class RecordingPreviewActivity : AppCompatActivity() {
         }
         if (d.cameras.isEmpty()) grid.addView(label("No cameras in this recording", 14f))
         tiles = tileViews
+        loader?.invalidate()
         loader?.maxWidth = (resources.displayMetrics.widthPixels / columns.coerceAtLeast(1)).coerceAtMost(1280)
 
         // IMU: gyroscope and accelerometer, with the visible span.

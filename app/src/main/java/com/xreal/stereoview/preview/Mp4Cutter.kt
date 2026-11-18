@@ -5,6 +5,7 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import com.xreal.stereoview.record.DatasetTrimmer
+import com.xreal.stereoview.record.MkvReader
 import java.io.File
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -16,6 +17,7 @@ import java.nio.ByteBuffer
  */
 object Mp4Cutter : DatasetTrimmer.VideoCutter {
     override fun cut(source: File, target: File, first: Int, last: Int): Int {
+        if (source.name.endsWith(".mkv")) return cutMkv(source, target, first, last)
         val keyframe = keyframeAtOrBefore(source, first)
         if (target.name.endsWith(".mkv")) return cutToMkv(source, target, keyframe, last)
         val extractor = MediaExtractor()
@@ -87,6 +89,26 @@ object Mp4Cutter : DatasetTrimmer.VideoCutter {
         }
         return keyframe
     }
+
+    /**
+     * Matroska recordings are read with [MkvReader] (no Android extractor), so files without a
+     * seek index or cut off by a crash are trimmed the same on every device.
+     */
+    private fun cutMkv(source: File, target: File, first: Int, last: Int): Int =
+        MkvReader.open(source).use { mkv ->
+            if (mkv.frames.isEmpty()) throw IOException("${source.name} has no frames")
+            val keyframe = mkv.keyframeAtOrBefore(first)
+            val writer = com.xreal.stereoview.record.MkvWriter(target, mkv.width, mkv.height, mkv.sps, mkv.pps)
+            try {
+                for (i in keyframe..minOf(last, mkv.frames.size - 1)) {
+                    val data = mkv.annexB(i)
+                    writer.writeFrame(mkv.frames[i].timeMs * 1000, data, 0, data.size, mkv.frames[i].keyframe)
+                }
+            } finally {
+                writer.close()
+            }
+            keyframe
+        }
 
     private fun keyframeAtOrBefore(source: File, frame: Int): Int {
         val extractor = MediaExtractor()
