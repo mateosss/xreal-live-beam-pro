@@ -67,6 +67,8 @@ class RecordingPreviewActivity : AppCompatActivity() {
     private lateinit var root: LinearLayout
     private var timeline: TimelineView? = null
     private var tiles: List<Pair<ImageView, TextView>> = emptyList()
+    /** Per camera: why its frame cannot be shown (hidden when it can). */
+    private var tileErrors: List<TextView> = emptyList()
     private var plots: List<ImuPlotView> = emptyList()
     private var timeText: TextView? = null
     private var frameText: TextView? = null
@@ -90,7 +92,7 @@ class RecordingPreviewActivity : AppCompatActivity() {
                 result.onSuccess { (d, s) ->
                     dataset = d
                     stats = s
-                    loader = FrameLoader(d.cameras) { camera, frame, bitmap -> onFrameDecoded(camera, frame, bitmap) }
+                    loader = FrameLoader(d.cameras) { camera, frame, bitmap, error -> onFrameDecoded(camera, frame, bitmap, error) }
                     build()
                 }.onFailure { e ->
                     Dialogs.info(this, "Cannot open ${dir.name}", e.message ?: e.toString())
@@ -255,6 +257,7 @@ class RecordingPreviewActivity : AppCompatActivity() {
             else -> minOf(d.cameras.size, 3)
         }
         val tileViews = ArrayList<Pair<ImageView, TextView>>()
+        val errorViews = ArrayList<TextView>()
         d.cameras.chunked(columns).forEach { rowCams ->
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             for (c in rowCams) {
@@ -267,6 +270,14 @@ class RecordingPreviewActivity : AppCompatActivity() {
                     typeface = Typeface.MONOSPACE
                 }
                 tile.addView(caption, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                val error = label("", 12f).apply {
+                    gravity = android.view.Gravity.CENTER
+                    setTextColor(Color.rgb(255, 180, 120))
+                    setPadding(dp(12), dp(12), dp(12), dp(12))
+                    visibility = View.GONE
+                }
+                tile.addView(error, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, android.view.Gravity.CENTER))
+                errorViews += error
                 row.addView(tile, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) })
                 tileViews += image to caption
             }
@@ -275,6 +286,7 @@ class RecordingPreviewActivity : AppCompatActivity() {
         }
         if (d.cameras.isEmpty()) grid.addView(label("No cameras in this recording", 14f))
         tiles = tileViews
+        tileErrors = errorViews
         loader?.invalidate()
         loader?.maxWidth = (resources.displayMetrics.widthPixels / columns.coerceAtLeast(1)).coerceAtMost(1280)
 
@@ -500,8 +512,12 @@ class RecordingPreviewActivity : AppCompatActivity() {
         } ?: ""
     }
 
-    private fun onFrameDecoded(camera: Int, frame: Int, bitmap: Bitmap?) {
+    private fun onFrameDecoded(camera: Int, frame: Int, bitmap: Bitmap?, error: String?) {
         tiles.getOrNull(camera)?.first?.setImageBitmap(bitmap)
+        tileErrors.getOrNull(camera)?.apply {
+            text = error.orEmpty()
+            visibility = if (bitmap == null && error != null) View.VISIBLE else View.GONE
+        }
     }
 
     /** Moves to the previous or next frame of the first camera. */

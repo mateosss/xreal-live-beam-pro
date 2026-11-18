@@ -13,7 +13,7 @@ import com.xreal.stereoview.record.Dataset
  * camera is kept, so scrubbing never builds a backlog; results arrive on the main thread.
  * Images are decoded at about [maxWidth] pixels wide; videos by [VideoFrameDecoder], by frame index.
  */
-class FrameLoader(private val cameras: List<Dataset.Camera>, private val onFrame: (camera: Int, frame: Int, Bitmap?) -> Unit) {
+class FrameLoader(private val cameras: List<Dataset.Camera>, private val onFrame: (camera: Int, frame: Int, Bitmap?, error: String?) -> Unit) {
     private val thread = HandlerThread("PreviewFrames").apply { start() }
     private val handler = Handler(thread.looper)
     private val main = Handler(Looper.getMainLooper())
@@ -35,28 +35,42 @@ class FrameLoader(private val cameras: List<Dataset.Camera>, private val onFrame
 
     private fun decode(camera: Int) {
         val frame = synchronized(pending) { pending[camera].also { pending[camera] = null } } ?: return
-        val bitmap = decodeFrame(camera, frame)
+        val (bitmap, error) = decodeFrame(camera, frame)
         synchronized(pending) { shown[camera] = frame }
-        main.post { onFrame(camera, frame, bitmap) }
+        main.post { onFrame(camera, frame, bitmap, error) }
     }
 
-    private fun decodeFrame(camera: Int, frame: Int): Bitmap? {
+    /** The frame, or null and why not (shown on the tile). */
+    private fun decodeFrame(camera: Int, frame: Int): Pair<Bitmap?, String?> {
+        val c = cameras[camera]
         return try {
-            val c = cameras[camera]
             if (c.video != null) {
                 val d = decoders[camera] ?: VideoFrameDecoder(c.video).also { decoders[camera] = it }
-                d.frame(frame, maxWidth)
+                if (frame >= d.frameCount) {
+                    return null to "${c.video.name} has ${d.frameCount} frames but data.csv has ${c.timestamps.size} rows"
+                }
+                val b = d.frame(frame, maxWidth)
+                b to (if (b == null) "Frame ${frame + 1} of ${c.video.name} could not be decoded" else null)
             } else {
                 val file = c.imageFile(frame)
+                if (!file.exists()) {
+                    val name = c.files.getOrNull(frame).orEmpty()
+                    return null to if (name.isEmpty() || name.endsWith(".png") || name.endsWith(".jpg")) {
+                        "${c.name}: no data/$name and no data.mkv or data.mp4 in this folder"
+                    } else {
+                        "${c.name}: missing data/$name"
+                    }
+                }
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeFile(file.path, bounds)
                 var sample = 1
                 while (bounds.outWidth / (sample * 2) >= maxWidth) sample *= 2
-                BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inSampleSize = sample })
+                val b = BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inSampleSize = sample })
+                b to (if (b == null) "${file.name} could not be decoded" else null)
             }
         } catch (e: Exception) {
             Log.w("FrameLoader", "Frame $frame of camera $camera", e)
-            null
+            null to "${c.name}: ${e.message ?: e.javaClass.simpleName}"
         }
     }
 

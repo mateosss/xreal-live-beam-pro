@@ -77,6 +77,8 @@ class VideoEncoder(
 
     @Volatile
     var samples = 0
+    /** Encoded frames that could not go into the file (container not started); they have no data.csv row. */
+    @Volatile var notWritten = 0
         private set
 
     @Volatile
@@ -130,7 +132,7 @@ class VideoEncoder(
 
             override fun onOutputBufferAvailable(codec: MediaCodec, index: Int, info: MediaCodec.BufferInfo) {
                 val isConfig = info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
-                if (info.size > 0 && !isConfig) {
+                if (info.size > 0) {
                     val buffer = codec.getOutputBuffer(index)
                     if (buffer != null) {
                         buffer.position(info.offset)
@@ -138,11 +140,22 @@ class VideoEncoder(
                         val copy = ByteArray(info.size).also { buffer.get(it) }
                         val pts = info.presentationTimeUs
                         val key = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
-                        writer.post(info.size) {
-                            // The data.csv row first: a crash between the two leaves one extra row, never a frame without one.
-                            onWritten(pts)
-                            sink.write(copy, pts, key)
-                            samples++
+                        if (isConfig) {
+                            // Some encoders give SPS/PPS only here, not (or not fully) in the output format.
+                            writer.post { sink.config(copy) }
+                        } else {
+                            writer.post(info.size) {
+                                // Only frames that go into the file get a data.csv row; the row first, so a
+                                // crash between the two leaves one extra row, never a frame without one.
+                                if (sink.ready(copy, key)) {
+                                    onWritten(pts)
+                                    sink.write(copy, pts, key)
+                                    samples++
+                                } else {
+                                    notWritten++
+                                    if (error == null) error = sink.notReadyReason
+                                }
+                            }
                         }
                     }
                 }
@@ -353,19 +366,51 @@ class VideoEncoder(
 
     private interface Sink {
         fun start(format: MediaFormat)
+        /** A codec-config buffer (SPS/PPS) from the encoder. */
+        fun config(data: ByteArray) {}
+        /** Whether frame [data] can be written now (starts the container if needed). */
+        fun ready(data: ByteArray, keyframe: Boolean): Boolean
+        val notReadyReason: String
         fun write(data: ByteArray, ptsUs: Long, keyframe: Boolean)
         fun close()
     }
 
-    /** Matroska: crash-safe, fsync'd every 2 s. */
+    /**
+     * Matroska: crash-safe, fsync'd every 2 s. The file starts once the SPS and PPS are known:
+     * encoders give them in the output format (csd-0 and csd-1, or both in csd-0), in a
+     * codec-config buffer, or in front of keyframes; all are accepted.
+     */
     private class MkvSink(private val file: File, private val width: Int, private val height: Int) : Sink {
         private var mkv: MkvWriter? = null
         private var lastSync = 0L
+        private var sps: ByteArray? = null
+        private var pps: ByteArray? = null
+        override val notReadyReason = "the encoder gave no SPS/PPS, so frames before the first keyframe carrying them were not written"
 
         override fun start(format: MediaFormat) {
-            val sps = format.getByteBuffer("csd-0")?.let { bytes(it) } ?: return
-            val pps = format.getByteBuffer("csd-1")?.let { bytes(it) } ?: return
-            mkv = MkvWriter(file, width, height, sps, pps)
+            for (key in listOf("csd-0", "csd-1")) format.getByteBuffer(key)?.let { learn(bytes(it)) }
+        }
+
+        override fun config(data: ByteArray) = learn(data)
+
+        private fun learn(data: ByteArray) {
+            for (nal in MkvWriter.nalUnits(data, 0, data.size)) {
+                when (nal[0].toInt() and 0x1f) {
+                    7 -> if (sps == null) sps = nal
+                    8 -> if (pps == null) pps = nal
+                }
+            }
+        }
+
+        override fun ready(data: ByteArray, keyframe: Boolean): Boolean {
+            if (mkv != null) return true
+            if (!keyframe) return false
+            learn(data)
+            val s = sps ?: return false
+            val p = pps ?: return false
+            mkv = MkvWriter(file, width, height, s, p)
+            Log.i(TAG, "Writing ${file.name}: SPS ${s.size} B, PPS ${p.size} B")
+            return true
         }
 
         override fun write(data: ByteArray, ptsUs: Long, keyframe: Boolean) {
@@ -395,6 +440,9 @@ class VideoEncoder(
             track = muxer.addTrack(format)
             muxer.start()
         }
+
+        override val notReadyReason = "the encoder gave no output format, so frames were not written"
+        override fun ready(data: ByteArray, keyframe: Boolean) = track >= 0
 
         override fun write(data: ByteArray, ptsUs: Long, keyframe: Boolean) {
             if (track < 0) return

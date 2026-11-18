@@ -192,6 +192,7 @@ class GlassesRecording private constructor(
             cam.video?.let {
                 it.finish()
                 metadata.getJSONArray("cameras").optJSONObject(cams.indexOf(cam))?.put("encoder_settings", it.applied)
+                    ?.apply { if (it.notWritten > 0) put("video_frames_not_written", it.notWritten) }
                 it.error?.let { e -> error = error ?: "${cam.name} encoder: $e" }
             }
         }

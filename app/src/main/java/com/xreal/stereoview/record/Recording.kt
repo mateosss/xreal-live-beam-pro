@@ -230,6 +230,7 @@ class Recording private constructor(
                 put("max_gap_ms", o.maxGapNs / 1e6)
                 o.video?.let {
                     put("video_samples", it.samples)
+                    if (it.notWritten > 0) put("video_frames_not_written", it.notWritten)
                     put("write_backlog_peak_mb", it.peakBacklogBytes / 1e6)
                     put("encoder", it.codecName)
                     put("encoder_settings", it.applied)

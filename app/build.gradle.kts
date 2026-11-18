@@ -11,8 +11,9 @@ android {
         applicationId = "com.xreal.stereoview"
         minSdk = 31
         targetSdk = 34
-        versionCode = 24
-        versionName = "0.14.1"
+        versionCode = 25
+        versionName = "0.14.2"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // OAK (DepthAI) support: JNI glue over the prebuilt depthai-core, arm64 only.
         externalNativeBuild {
@@ -78,6 +79,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
 
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
     testImplementation("org.json:json:20240303") // the real org.json, for profile tests on the JVM
     // Camera2 and OpenGL ES 2.0 are part of the platform; no extra dependencies.
 }
