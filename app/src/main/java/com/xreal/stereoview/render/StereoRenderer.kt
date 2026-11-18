@@ -368,7 +368,9 @@ class StereoRenderer(
         private val x: IntArray, private val y: IntArray, private val portraitPreview: Boolean,
     ) {
         fun apply(eye: Int) = GLES20.glViewport(x[eye], y[eye], width, height)
-        fun mode(s: StereoSettings): ScaleMode = if (portraitPreview) ScaleMode.FIT else s.scaleMode
+        /** Portrait: the phone preview's own mode (1:1 = Fit there). */
+        fun mode(s: StereoSettings): ScaleMode =
+            if (portraitPreview) s.portraitScaleMode.let { if (it == ScaleMode.REAL) ScaleMode.FIT else it } else s.scaleMode
         /** Depth zoom and convergence shift crop the image, so the portrait preview leaves them out. */
         fun zoom(s: StereoSettings): Float = if (portraitPreview) 1f else s.depth.coerceIn(StereoSettings.DEPTH_MIN, StereoSettings.DEPTH_MAX)
         fun convergencePx(s: StereoSettings): Float = if (portraitPreview) 0f else s.convergencePx
@@ -377,21 +379,20 @@ class StereoRenderer(
     /** [imageAspect]: width / height of what each eye shows, as it appears upright. */
     private fun eyeLayout(s: StereoSettings, imageAspect: Float): EyeLayout {
         if (height > width) {
+            // Phone preview in portrait: the top 3/5 of the screen, split by image shape (tall
+            // images side by side, wide ones stacked); the portrait scale mode fits each image
+            // into its half (Fit: whole image).
             val available = height * 3 / 5
             return if (imageAspect < 1f) {
-                var w = width / 2
-                var h = (w / imageAspect).toInt()
-                if (h > available) { h = available; w = (h * imageAspect).toInt() }
-                val x0 = (width / 2 - w) / 2
-                EyeLayout(w, h, w.toFloat() / h, "side by side (portrait preview, whole image)",
-                    intArrayOf(x0, width / 2 + x0), intArrayOf(height - h, height - h), true)
+                val w = width / 2
+                val h = available
+                EyeLayout(w, h, w.toFloat() / h, "side by side (portrait preview)",
+                    intArrayOf(0, w), intArrayOf(height - h, height - h), true)
             } else {
-                var w = width
-                var h = (w / imageAspect).toInt()
-                if (h > available / 2) { h = available / 2; w = (h * imageAspect).toInt() }
-                val x0 = (width - w) / 2
-                EyeLayout(w, h, w.toFloat() / h, "stacked (portrait preview, whole image)",
-                    intArrayOf(x0, x0), intArrayOf(height - h, height - 2 * h), true)
+                val w = width
+                val h = available / 2
+                EyeLayout(w, h, w.toFloat() / h, "stacked (portrait preview)",
+                    intArrayOf(0, 0), intArrayOf(height - h, height - 2 * h), true)
             }
         }
         val eyeWidth = width / 2

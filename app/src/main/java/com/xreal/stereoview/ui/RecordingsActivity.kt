@@ -21,6 +21,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.PopupMenu
+import com.google.android.material.progressindicator.LinearProgressIndicator
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.google.android.material.button.MaterialButton
@@ -81,6 +82,13 @@ class RecordingsActivity : AppCompatActivity() {
             setTextColor(ContextCompat.getColor(this@RecordingsActivity, R.color.accent))
         }
         root.addView(status)
+        topProgress = LinearProgressIndicator(this).apply {
+            max = 1000
+            visibility = View.GONE
+        }
+        root.addView(topProgress, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            marginStart = dp(20); marginEnd = dp(20); bottomMargin = dp(8)
+        })
         list = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), 0, dp(16), dp(24))
@@ -105,6 +113,8 @@ class RecordingsActivity : AppCompatActivity() {
 
     private fun refresh() {
         list.removeAllViews()
+        cardProgress = null
+        topProgress.visibility = if (busy != null) View.VISIBLE else View.GONE
         val root = Recording.root(this)
         status.text = busy ?: "%.1f GB free · %s".format(
             (if (root.exists()) root.usableSpace else getExternalFilesDir(null)?.usableSpace ?: 0L) / 1e9, root.path,
@@ -160,11 +170,11 @@ class RecordingsActivity : AppCompatActivity() {
             setOnClickListener { if (busy != null) toast("Wait for: $busy") else action() }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(4) })
         button("Preview", filled = true) { preview(f) }
-        button("Copy path") { copyPath(f) }
+        button("Rename") { rename(f) }
         if (f.isDirectory) button("Zip") { zip(f) } else button("Unzip") { unzip(f) }
         button("To Downloads") { toDownloads(f) }
-        button("Share") { share(f) }
-        buttons.addView(MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
+        // ⋮ stays pinned at the right; the other buttons scroll if they don't fit.
+        val more = (MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
             setIconResource(R.drawable.ic_more_vert)
             iconPadding = 0
             minWidth = 0
@@ -172,6 +182,12 @@ class RecordingsActivity : AppCompatActivity() {
             isEnabled = !active
             setOnClickListener { v ->
                 PopupMenu(this@RecordingsActivity, v).apply {
+                    fun item(label: String, action: () -> Unit) = menu.add(label).setOnMenuItemClickListener {
+                        if (busy != null) toast("Wait for: $busy") else action()
+                        true
+                    }
+                    item("Copy path") { copyPath(f) }
+                    item("Share") { share(f) }
                     menu.add("Delete").setOnMenuItemClickListener {
                         Dialogs.confirm(this@RecordingsActivity, "Delete ${f.name}?", "Delete") {
                             f.deleteRecursively()
@@ -183,9 +199,22 @@ class RecordingsActivity : AppCompatActivity() {
                 }.show()
             }
         })
-        content.addView(HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            addView(buttons)
+        if (busyFile?.canonicalPath == f.canonicalPath) {
+            content.addView(LinearProgressIndicator(this).apply {
+                isIndeterminate = busyFraction < 0
+                if (busyFraction >= 0) setProgressCompat((busyFraction * 1000).toInt(), false)
+                max = 1000
+                cardProgress = this
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6); marginEnd = dp(8) })
+        }
+        content.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(HorizontalScrollView(this@RecordingsActivity).apply {
+                isHorizontalScrollBarEnabled = false
+                addView(buttons)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(more)
         })
         return MaterialCardView(this).apply {
             radius = dp(14).toFloat()
@@ -254,11 +283,19 @@ class RecordingsActivity : AppCompatActivity() {
     }
 
     private var result: File? = null
+    private var busyFile: File? = null
+    /** Progress of the running operation, 0..1 (negative: not known yet). */
+    private var busyFraction = -1f
+    private lateinit var topProgress: LinearProgressIndicator
+    private var cardProgress: LinearProgressIndicator? = null
 
     /** Runs [work] in the background with progress; [then] gets [result] on the main thread. */
     private fun run(label: String, f: File, then: (File?) -> Unit = {}, work: ((Long, Long) -> Unit) -> String) {
         if (activeDir?.canonicalPath == f.canonicalPath) return
         busy = label
+        busyFile = f
+        busyFraction = -1f
+        topProgress.isIndeterminate = true
         result = null
         refresh()
         var lastUpdate = 0L
@@ -268,8 +305,9 @@ class RecordingsActivity : AppCompatActivity() {
                     val now = System.currentTimeMillis()
                     if (now - lastUpdate > 200) {
                         lastUpdate = now
-                        val text = "$label… %.0f%% (%.0f / %.0f MB)".format(100.0 * done / total.coerceAtLeast(1), done / 1e6, total / 1e6)
-                        main.post { status.text = text }
+                        val fraction = (done.toFloat() / total.coerceAtLeast(1)).coerceIn(0f, 1f)
+                        val text = "$label… %.0f%% (%.0f / %.0f MB)".format(100.0 * fraction, done / 1e6, total / 1e6)
+                        main.post { showProgress(text, fraction) }
                     }
                 }
             } catch (e: Exception) {
@@ -277,10 +315,59 @@ class RecordingsActivity : AppCompatActivity() {
             }
             main.post {
                 busy = null
+                busyFile = null
                 if (isDestroyed) return@post
                 toast(message)
                 refresh()
                 then(result)
+            }
+        }
+    }
+
+    private fun showProgress(text: String, fraction: Float) {
+        if (busy == null) return
+        status.text = text
+        busyFraction = fraction
+        for (bar in listOfNotNull(topProgress, cardProgress)) {
+            if (bar.isIndeterminate) {
+                // Switching off indeterminate mode needs the bar hidden first.
+                bar.visibility = View.INVISIBLE
+                bar.isIndeterminate = false
+                bar.visibility = View.VISIBLE
+            }
+            bar.setProgressCompat((fraction * 1000).toInt(), true)
+        }
+    }
+
+    /** Renames a recording folder (and the name in its metadata.json) or a zip. */
+    private fun rename(f: File) {
+        val zipped = !f.isDirectory
+        val current = if (zipped) f.name.removeSuffix(".zip") else f.name
+        Dialogs.askText(this, "Rename recording", current, "Rename") { input ->
+            val name = input.trim().replace('/', '_').removeSuffix(".zip")
+            if (name.isEmpty() || name == current) return@askText
+            if (name.endsWith(".part") || name.endsWith(".unzipping")) {
+                toast("Names ending in .part or .unzipping are reserved")
+                return@askText
+            }
+            val target = File(f.parentFile, if (zipped) "$name.zip" else name)
+            val other = File(f.parentFile, if (zipped) name else "$name.zip")
+            when {
+                target.exists() -> toast("${target.name} already exists")
+                other.exists() -> toast("${other.name} already exists")
+                !f.renameTo(target) -> toast("Could not rename ${f.name}")
+                else -> {
+                    if (!zipped) runCatching {
+                        val meta = File(target, "metadata.json")
+                        if (meta.exists()) {
+                            val json = org.json.JSONObject(meta.readText())
+                            json.put("name", name)
+                            meta.writeText(json.toString(2))
+                        }
+                    }
+                    toast("Renamed to ${target.name}")
+                    refresh()
+                }
             }
         }
     }

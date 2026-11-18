@@ -108,6 +108,11 @@ data class StereoSettings(
     /** Exposure compensation in camera steps (see CONTROL_AE_COMPENSATION_RANGE). */
     val exposure: Int = 0,
     val scaleMode: ScaleMode = ScaleMode.REAL,
+    /**
+     * Scale of the phone's own preview in portrait, where each eye gets half the screen: Fit
+     * shows the whole image (1:1 means the same there). A display preference, not in profiles.
+     */
+    val portraitScaleMode: ScaleMode = ScaleMode.FIT,
     val showHud: Boolean = false,
     /** Image rotation in degrees, or -1 to derive it from sensor and display orientation. */
     val rotationOverride: Int = 270,
@@ -223,6 +228,7 @@ class SettingsRepository(private val context: Context) {
         val SWAP = booleanPreferencesKey("swap_eyes")
         val EXPOSURE = intPreferencesKey("exposure")
         val SCALE_MODE = stringPreferencesKey("scale_mode")
+        val PORTRAIT_SCALE_MODE = stringPreferencesKey("portrait_scale_mode")
         val HUD = booleanPreferencesKey("show_hud")
         val ROTATION = intPreferencesKey("rotation_override")
         val SYNC_THRESHOLD = intPreferencesKey("sync_threshold_ms")
@@ -300,6 +306,7 @@ class SettingsRepository(private val context: Context) {
             swapEyes = p[Keys.SWAP] ?: defaults.swapEyes,
             exposure = p[Keys.EXPOSURE] ?: defaults.exposure,
             scaleMode = enumOrDefault(p[Keys.SCALE_MODE], defaults.scaleMode),
+            portraitScaleMode = enumOrDefault(p[Keys.PORTRAIT_SCALE_MODE], defaults.portraitScaleMode),
             showHud = p[Keys.HUD] ?: defaults.showHud,
             rotationOverride = p[Keys.ROTATION] ?: defaults.rotationOverride,
             syncThresholdMs = p[Keys.SYNC_THRESHOLD] ?: defaults.syncThresholdMs,
@@ -356,6 +363,7 @@ class SettingsRepository(private val context: Context) {
             p[Keys.SWAP] = s.swapEyes
             p[Keys.EXPOSURE] = s.exposure
             p[Keys.SCALE_MODE] = s.scaleMode.name
+            p[Keys.PORTRAIT_SCALE_MODE] = s.portraitScaleMode.name
             p[Keys.HUD] = s.showHud
             p[Keys.ROTATION] = s.rotationOverride
             p[Keys.SYNC_THRESHOLD] = s.syncThresholdMs

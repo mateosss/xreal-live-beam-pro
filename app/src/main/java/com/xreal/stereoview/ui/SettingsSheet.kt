@@ -172,6 +172,13 @@ class SettingsSheet(
                 target.update { it.copy(scaleMode = ScaleMode.entries[i]) }
             }
         }
+        val portraitModes = listOf(ScaleMode.FIT, ScaleMode.FILL, ScaleMode.STRETCH)
+        val portraitMode = if (s.portraitScaleMode == ScaleMode.REAL) ScaleMode.FIT else s.portraitScaleMode
+        row(content, "Scale in portrait (phone preview)", portraitMode.label) {
+            choose("Scale in portrait", portraitModes.map { it.label }, portraitModes.indexOf(portraitMode)) { i ->
+                target.update { it.copy(portraitScaleMode = portraitModes[i]) }
+            }
+        }
     }
 
     private fun setupRows(content: LinearLayout, s: StereoSettings, recording: Boolean, device: CameraSource) {

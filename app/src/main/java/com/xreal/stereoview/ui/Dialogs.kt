@@ -24,8 +24,8 @@ object Dialogs {
     fun askText(context: Context, title: String, initial: String, action: String, onDone: (String) -> Unit) {
         val input = TextInputEditText(context).apply {
             setText(initial)
-            setSelection(initial.length)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            // Names: no auto-capitals; the whole text selected, so typing replaces it.
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             maxLines = 1
         }
         val layout = TextInputLayout(context).apply { addView(input) }
@@ -40,6 +40,10 @@ object Dialogs {
             .setPositiveButton(action) { _, _ -> input.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let(onDone) }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+        input.post {
+            input.requestFocus()
+            input.selectAll()
+        }
     }
 
     fun confirm(context: Context, message: String, action: String, onConfirm: () -> Unit) {

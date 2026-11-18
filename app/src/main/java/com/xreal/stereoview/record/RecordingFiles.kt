@@ -10,7 +10,7 @@ import java.util.zip.ZipOutputStream
 /**
  * Operations on saved recordings (a folder, or a .zip of one): zip/unzip replacing the
  * original, copying, sizes. Plain java.io, so it is unit-tested on the JVM. Progress is
- * reported as (bytes done, bytes total).
+ * reported as (bytes done, bytes total), also within large files (every [PROGRESS_STEP] bytes).
  */
 object RecordingFiles {
     /** Already-compressed files are stored as they are: zipping them again only costs time. */
@@ -18,6 +18,8 @@ object RecordingFiles {
 
     /** File that keeps media scanners out of a folder (gallery apps, MediaStore). */
     const val NO_MEDIA = ".nomedia"
+
+    private const val PROGRESS_STEP = 4L shl 20
 
     fun size(f: File): Long = if (f.isDirectory) f.walkTopDown().filter { it.isFile }.sumOf { it.length() } else f.length()
 
@@ -30,8 +32,14 @@ object RecordingFiles {
         if (target.exists()) throw IOException("${target.name} already exists")
         val partial = File(dir.parentFile, "${dir.name}.zip.part")
         val files = dir.walkTopDown().filter { it.isFile }.toList()
-        val total = files.sumOf { it.length() }
+        // Stored (already compressed) files are read twice: for their CRC, then into the zip.
+        val total = files.sumOf { it.length() * if (stored(it)) 2 else 1 }
         var done = 0L
+        var reported = 0L
+        fun advance(n: Int) {
+            done += n
+            if (done - reported >= PROGRESS_STEP) { reported = done; progress(done, total) }
+        }
         val buffer = ByteArray(1 shl 16)
         try {
             ZipOutputStream(partial.outputStream().buffered(1 shl 20)).use { zip ->
@@ -39,12 +47,12 @@ object RecordingFiles {
                 for (f in files) {
                     val name = dir.name + "/" + f.relativeTo(dir).invariantSeparatorsPath
                     val entry = ZipEntry(name).apply { time = f.lastModified() }
-                    if (f.extension.lowercase() in STORED_EXTENSIONS) {
+                    if (stored(f)) {
                         // STORED entries need size and CRC up front.
                         entry.method = ZipEntry.STORED
                         entry.size = f.length()
                         entry.compressedSize = f.length()
-                        entry.crc = crcOf(f, buffer)
+                        entry.crc = crcOf(f, buffer, ::advance)
                     }
                     zip.putNextEntry(entry)
                     f.inputStream().use { input ->
@@ -52,7 +60,7 @@ object RecordingFiles {
                             val n = input.read(buffer)
                             if (n < 0) break
                             zip.write(buffer, 0, n)
-                            done += n
+                            advance(n)
                         }
                     }
                     zip.closeEntry()
@@ -78,6 +86,7 @@ object RecordingFiles {
         staging.deleteRecursively()
         val total = zip.length()
         val buffer = ByteArray(1 shl 16)
+        var reported = 0L
         try {
             val counting = CountingInput(zip.inputStream().buffered(1 shl 20))
             ZipInputStream(counting).use { input ->
@@ -99,6 +108,7 @@ object RecordingFiles {
                                 val n = input.read(buffer)
                                 if (n < 0) break
                                 o.write(buffer, 0, n)
+                                if (counting.count - reported >= PROGRESS_STEP) { reported = counting.count; progress(counting.count, total) }
                             }
                         }
                         if (entry.time > 0) out.setLastModified(entry.time)
@@ -125,6 +135,7 @@ object RecordingFiles {
         if (target.exists()) throw IOException("${target.path} already exists")
         val total = size(source)
         var done = 0L
+        var reported = 0L
         val buffer = ByteArray(1 shl 16)
         fun copyFile(from: File, to: File) {
             to.parentFile?.mkdirs()
@@ -135,6 +146,7 @@ object RecordingFiles {
                         if (n < 0) break
                         o.write(buffer, 0, n)
                         done += n
+                        if (done - reported >= PROGRESS_STEP) { reported = done; progress(done, total) }
                     }
                 }
             }
@@ -155,13 +167,16 @@ object RecordingFiles {
         return target
     }
 
-    private fun crcOf(f: File, buffer: ByteArray): Long {
+    private fun stored(f: File) = f.extension.lowercase() in STORED_EXTENSIONS
+
+    private fun crcOf(f: File, buffer: ByteArray, onRead: (Int) -> Unit): Long {
         val crc = CRC32()
         f.inputStream().use { i ->
             while (true) {
                 val n = i.read(buffer)
                 if (n < 0) break
                 crc.update(buffer, 0, n)
+                onRead(n)
             }
         }
         return crc.value

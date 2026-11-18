@@ -71,8 +71,14 @@ class ControlsOverlay(
         binding.hudButton.setOnClickListener { viewModel.update { it.copy(showHud = !it.showHud) } }
         binding.scaleButton.setOnClickListener {
             viewModel.update {
-                val modes = ScaleMode.entries
-                it.copy(scaleMode = modes[(it.scaleMode.ordinal + 1) % modes.size])
+                if (portrait) {
+                    // The phone's portrait preview has its own mode; 1:1 means nothing there.
+                    val modes = PORTRAIT_MODES
+                    it.copy(portraitScaleMode = modes[(modes.indexOf(it.portraitScaleMode) + 1) % modes.size])
+                } else {
+                    val modes = ScaleMode.entries
+                    it.copy(scaleMode = modes[(it.scaleMode.ordinal + 1) % modes.size])
+                }
             }
         }
 
@@ -141,7 +147,7 @@ class ControlsOverlay(
 
         setActive(binding.swapButton, s.swapEyes)
         setActive(binding.hudButton, s.showHud)
-        binding.scaleButton.text = s.scaleMode.label
+        binding.scaleButton.text = if (portrait) portraitLabel(s) else s.scaleMode.label
         settingsSheet.refresh()
         profilesDialog.refresh()
         rendering = false
@@ -214,7 +220,15 @@ class ControlsOverlay(
      * Portrait (narrow screen): the actions get their own scrollable row under the profile and
      * record buttons; landscape: they sit between them.
      */
+    private var portrait = false
+
+    private fun portraitLabel(s: StereoSettings) = (if (s.portraitScaleMode == ScaleMode.REAL) ScaleMode.FIT else s.portraitScaleMode).label
+
     fun setPortrait(portrait: Boolean) {
+        if (this.portrait != portrait) {
+            this.portrait = portrait
+            viewModel.settings.value.let { binding.scaleButton.text = if (portrait) portraitLabel(it) else it.scaleMode.label }
+        }
         val actions = binding.actionsScroll
         val target = if (portrait) binding.portraitActions else binding.toolbarRow
         if (actions.parent === target) return
@@ -327,5 +341,9 @@ class ControlsOverlay(
         val step = if (stepSize > 0) stepSize else 1f
         val snapped = valueFrom + ((v.coerceIn(valueFrom, valueTo) - valueFrom) / step).roundToInt() * step
         value = snapped.coerceIn(valueFrom, valueTo)
+    }
+
+    private companion object {
+        val PORTRAIT_MODES = listOf(ScaleMode.FIT, ScaleMode.FILL, ScaleMode.STRETCH)
     }
 }
