@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
 import com.xreal.stereoview.record.Dataset
@@ -15,7 +16,10 @@ import kotlin.math.max
  * Three channels of imu0 (x, y, z of the gyroscope or the accelerometer) in a time window
  * centered on the cursor, which stays in the middle. Each pixel column draws the min–max of
  * its samples, so long windows stay fast and spikes stay visible. The legend shows the values
- * at the cursor. Dragging horizontally scrubs like the timeline. Times are dataset ns.
+ * at the cursor. Dragging horizontally scrubs like the timeline. Pinching zooms around the
+ * cursor: horizontally the time span (reported through [onWindowChange], so plots stay in step),
+ * vertically the value axis around the values at the cursor; double-tap returns the value axis to
+ * auto-fit. Zoomed in far enough, each sample is drawn as a dot. Times are dataset ns.
  */
 class ImuPlotView(context: Context, private val title: String, private val unit: String, private val channels: IntRange) : View(context) {
     var imu: Dataset.Imu? = null
@@ -36,6 +40,14 @@ class ImuPlotView(context: Context, private val title: String, private val unit:
         }
     /** Called while dragging, with the new cursor time. */
     var onScrub: ((Long) -> Unit)? = null
+    /** Called while pinching horizontally, with the new span. */
+    var onWindowChange: ((Long) -> Unit)? = null
+    /** Value-axis zoom: 1 fits the visible samples, larger magnifies around the cursor values. */
+    var valueZoom = 1f
+        set(value) {
+            field = value.coerceIn(1f, 1000f)
+            invalidate()
+        }
 
     private val density = resources.displayMetrics.density
     private fun dp(v: Float) = v * density
@@ -46,6 +58,13 @@ class ImuPlotView(context: Context, private val title: String, private val unit:
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(200, 255, 255, 255); textSize = dp(11f) }
     private val bg = Paint().apply { color = Color.argb(255, 0x16, 0x1C, 0x21) }
     private val path = Path()
+    private val dot = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    private fun formatSpan(ns: Long): String = when {
+        ns >= 10_000_000_000L -> "%.0f s".format(ns / 1e9)
+        ns >= 1_000_000_000L -> "%.1f s".format(ns / 1e9)
+        else -> "%.0f ms".format(ns / 1e6)
+    }
 
     override fun onDraw(canvas: Canvas) {
         canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), dp(8f), dp(8f), bg)
@@ -74,9 +93,19 @@ class ImuPlotView(context: Context, private val title: String, private val unit:
             if (v > hi) hi = v
         }
         if (lo > hi) { lo = -1f; hi = 1f }
-        val margin = max((hi - lo) * 0.1f, 1e-3f)
+        var margin = max((hi - lo) * 0.1f, 1e-3f)
         lo -= margin
         hi += margin
+        if (valueZoom > 1f) {
+            // Around the values at the cursor.
+            val at = imu.indexAt(cursorNs)
+            val here = channels.map { imu.values[it][at] }.filter { !it.isNaN() }
+            val center = if (here.isEmpty()) (lo + hi) / 2 else (here.min() + here.max()) / 2
+            val half = (hi - lo) / 2 / valueZoom
+            lo = center - half
+            hi = center + half
+            margin = 0f
+        }
         fun yOf(v: Float) = bottom - (v - lo) / (hi - lo) * (bottom - top)
         fun xOf(t: Long) = left + (right - left) * ((t - from).toDouble() / windowNs).toFloat()
         if (lo < 0 && hi > 0) canvas.drawLine(left, yOf(0f), right, yOf(0f), axis)
@@ -84,10 +113,27 @@ class ImuPlotView(context: Context, private val title: String, private val unit:
         canvas.drawText("%.2f".format(lo + margin), right - dp(40f), bottom - dp(2f), text)
 
         val columns = (right - left).toInt().coerceAtLeast(1)
+        // Few samples on screen: draw them as dots joined by lines; else min–max per pixel column.
+        val sparse = i1 - i0 < columns / 4
+        canvas.save()
+        canvas.clipRect(left, top, right, bottom)
         for ((k, c) in channels.withIndex()) {
             line.color = colors[k % colors.size]
             path.reset()
             var started = false
+            if (sparse) {
+                dot.color = line.color
+                for (i in i0..i1) {
+                    val v = imu.values[c][i]
+                    if (v.isNaN()) continue
+                    val x = xOf(imu.t[i])
+                    val y = yOf(v)
+                    if (!started) { path.moveTo(x, y); started = true } else path.lineTo(x, y)
+                    canvas.drawCircle(x, y, dp(2.2f), dot)
+                }
+                canvas.drawPath(path, line)
+                continue
+            }
             var i = i0
             for (col in 0 until columns) {
                 val colEnd = from + windowNs * (col + 1) / columns
@@ -105,6 +151,12 @@ class ImuPlotView(context: Context, private val title: String, private val unit:
             }
             canvas.drawPath(path, line)
         }
+        canvas.restore()
+        val spanLabel = buildString {
+            append(formatSpan(windowNs))
+            if (valueZoom > 1f) append("  ·  values ×%.1f".format(valueZoom))
+        }
+        canvas.drawText(spanLabel, left + dp(4f), bottom - dp(2f), text)
         val cx = xOf(cursorNs)
         canvas.drawLine(cx, top, cx, bottom, cursor)
 
@@ -122,14 +174,36 @@ class ImuPlotView(context: Context, private val title: String, private val unit:
     }
 
     private var lastX = 0f
+    /** Set once a second finger touches: no scrubbing until all fingers are up. */
+    private var multiTouch = false
+
+    private val pinch = Pinch(dp(24f)) { _, sx, sy, _, _ ->
+        if (sx != 1f) {
+            val w = (windowNs / sx).toLong().coerceIn(MIN_WINDOW_NS, MAX_WINDOW_NS)
+            if (w != windowNs) onWindowChange?.invoke(w) ?: run { windowNs = w }
+        }
+        if (sy != 1f) valueZoom *= sy
+    }
+
+    private val gestures = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+        override fun onDoubleTap(e: MotionEvent): Boolean {
+            valueZoom = 1f
+            return true
+        }
+    })
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        pinch.onTouchEvent(e)
+        gestures.onTouchEvent(e)
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 lastX = e.x
+                multiTouch = false
                 parent?.requestDisallowInterceptTouchEvent(true)
             }
+            MotionEvent.ACTION_POINTER_DOWN -> multiTouch = true
             MotionEvent.ACTION_MOVE -> {
+                if (multiTouch || pinch.active) return true
                 val dx = e.x - lastX
                 if (abs(dx) > 0) {
                     lastX = e.x
@@ -140,5 +214,10 @@ class ImuPlotView(context: Context, private val title: String, private val unit:
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> parent?.requestDisallowInterceptTouchEvent(false)
         }
         return true
+    }
+
+    companion object {
+        const val MIN_WINDOW_NS = 2_000_000L
+        const val MAX_WINDOW_NS = 120_000_000_000L
     }
 }

@@ -66,7 +66,11 @@ class RecordingPreviewActivity : AppCompatActivity() {
     // Views, rebuilt on rotation.
     private lateinit var root: LinearLayout
     private var timeline: TimelineView? = null
-    private var tiles: List<Pair<ImageView, TextView>> = emptyList()
+    private var tiles: List<Pair<ZoomImageView, TextView>> = emptyList()
+    /** Zoom and pan shared by all camera tiles; while zoomed in, frames are decoded at full resolution. */
+    private val zoom = ZoomState()
+    private var fitWidth = 640
+    private var zoomedIn = false
     /** Per camera: why its frame cannot be shown (hidden when it can). */
     private var tileErrors: List<TextView> = emptyList()
     private var plots: List<ImuPlotView> = emptyList()
@@ -82,6 +86,16 @@ class RecordingPreviewActivity : AppCompatActivity() {
             setBackgroundColor(ContextCompat.getColor(this@RecordingPreviewActivity, R.color.home_background))
         }
         setContentView(root)
+        zoom.addListener {
+            val zoomed = zoom.scale > 1f
+            if (zoomed != zoomedIn) {
+                // Zoomed in: decode the full image so its own pixels are shown; back at fit size again.
+                zoomedIn = zoomed
+                loader?.maxWidth = if (zoomed) FULL_RESOLUTION else fitWidth
+                loader?.invalidate()
+                seek(positionNs)
+            }
+        }
         positionNs = savedInstanceState?.getLong(KEY_POSITION) ?: 0L
         val dir = File(intent.getStringExtra(EXTRA_DIR) ?: run { finish(); return })
         showLoading(dir.name)
@@ -256,13 +270,13 @@ class RecordingPreviewActivity : AppCompatActivity() {
             portrait -> 2
             else -> minOf(d.cameras.size, 3)
         }
-        val tileViews = ArrayList<Pair<ImageView, TextView>>()
+        val tileViews = ArrayList<Pair<ZoomImageView, TextView>>()
         val errorViews = ArrayList<TextView>()
         d.cameras.chunked(columns).forEach { rowCams ->
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             for (c in rowCams) {
                 val tile = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
-                val image = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
+                val image = ZoomImageView(this, zoom)
                 tile.addView(image, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
                 val caption = label(c.name, 11f).apply {
                     setBackgroundColor(Color.argb(150, 0, 0, 0))
@@ -288,7 +302,8 @@ class RecordingPreviewActivity : AppCompatActivity() {
         tiles = tileViews
         tileErrors = errorViews
         loader?.invalidate()
-        loader?.maxWidth = (resources.displayMetrics.widthPixels / columns.coerceAtLeast(1)).coerceAtMost(1280)
+        fitWidth = (resources.displayMetrics.widthPixels / columns.coerceAtLeast(1)).coerceAtMost(1280)
+        loader?.maxWidth = if (zoomedIn) FULL_RESOLUTION else fitWidth
 
         // IMU: gyroscope and accelerometer, with the visible span.
         val imuColumn = LinearLayout(this).apply {
@@ -307,7 +322,8 @@ class RecordingPreviewActivity : AppCompatActivity() {
             }
             imuColumn.addView(p, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { bottomMargin = dp(6) })
         }
-        val spans = MaterialButtonToggleGroup(this).apply { isSingleSelection = true; isSelectionRequired = true }
+        // Not selection-required: pinching a plot to another span unchecks the buttons.
+        val spans = MaterialButtonToggleGroup(this).apply { isSingleSelection = true }
         for (seconds in listOf(1, 5, 20, 60)) {
             spans.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
                 id = View.generateViewId()
@@ -323,6 +339,14 @@ class RecordingPreviewActivity : AppCompatActivity() {
             if (!checked) return@addOnButtonCheckedListener
             imuWindowNs = group.findViewById<View>(id).tag as Long
             plots.forEach { it.windowNs = imuWindowNs }
+        }
+        for (p in plots) {
+            p.onWindowChange = { w ->
+                imuWindowNs = w
+                plots.forEach { it.windowNs = w }
+                val match = (0 until spans.childCount).map { spans.getChildAt(it) }.firstOrNull { it.tag == w }
+                if (match == null) spans.clearChecked() else if (spans.checkedButtonId != match.id) spans.check(match.id)
+            }
         }
         imuColumn.addView(LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
@@ -513,7 +537,7 @@ class RecordingPreviewActivity : AppCompatActivity() {
     }
 
     private fun onFrameDecoded(camera: Int, frame: Int, bitmap: Bitmap?, error: String?) {
-        tiles.getOrNull(camera)?.first?.setImageBitmap(bitmap)
+        tiles.getOrNull(camera)?.first?.bitmap = bitmap
         tileErrors.getOrNull(camera)?.apply {
             text = error.orEmpty()
             visibility = if (bitmap == null && error != null) View.VISIBLE else View.GONE
@@ -674,6 +698,8 @@ class RecordingPreviewActivity : AppCompatActivity() {
 
     companion object {
         private const val EXTRA_DIR = "dir"
+        /** maxWidth that keeps every pixel (larger than any camera). */
+        private const val FULL_RESOLUTION = 1 shl 14
         private const val KEY_POSITION = "position"
 
         fun open(context: Context, dir: File) {
