@@ -255,6 +255,12 @@ class GlassesDevice(private val context: Context, private val listener: Listener
     private class Tagged(val endpoint: UsbEndpoint, val buffer: ByteBuffer)
 
     private fun run(device: UsbDevice, withImu: Boolean, decoder: Handler) {
+        // This thread re-arms the IMU reads: if it runs late, every IMU request is complete,
+        // nothing waits for the next report, and the glasses drop it (a gap in imu0). Busy
+        // CPUs (e.g. software video encoding) made that common, so run it as urgently as an
+        // app may (audio priority; display priority where that is refused).
+        runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO) }
+            .onFailure { runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY) } }
         val connection = manager?.openDevice(device)
         if (connection == null) {
             fail("Cannot open the glasses (USB permission?)")
@@ -527,7 +533,12 @@ class GlassesDevice(private val context: Context, private val listener: Listener
         /** Read back the camera state this long after the last update. */
         const val READ_BACK_DELAY_MS = 600L
         const val CAMERA_REQUESTS = 12
-        const val IMU_REQUESTS = 4
+        /**
+         * IMU reads kept queued: reports keep arriving while this many are pending, so the
+         * thread may be late by about as many report periods without losing samples (4 lost
+         * samples whenever the CPU was busy).
+         */
+        const val IMU_REQUESTS = 64
         /** Frames being assembled or waiting for the decode thread. */
         const val POOL = 8
         /** Bytes of each frame's metadata row kept in [Eye.meta]. */
