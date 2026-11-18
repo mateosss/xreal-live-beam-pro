@@ -241,7 +241,7 @@ class StereoRenderer(
             val models = listOf(cams.left, cams.right)
             val eyes = eyeLayout(s, geometry.viewAspect.toFloat())
             val eyeWidth = eyes.width
-            val eyeAspect = eyes.aspect.toDouble()
+            val eyeAspect = eyes.aspectFor(settings).toDouble()
             val (tanH, tanV) = geometry.displayTangents(eyes.mode(s), eyeAspect, s.glassesFovDeg.toDouble())
             val zoom = eyes.zoom(s).toDouble()
             val deviceCorrection = stabilizer?.correction(surfaceTextures[0].timestamp, s.stabilization.timeConstantSec)
@@ -308,7 +308,7 @@ class StereoRenderer(
         val s = settings
         val eyes = eyeLayout(s, IMAGE_W.toFloat() / IMAGE_H)
         val eyeWidth = eyes.width
-        val eyeAspect = eyes.aspect
+        val eyeAspect = eyes.aspectFor(s)
         val zoom = eyes.zoom(s)
         if (s.glassesRectify && !eyes.raw(s)) {
             val geometry = glassesGeometry
@@ -371,11 +371,17 @@ class StereoRenderer(
         fun apply(eye: Int) = GLES20.glViewport(x[eye], y[eye], width, height)
         /** The scale mode: the profile's, or in portrait the phone preview's own. */
         fun mode(s: StereoSettings): ScaleMode = if (portraitPreview) portraitMode(s.portraitScaleMode) else s.scaleMode
-        /** Depth zoom and convergence shift crop the image, so the portrait preview leaves them out. */
+        /** Depth zoom and convergence shift crop the image, so the portrait preview and Raw leave them out. */
         /** Raw: the cameras' own images, unrectified, fitted whole. */
         fun raw(s: StereoSettings): Boolean = mode(s) == ScaleMode.RAW
-        fun zoom(s: StereoSettings): Float = if (portraitPreview) 1f else s.depth.coerceIn(StereoSettings.DEPTH_MIN, StereoSettings.DEPTH_MAX)
-        fun convergencePx(s: StereoSettings): Float = if (portraitPreview) 0f else s.convergencePx
+        /**
+         * Shape of an eye as the image should appear: [aspect] (as seen in the glasses, where
+         * half-SBS stretches each half), but for Raw the drawn pixels' own shape, so Raw keeps
+         * the camera's aspect on the screen that draws it.
+         */
+        fun aspectFor(s: StereoSettings): Float = if (raw(s)) width.toFloat() / height else aspect
+        fun zoom(s: StereoSettings): Float = if (portraitPreview || raw(s)) 1f else s.depth.coerceIn(StereoSettings.DEPTH_MIN, StereoSettings.DEPTH_MAX)
+        fun convergencePx(s: StereoSettings): Float = if (portraitPreview || raw(s)) 0f else s.convergencePx
     }
 
     /** [imageAspect]: width / height of what each eye shows, as it appears upright. */
@@ -413,7 +419,7 @@ class StereoRenderer(
     private fun drawGrayRaw(gray: GrayShader, w: Int, h: Int, label: String, eyes: EyeLayout, zoom: Float) {
         val s = settings
         val eyeWidth = eyes.width
-        val eyeAspect = eyes.aspect
+        val eyeAspect = eyes.aspectFor(s)
         val imageAspect = w.toFloat() / h
         val (sx, sy) = when (eyes.mode(s)) {
             ScaleMode.STRETCH -> 1f to 1f
