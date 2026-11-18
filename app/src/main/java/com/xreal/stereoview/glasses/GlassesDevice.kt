@@ -95,7 +95,21 @@ class GlassesDevice(private val context: Context, private val listener: Listener
         private set
     @Volatile
     private var requestedExposure: Exposure? = null
-    private val controlExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "GlassesControls") }
+    private val controlExecutor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { Thread(it, "GlassesControls") }
+    /**
+     * Exposure requests are paced: dragging a slider back and forth sent bursts of control
+     * requests (mode, exposure, then ~15 read-backs each) that locked up the glasses' camera
+     * until it was replugged. Now one request is queued at a time and runs at most every
+     * [MIN_APPLY_INTERVAL_MS] with the latest values, only changed values are sent, and the
+     * read-back happens once, after the slider has rested for [READ_BACK_DELAY_MS].
+     */
+    private val applyQueued = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile private var lastApplyMs = 0L
+    private val applyGeneration = java.util.concurrent.atomic.AtomicInteger()
+    // Values last sent to the camera (null: unknown, send); control thread only.
+    private var sentMode: Int? = null
+    private var sentExposure: Int? = null
+    private var sentGain: Int? = null
 
     /** The first attached Air 2 Ultra, if any. */
     fun find(): UsbDevice? = manager?.deviceList?.values?.firstOrNull {
@@ -137,17 +151,29 @@ class GlassesDevice(private val context: Context, private val listener: Listener
         }
     }
 
-    /** Applies [exposure] to the camera, as far as its controls allow. */
+    /** Applies [exposure] to the camera, as far as its controls allow (paced, latest wins). */
     fun setExposure(exposure: Exposure) {
         requestedExposure = exposure
-        controlExecutor.execute(::applyExposure)
+        scheduleApply()
     }
 
+    private fun scheduleApply() {
+        // A queued run reads the latest request when it runs, so one is enough.
+        if (!applyQueued.compareAndSet(false, true)) return
+        val wait = (lastApplyMs + MIN_APPLY_INTERVAL_MS - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(0)
+        controlExecutor.schedule({
+            applyQueued.set(false)
+            applyExposure()
+        }, wait, java.util.concurrent.TimeUnit.MILLISECONDS)
+    }
+
+    /** Control thread. */
     private fun applyExposure() {
         val connection = connection ?: return
         val uvc = uvcControls ?: return
         val e = requestedExposure ?: return
         val c = controls ?: return
+        lastApplyMs = android.os.SystemClock.elapsedRealtime()
         val log = StringBuilder()
         uvc.find(Uvc.AE_MODE)?.let { mode ->
             val modes = c.aeModes ?: 0
@@ -158,33 +184,58 @@ class GlassesDevice(private val context: Context, private val listener: Listener
             } else {
                 listOf(Uvc.AE_AUTO, Uvc.AE_APERTURE_PRIORITY).firstOrNull { modes and it != 0 } ?: Uvc.AE_AUTO
             }
-            if (!Uvc.set(connection, uvc, mode, wanted)) log.append("auto exposure mode $wanted rejected; ")
+            if (wanted != sentMode) {
+                if (Uvc.set(connection, uvc, mode, wanted)) {
+                    sentMode = wanted
+                    sentExposure = null // the camera may change it when the mode changes
+                } else {
+                    sentMode = null
+                    log.append("auto exposure mode $wanted rejected; ")
+                }
+            }
         }
         if (e.manual) {
             val exposure = uvc.find(Uvc.EXPOSURE)
             c.exposure?.let { r ->
-                if (exposure != null && !Uvc.set(connection, uvc, exposure, e.exposure100us.coerceIn(r.min, r.max))) log.append("exposure rejected; ")
+                val value = e.exposure100us.coerceIn(r.min, r.max)
+                if (exposure != null && value != sentExposure) {
+                    if (Uvc.set(connection, uvc, exposure, value)) sentExposure = value else { sentExposure = null; log.append("exposure rejected; ") }
+                }
             }
         }
         val gain = uvc.find(Uvc.GAIN)
         c.gain?.let { r ->
             val value = if (e.gain < 0) r.default else e.gain.coerceIn(r.min, r.max)
-            if (gain != null && !Uvc.set(connection, uvc, gain, value)) log.append("gain rejected; ")
+            if (gain != null && value != sentGain) {
+                if (Uvc.set(connection, uvc, gain, value)) sentGain = value else { sentGain = null; log.append("gain rejected; ") }
+            }
         }
-        // Read back what the camera now reports: a camera may accept a value and keep its own.
+        if (log.isNotEmpty()) Log.w(TAG, "Glasses exposure: $log")
+        // Read back once the requests have stopped: a camera may accept a value and keep its own.
+        val generation = applyGeneration.incrementAndGet()
+        val rejected = log.toString()
+        controlExecutor.schedule({
+            if (applyGeneration.get() == generation && !applyQueued.get()) readBack(e, rejected)
+        }, READ_BACK_DELAY_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+    }
+
+    /** Control thread: records what the camera reports after [e] (one request per control). */
+    private fun readBack(e: Exposure, rejected: String) {
+        val connection = connection ?: return
+        val uvc = uvcControls ?: return
+        val c = controls ?: return
         val back = listOfNotNull(
-            uvc.find(Uvc.AE_MODE)?.let { m -> Uvc.range(connection, uvc, m)?.let { "AE mode ${it.current} (1 manual, 2 auto, 4 shutter priority, 8 aperture priority)" } },
-            uvc.find(Uvc.EXPOSURE)?.let { x -> Uvc.range(connection, uvc, x)?.let { "exposure %.1f ms".format(it.current / 10.0) } },
-            uvc.find(Uvc.GAIN)?.let { g -> Uvc.range(connection, uvc, g)?.let { "gain ${it.current}" } },
+            uvc.find(Uvc.AE_MODE)?.let { m -> Uvc.current(connection, uvc, m)?.let { "AE mode $it (1 manual, 2 auto, 4 shutter priority, 8 aperture priority)" } },
+            uvc.find(Uvc.EXPOSURE)?.let { x -> Uvc.current(connection, uvc, x)?.let { "exposure %.1f ms".format(it / 10.0) } },
+            uvc.find(Uvc.GAIN)?.let { g -> Uvc.current(connection, uvc, g)?.let { "gain $it" } },
         ).joinToString(", ")
         c.lastApplied = buildString {
             append("Requested: ")
             append(if (e.manual) "manual, exposure %.1f ms".format(e.exposure100us / 10.0) else "auto exposure")
             append(", gain ${if (e.gain < 0) "default" else e.gain.toString()}\n")
-            if (log.isNotEmpty()) append("Rejected: $log\n")
+            if (rejected.isNotEmpty()) append("Rejected: $rejected\n")
             append("Camera reports: ${back.ifEmpty { "nothing readable" }}")
         }
-        if (log.isNotEmpty()) Log.w(TAG, "Glasses exposure: $log")
         Log.i(TAG, "Glasses exposure: ${c.lastApplied}")
     }
 
@@ -311,7 +362,9 @@ class GlassesDevice(private val context: Context, private val listener: Listener
         val c = CameraControls(exposure, gain, aeModes, report.toString().trimEnd())
         controls = c
         listener.onControls(c)
-        if (c.any) controlExecutor.execute(::applyExposure)
+        // A new connection: nothing sent yet.
+        controlExecutor.execute { sentMode = null; sentExposure = null; sentGain = null }
+        if (c.any) scheduleApply()
     }
 
     private fun fail(message: String) {
@@ -469,6 +522,10 @@ class GlassesDevice(private val context: Context, private val listener: Listener
 
     private companion object {
         const val TAG = "GlassesDevice"
+        /** Shortest time between two exposure updates sent to the camera. */
+        const val MIN_APPLY_INTERVAL_MS = 150L
+        /** Read back the camera state this long after the last update. */
+        const val READ_BACK_DELAY_MS = 600L
         const val CAMERA_REQUESTS = 12
         const val IMU_REQUESTS = 4
         /** Frames being assembled or waiting for the decode thread. */

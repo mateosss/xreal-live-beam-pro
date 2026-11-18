@@ -100,7 +100,8 @@ class VideoEncoder(
     private var pendingEos = false
 
     init {
-        val name = MediaCodecList(MediaCodecList.REGULAR_CODECS).findEncoderForFormat(MediaFormat.createVideoFormat(mime, width, height))
+        val name = (if (grayInput) softwareEncoder(mime, width, height) else null)
+            ?: MediaCodecList(MediaCodecList.REGULAR_CODECS).findEncoderForFormat(MediaFormat.createVideoFormat(mime, width, height))
             ?: throw IllegalArgumentException("No $mime encoder for ${width}×$height")
         codecName = name
         codec = MediaCodec.createByCodecName(name)
@@ -525,6 +526,20 @@ class VideoEncoder(
         const val MAX_BACKLOG = 128 shl 20
         /** Gray frames waiting for an encoder input buffer (about 1 s at 30 fps). */
         const val MAX_PENDING = 30
+
+        /**
+         * Android's own software encoder for [mime] at this size, if present. Gray input uses it:
+         * a MediaTek hardware encoder (c2.mtk.avc.encoder) left the last 32 pixels of the last
+         * chroma row of 480-wide frames unset, a green strip in every frame, however the input
+         * was written; the software encoder behaves the same on every device, and 480×640 at
+         * 30 fps is light work for it.
+         */
+        fun softwareEncoder(mime: String, width: Int, height: Int): String? =
+            MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.firstOrNull { info ->
+                info.isEncoder && (info.name.startsWith("c2.android.") || info.name.startsWith("OMX.google.")) &&
+                    info.supportedTypes.any { it.equals(mime, ignoreCase = true) } &&
+                    runCatching { info.getCapabilitiesForType(mime).videoCapabilities.isSizeSupported(width, height) }.getOrDefault(false)
+            }?.name
 
         /** Matches recorded presentation times (µs) back to exact ns timestamps. */
         class PtsMap {

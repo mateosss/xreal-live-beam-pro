@@ -218,6 +218,15 @@ object Uvc {
         return ControlRange(get(GET_MIN) ?: cur, get(GET_MAX) ?: cur, (get(GET_RES) ?: 1).coerceAtLeast(1), get(GET_DEF) ?: cur, cur)
     }
 
+    /** Reads only [control]'s current value (one request), or null if the camera rejects it. */
+    fun current(connection: UsbDeviceConnection, controls: Controls, control: Control): Int? {
+        val data = ByteArray(control.size)
+        val n = connection.controlTransfer(
+            GET_REQUEST, GET_CUR, control.selector shl 8, (control.unitId shl 8) or controls.interfaceNumber, data, data.size, 500,
+        )
+        return if (n == control.size) data.decode(control) else null
+    }
+
     /** Sets [control] to [value]; returns whether the camera accepted it. */
     fun set(connection: UsbDeviceConnection, controls: Controls, control: Control, value: Int): Boolean {
         val data = ByteArray(control.size) { (value ushr (8 * it)).toByte() }
