@@ -195,10 +195,14 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         if (recording == null && name != viewModel.profiles.value.active) viewModel.selectProfile(name)
     }
 
+    override fun onStart() {
+        super.onStart()
+        displayManager.registerDisplayListener(displayListener, Handler(Looper.getMainLooper()))
+    }
+
     override fun onResume() {
         super.onResume()
         hideSystemBars()
-        displayManager.registerDisplayListener(displayListener, Handler(Looper.getMainLooper()))
         when {
             hasCameraPermission() -> setupOutput()
             // Ask once automatically; after a denial the button asks again.
@@ -210,12 +214,18 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         }
     }
 
-    override fun onPause() {
+    /**
+     * Cameras are released when the screen is really hidden (onStop), not on every pause: a
+     * permission dialog or the invisible USB attach activity also pause it, and the OAK
+     * re-enumerates whenever it boots or closes, so releasing on pause made a loop (stop, the
+     * camera resets and re-attaches, the attach activity pauses us, start, boot, re-attach…).
+     */
+    override fun onStop() {
         displayManager.unregisterDisplayListener(displayListener)
         // A recording keeps everything running (screen locked, app in the background), held
         // by RecordingService; otherwise the cameras are released for other apps.
         if (recording == null) teardownOutput()
-        super.onPause()
+        super.onStop()
     }
 
     override fun onDestroy() {
