@@ -152,7 +152,9 @@ class GlassesDevice(private val context: Context, private val listener: Listener
         uvc.find(Uvc.AE_MODE)?.let { mode ->
             val modes = c.aeModes ?: 0
             val wanted = if (e.manual) {
-                Uvc.AE_MANUAL
+                // A fixed exposure time needs manual or shutter-priority mode; the Air 2 Ultra
+                // offers only auto and shutter priority (bitmap 6), so use whichever exists.
+                listOf(Uvc.AE_MANUAL, Uvc.AE_SHUTTER_PRIORITY).firstOrNull { modes and it != 0 } ?: Uvc.AE_MANUAL
             } else {
                 listOf(Uvc.AE_AUTO, Uvc.AE_APERTURE_PRIORITY).firstOrNull { modes and it != 0 } ?: Uvc.AE_AUTO
             }
@@ -171,7 +173,7 @@ class GlassesDevice(private val context: Context, private val listener: Listener
         }
         // Read back what the camera now reports: a camera may accept a value and keep its own.
         val back = listOfNotNull(
-            uvc.find(Uvc.AE_MODE)?.let { m -> Uvc.range(connection, uvc, m)?.let { "AE mode ${it.current} (1 manual, 2 auto, 8 aperture priority)" } },
+            uvc.find(Uvc.AE_MODE)?.let { m -> Uvc.range(connection, uvc, m)?.let { "AE mode ${it.current} (1 manual, 2 auto, 4 shutter priority, 8 aperture priority)" } },
             uvc.find(Uvc.EXPOSURE)?.let { x -> Uvc.range(connection, uvc, x)?.let { "exposure %.1f ms".format(it.current / 10.0) } },
             uvc.find(Uvc.GAIN)?.let { g -> Uvc.range(connection, uvc, g)?.let { "gain ${it.current}" } },
         ).joinToString(", ")

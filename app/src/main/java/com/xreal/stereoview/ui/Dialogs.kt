@@ -54,11 +54,18 @@ object Dialogs {
             .show()
     }
 
+    /** A message with OK and Copy (puts the title and text on the clipboard); the text is selectable. */
     fun info(context: Context, title: String, message: String) {
-        MaterialAlertDialogBuilder(context)
+        val dialog = MaterialAlertDialogBuilder(context)
             .setTitle(title)
             .setMessage(message)
             .setPositiveButton(android.R.string.ok, null)
+            .setNeutralButton("Copy") { _, _ ->
+                context.getSystemService(android.content.ClipboardManager::class.java)
+                    .setPrimaryClip(android.content.ClipData.newPlainText(title, "$title\n\n$message"))
+                android.widget.Toast.makeText(context, "Copied", android.widget.Toast.LENGTH_SHORT).show()
+            }
             .show()
+        dialog.findViewById<android.widget.TextView>(android.R.id.message)?.setTextIsSelectable(true)
     }
 }
