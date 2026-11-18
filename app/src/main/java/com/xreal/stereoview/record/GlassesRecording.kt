@@ -232,6 +232,11 @@ class GlassesRecording private constructor(
                 put("last_timestamp_ns", cam.lastNs)
                 if (cam.stored > 1) put("mean_fps", (cam.stored - 1) * 1e9 / (cam.lastNs - cam.firstNs))
                 put("max_gap_ms", cam.maxGapNs / 1e6)
+                cam.video?.let { v ->
+                    put("encoder_frames_dropped", v.dropped.get())
+                    put("encoder_backlog_peak_frames", v.peakPending)
+                    put("encoder_backlog_capacity_frames", v.maxPending)
+                }
             })
         }
         metadata.put("stats", JSONObject().apply {

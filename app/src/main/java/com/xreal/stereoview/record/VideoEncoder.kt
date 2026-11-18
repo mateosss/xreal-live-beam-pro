@@ -120,6 +120,19 @@ class VideoEncoder(
             setInteger(MediaFormat.KEY_PREPEND_HEADER_TO_SYNC_FRAMES, 1)
         }
         configureRateAndProfile(format, mime, options)
+        if (options.software) {
+            // The software encoder's cheapest setting, where it has one: it must keep up in real time.
+            runCatching {
+                MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.first { it.name == name }
+                    .getCapabilitiesForType(mime).encoderCapabilities.complexityRange
+            }.getOrNull()?.let { range ->
+                if (range.lower != range.upper) {
+                    format.setInteger(MediaFormat.KEY_COMPLEXITY, range.lower)
+                    applied.put("complexity", "${range.lower} (lowest of ${range.lower}..${range.upper})")
+                }
+            }
+            format.setInteger(MediaFormat.KEY_OPERATING_RATE, fps)
+        }
         applied.put("encoder", name).put("container", if (mime == MediaFormat.MIMETYPE_VIDEO_AVC) "matroska (crash-safe)" else "mp4")
             .put("keyframe_interval_s", options.keyframeIntervalS.toDouble()).put("fps", fps)
         sink = if (mime == MediaFormat.MIMETYPE_VIDEO_AVC) MkvSink(file, width, height) else Mp4Sink(file)
@@ -257,6 +270,16 @@ class VideoEncoder(
 
     // region Gray input
 
+    /**
+     * Gray frames that may wait for the encoder: [GRAY_BACKLOG_BYTES] worth (3.5 s of 480×640,
+     * 1 s of 1280×800), at least [MIN_PENDING]; it absorbs CPU spikes before frames are dropped.
+     */
+    val maxPending: Int = (GRAY_BACKLOG_BYTES / (width.toLong() * height).coerceAtLeast(1)).toInt().coerceIn(MIN_PENDING, MAX_PENDING)
+
+    /** Most gray frames waiting for the encoder at once ([maxPending]: frames are dropped). */
+    @Volatile var peakPending = 0
+        private set
+
     private var loggedLayout = false
 
 
@@ -267,12 +290,13 @@ class VideoEncoder(
     fun submitGray(timestampNs: Long, pixels: ByteArray): Boolean {
         val pts = timestampNs / 1000
         synchronized(pending) {
-            if (pts <= lastPtsUs || pending.size >= MAX_PENDING) {
+            if (pts <= lastPtsUs || pending.size >= maxPending) {
                 dropped.incrementAndGet()
                 return false
             }
             lastPtsUs = pts
             pending.addLast(GrayFrame(pts, pixels))
+            if (pending.size > peakPending) peakPending = pending.size
         }
         handler.post(::feed)
         return true
@@ -526,8 +550,11 @@ class VideoEncoder(
         private val NEUTRAL = ByteArray(8192) { 128.toByte() }
         /** Encoded video that may wait for storage: tens of seconds at recording bitrates. */
         const val MAX_BACKLOG = 128 shl 20
-        /** Gray frames waiting for an encoder input buffer (about 1 s at 30 fps). */
-        const val MAX_PENDING = 30
+        /** Bounds of [maxPending], gray frames waiting for an encoder input buffer. */
+        const val MIN_PENDING = 30
+        const val MAX_PENDING = 150
+        /** Memory for gray frames waiting for the encoder, per encoder. */
+        const val GRAY_BACKLOG_BYTES = 32L shl 20
 
         /**
          * Android's own software encoder for [mime] at this size, if present ([EncoderOptions.software]).

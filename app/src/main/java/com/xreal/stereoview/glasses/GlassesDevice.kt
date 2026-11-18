@@ -546,7 +546,7 @@ class GlassesDevice(private val context: Context, private val listener: Listener
     private fun UsbInterface.endpoints() = (0 until endpointCount).map(::getEndpoint)
     private fun UsbEndpoint.isIn() = direction == UsbConstants.USB_DIR_IN
 
-    private companion object {
+    companion object {
         const val TAG = "GlassesDevice"
         /** Shortest time between two exposure updates sent to the camera. */
         const val MIN_APPLY_INTERVAL_MS = 150L

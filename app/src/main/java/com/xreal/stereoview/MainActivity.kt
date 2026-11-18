@@ -575,6 +575,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             appendLine("Stream size: ${streamSize ?: "-"}, sensor orientation ${rig?.sensorOrientation ?: "-"}°")
             appendLine("Rectification: ${renderer?.geometrySummary ?: "-"}")
             appendLine("Glasses rectification: ${renderer?.glassesGeometrySummary ?: "-"}")
+            if (glasses.imuReadsQueued > 0) appendLine("Glasses IMU: ${glasses.imuReadsQueued} reads queued (of ${GlassesDevice.IMU_REQUESTS} wanted)")
             appendLine("Glasses camera controls: ${glasses.controls?.report ?: "glasses cameras not started"}")
             renderer?.cameras?.let { cams ->
                 appendLine("  " + cams.left.describe())
@@ -1038,6 +1039,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         }
         put("camera_report", runCatching { CameraUtils.describeCameras(cameraManager) }.getOrElse { it.toString() })
         glasses.controls?.let { put("glasses_camera_controls", it.report) }
+        if (glasses.imuReadsQueued > 0) put("glasses_imu_reads_queued", glasses.imuReadsQueued)
     }
 
     // endregion
