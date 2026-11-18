@@ -22,19 +22,19 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** How each camera image is fitted into its half of the SBS frame. */
-/** Label of [ScaleMode.REAL] in the portrait phone preview, where it shows the raw images whole. */
-const val PORTRAIT_RAW_LABEL = "Raw"
-
-/** Labels and order of the portrait preview's modes. */
-val PORTRAIT_SCALE_MODES = listOf(ScaleMode.REAL, ScaleMode.FIT, ScaleMode.FILL, ScaleMode.STRETCH)
-fun portraitScaleLabel(m: ScaleMode) = if (m == ScaleMode.REAL) PORTRAIT_RAW_LABEL else m.label
-
 enum class ScaleMode(val label: String) {
     REAL("1:1"),        // camera angles shown at their true size in the glasses
     FILL("Fill"),       // keep aspect, crop overflow
     FIT("Fit"),         // keep aspect, letterbox
     STRETCH("Stretch"), // ignore aspect (useful for half-SBS output)
+    RAW("Raw"),         // the cameras' own images, unrectified, whole and undistorted (fitted)
 }
+
+/** The portrait phone preview's modes: all but 1:1, which only means something in the glasses. */
+val PORTRAIT_SCALE_MODES = listOf(ScaleMode.RAW, ScaleMode.FIT, ScaleMode.FILL, ScaleMode.STRETCH)
+
+/** The mode the portrait preview uses for [m] (1:1, stored by v0.14.4 for Raw, means Raw). */
+fun portraitMode(m: ScaleMode) = if (m == ScaleMode.REAL) ScaleMode.RAW else m
 
 /** How the glasses split the frame into eyes. */
 enum class SbsLayout(val label: String) {
@@ -116,11 +116,11 @@ data class StereoSettings(
     val exposure: Int = 0,
     val scaleMode: ScaleMode = ScaleMode.REAL,
     /**
-     * Scale of the phone's own preview in portrait, where each eye gets half the screen. Its 1:1
-     * slot means Raw there ([PORTRAIT_RAW_LABEL]): the unrectified images, whole and undistorted.
-     * A display preference, not in profiles.
+     * Scale of the phone's own preview in portrait, where each eye gets half the screen
+     * ([PORTRAIT_SCALE_MODES]; default Raw: the unrectified images, whole). A display
+     * preference, not in profiles.
      */
-    val portraitScaleMode: ScaleMode = ScaleMode.REAL,
+    val portraitScaleMode: ScaleMode = ScaleMode.RAW,
     val showHud: Boolean = false,
     /** Image rotation in degrees, or -1 to derive it from sensor and display orientation. */
     val rotationOverride: Int = 270,

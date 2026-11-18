@@ -60,6 +60,8 @@ class GlassesDevice(private val context: Context, private val listener: Listener
         val report: String,
     ) {
         val any: Boolean get() = exposure != null || gain != null
+        /** What the last exposure request set, what the camera rejected, and what it reports back. */
+        @Volatile var lastApplied: String = "no exposure request applied yet"
     }
 
     /** Requested exposure: the camera's own auto exposure, or a fixed time (100 µs units) and gain (-1 = the camera's default). */
@@ -167,7 +169,21 @@ class GlassesDevice(private val context: Context, private val listener: Listener
             val value = if (e.gain < 0) r.default else e.gain.coerceIn(r.min, r.max)
             if (gain != null && !Uvc.set(connection, uvc, gain, value)) log.append("gain rejected; ")
         }
+        // Read back what the camera now reports: a camera may accept a value and keep its own.
+        val back = listOfNotNull(
+            uvc.find(Uvc.AE_MODE)?.let { m -> Uvc.range(connection, uvc, m)?.let { "AE mode ${it.current} (1 manual, 2 auto, 8 aperture priority)" } },
+            uvc.find(Uvc.EXPOSURE)?.let { x -> Uvc.range(connection, uvc, x)?.let { "exposure %.1f ms".format(it.current / 10.0) } },
+            uvc.find(Uvc.GAIN)?.let { g -> Uvc.range(connection, uvc, g)?.let { "gain ${it.current}" } },
+        ).joinToString(", ")
+        c.lastApplied = buildString {
+            append("Requested: ")
+            append(if (e.manual) "manual, exposure %.1f ms".format(e.exposure100us / 10.0) else "auto exposure")
+            append(", gain ${if (e.gain < 0) "default" else e.gain.toString()}\n")
+            if (log.isNotEmpty()) append("Rejected: $log\n")
+            append("Camera reports: ${back.ifEmpty { "nothing readable" }}")
+        }
         if (log.isNotEmpty()) Log.w(TAG, "Glasses exposure: $log")
+        Log.i(TAG, "Glasses exposure: ${c.lastApplied}")
     }
 
     fun stop() {

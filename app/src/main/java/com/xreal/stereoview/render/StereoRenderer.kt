@@ -15,6 +15,7 @@ import com.xreal.stereoview.glasses.GlassesDevice
 import com.xreal.stereoview.record.Recording
 import com.xreal.stereoview.ui.RecordView
 import com.xreal.stereoview.ui.ScaleMode
+import com.xreal.stereoview.ui.portraitMode
 import com.xreal.stereoview.ui.SbsLayout
 import com.xreal.stereoview.ui.StereoSettings
 import com.xreal.stereoview.util.Mat3
@@ -368,14 +369,11 @@ class StereoRenderer(
         private val x: IntArray, private val y: IntArray, private val portraitPreview: Boolean,
     ) {
         fun apply(eye: Int) = GLES20.glViewport(x[eye], y[eye], width, height)
-        /**
-         * Portrait: the phone preview's own mode. Its 1:1 slot means Raw there: the cameras'
-         * own images, unrectified, whole and undistorted (fitted).
-         */
-        fun mode(s: StereoSettings): ScaleMode =
-            if (portraitPreview) s.portraitScaleMode.let { if (it == ScaleMode.REAL) ScaleMode.FIT else it } else s.scaleMode
+        /** The scale mode: the profile's, or in portrait the phone preview's own. */
+        fun mode(s: StereoSettings): ScaleMode = if (portraitPreview) portraitMode(s.portraitScaleMode) else s.scaleMode
         /** Depth zoom and convergence shift crop the image, so the portrait preview leaves them out. */
-        fun raw(s: StereoSettings): Boolean = portraitPreview && s.portraitScaleMode == ScaleMode.REAL
+        /** Raw: the cameras' own images, unrectified, fitted whole. */
+        fun raw(s: StereoSettings): Boolean = mode(s) == ScaleMode.RAW
         fun zoom(s: StereoSettings): Float = if (portraitPreview) 1f else s.depth.coerceIn(StereoSettings.DEPTH_MIN, StereoSettings.DEPTH_MAX)
         fun convergencePx(s: StereoSettings): Float = if (portraitPreview) 0f else s.convergencePx
     }
@@ -420,7 +418,7 @@ class StereoRenderer(
         val (sx, sy) = when (eyes.mode(s)) {
             ScaleMode.STRETCH -> 1f to 1f
             ScaleMode.FILL -> if (imageAspect > eyeAspect) imageAspect / eyeAspect to 1f else 1f to eyeAspect / imageAspect
-            ScaleMode.FIT, ScaleMode.REAL -> if (imageAspect > eyeAspect) 1f to eyeAspect / imageAspect else imageAspect / eyeAspect to 1f
+            ScaleMode.FIT, ScaleMode.REAL, ScaleMode.RAW -> if (imageAspect > eyeAspect) 1f to eyeAspect / imageAspect else imageAspect / eyeAspect to 1f
         }
         viewDescription = "$label ${w}×$h, ${eyes.mode(s).label}, ${eyes.label}"
         for (viewport in 0..1) {

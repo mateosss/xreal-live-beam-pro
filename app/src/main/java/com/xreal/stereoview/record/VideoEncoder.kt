@@ -302,18 +302,31 @@ class VideoEncoder(
                     applied.put("gray_input_layout", layout)
                     Log.i(TAG, "Gray input layout: $layout")
                 }
-                val y = image.planes[0]
-                val rowStride = y.rowStride
-                val buffer = y.buffer
-                for (r in 0 until height) {
-                    buffer.position(r * rowStride)
-                    buffer.put(frame.pixels, r * width, width)
+                val yStride = image.planes[0].rowStride
+                val yPixel = image.planes[0].pixelStride
+                // Write the raw input buffer rather than the Image's planes: luma rows at the
+                // Image's stride, then every byte after them 128 (all chroma, any padding),
+                // and hand over the whole buffer. Encoders may read chroma beyond what the
+                // Image's planes expose, or past width×height×1.5 bytes; filling the planes
+                // and declaring that size left green strips on the right of glasses frames.
+                val raw = if (yPixel == 1) codec.getInputBuffer(index) else null // invalidates image
+                if (raw != null && raw.capacity() >= yStride * (height - 1) + width) {
+                    raw.clear()
+                    for (r in 0 until height) {
+                        raw.position(r * yStride)
+                        raw.put(frame.pixels, r * width, width)
+                    }
+                    fillNeutral(raw)
+                    codec.queueInputBuffer(index, 0, raw.capacity(), frame.ptsUs, 0)
+                } else {
+                    val buffer = image.planes[0].buffer
+                    for (r in 0 until height) {
+                        buffer.position(r * yStride)
+                        buffer.put(frame.pixels, r * width, width)
+                    }
+                    for (p in 1..2) { image.planes[p].buffer.position(0); fillNeutral(image.planes[p].buffer) }
+                    codec.queueInputBuffer(index, 0, width * height * 3 / 2, frame.ptsUs, 0)
                 }
-                // Neutral chroma: every byte of both chroma planes is 128, so fill them whole
-                // instead of trusting row and pixel strides (a glasses encoder left a strip of
-                // chroma unset that way, showing as green lines on the right).
-                for (p in 1..2) fillNeutral(image.planes[p])
-                codec.queueInputBuffer(index, 0, width * height * 3 / 2, frame.ptsUs, 0)
             } catch (e: Exception) {
                 Log.w(TAG, "Feeding a frame failed", e)
                 error = error ?: e.toString()
@@ -321,11 +334,9 @@ class VideoEncoder(
         }
     }
 
-    private fun fillNeutral(plane: android.media.Image.Plane) {
-        val b = plane.buffer
-        val chunk = ByteArray(4096) { 128.toByte() }
-        b.position(0)
-        while (b.hasRemaining()) b.put(chunk, 0, minOf(chunk.size, b.remaining()))
+    /** Sets every byte from [b]'s position to its limit to 128 (neutral chroma). */
+    private fun fillNeutral(b: ByteBuffer) {
+        while (b.hasRemaining()) b.put(NEUTRAL, 0, minOf(NEUTRAL.size, b.remaining()))
     }
 
     // endregion
@@ -509,6 +520,7 @@ class VideoEncoder(
 
     companion object {
         private const val TAG = "VideoEncoder"
+        private val NEUTRAL = ByteArray(8192) { 128.toByte() }
         /** Encoded video that may wait for storage: tens of seconds at recording bitrates. */
         const val MAX_BACKLOG = 128 shl 20
         /** Gray frames waiting for an encoder input buffer (about 1 s at 30 fps). */

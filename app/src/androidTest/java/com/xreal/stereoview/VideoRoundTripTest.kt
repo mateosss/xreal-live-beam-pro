@@ -49,6 +49,13 @@ class VideoRoundTripTest {
                 android.util.Log.i("VideoRoundTripTest", "frame $i ${b.width}x${b.height} left=$left right=$right")
                 assertTrue("frame $i right=$right", right > 180)
                 assertTrue("frame $i left=$left right=$right", left < right - 30)
+                // Neutral chroma everywhere, the bottom-right corner included (where a glasses
+                // encoder showed green when chroma was written through the Image planes).
+                for ((x, y) in listOf(b.width - 1 to b.height - 1, b.width - 20 to b.height - 2, b.width - 10 to 1, 5 to b.height - 1)) {
+                    val p = b.getPixel(x, y)
+                    val spread = maxOf(Color.red(p), Color.green(p), Color.blue(p)) - minOf(Color.red(p), Color.green(p), Color.blue(p))
+                    assertTrue("frame $i pixel ($x,$y) not gray: ${Integer.toHexString(p)}", spread <= 6)
+                }
             }
         }
     }

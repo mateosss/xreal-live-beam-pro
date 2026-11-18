@@ -289,7 +289,11 @@ class Recording private constructor(
 
         fun eyeView(geometry: StereoGeometry, s: StereoSettings, index: Int, size: Size, mono: Boolean): EyeView {
             // 1:1 only makes sense in the glasses; a recording keeps the widest view without borders.
-            val mode = if (s.scaleMode == ScaleMode.REAL) ScaleMode.FILL else s.scaleMode
+            val mode = when (s.scaleMode) {
+                ScaleMode.REAL -> ScaleMode.FILL
+                ScaleMode.RAW -> ScaleMode.FIT // a rectified recording keeps the whole view
+                else -> s.scaleMode
+            }
             val (tanH, tanV) = geometry.displayTangents(mode, size.width.toDouble() / size.height, s.glassesFovDeg.toDouble())
             val zoom = s.depth.coerceIn(StereoSettings.DEPTH_MIN, StereoSettings.DEPTH_MAX).toDouble()
             // Convergence in recorded pixels, as on screen: left image left, right image right.

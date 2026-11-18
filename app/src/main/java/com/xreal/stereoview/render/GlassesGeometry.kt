@@ -76,7 +76,7 @@ class GlassesGeometry(val cameras: List<Kb4Camera> = Kb4Camera.REFERENCE) {
             diagonal * eyeAspect / norm to diagonal / norm
         }
         ScaleMode.FILL -> min(tanV, tanH / eyeAspect).let { it * eyeAspect to it }
-        ScaleMode.FIT -> max(tanV, tanH / eyeAspect).let { it * eyeAspect to it }
+        ScaleMode.FIT, ScaleMode.RAW -> max(tanV, tanH / eyeAspect).let { it * eyeAspect to it }
         ScaleMode.STRETCH -> tanH to tanV
     }
 

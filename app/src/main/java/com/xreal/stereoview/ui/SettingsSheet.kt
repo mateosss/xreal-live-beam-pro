@@ -173,8 +173,8 @@ class SettingsSheet(
             }
         }
         val portraitModes = PORTRAIT_SCALE_MODES
-        row(content, "Scale in portrait (phone preview)", portraitScaleLabel(s.portraitScaleMode)) {
-            choose("Scale in portrait (Raw: unrectified images, whole)", portraitModes.map(::portraitScaleLabel), portraitModes.indexOf(s.portraitScaleMode)) { i ->
+        row(content, "Scale in portrait (phone preview)", portraitMode(s.portraitScaleMode).label) {
+            choose("Scale in portrait (Raw: unrectified images, whole)", portraitModes.map { it.label }, portraitModes.indexOf(portraitMode(s.portraitScaleMode))) { i ->
                 target.update { it.copy(portraitScaleMode = portraitModes[i]) }
             }
         }
@@ -423,7 +423,7 @@ class SettingsSheet(
             ).joinToString(", ") + " (adjust in the panel)"
         }
         row(content, "Exposure controls", exposure) {
-            c?.let { Dialogs.info(context, "Glasses camera controls", it.report) }
+            c?.let { Dialogs.info(context, "Glasses camera controls", "${it.report}\n\nLast exposure request:\n${it.lastApplied}") }
         }
     }
 

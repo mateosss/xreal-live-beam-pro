@@ -138,7 +138,7 @@ class StereoGeometry(
                 diagonal * eyeAspect / norm to diagonal / norm
             }
             ScaleMode.FILL -> min(camV, camH / eyeAspect).let { it * eyeAspect to it }
-            ScaleMode.FIT -> max(camV, camH / eyeAspect).let { it * eyeAspect to it }
+            ScaleMode.FIT, ScaleMode.RAW -> max(camV, camH / eyeAspect).let { it * eyeAspect to it }
             ScaleMode.STRETCH -> camH to camV
         }
     }
