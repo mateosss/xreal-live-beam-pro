@@ -172,10 +172,9 @@ class SettingsSheet(
                 target.update { it.copy(scaleMode = ScaleMode.entries[i]) }
             }
         }
-        val portraitModes = listOf(ScaleMode.FIT, ScaleMode.FILL, ScaleMode.STRETCH)
-        val portraitMode = if (s.portraitScaleMode == ScaleMode.REAL) ScaleMode.FIT else s.portraitScaleMode
-        row(content, "Scale in portrait (phone preview)", portraitMode.label) {
-            choose("Scale in portrait", portraitModes.map { it.label }, portraitModes.indexOf(portraitMode)) { i ->
+        val portraitModes = PORTRAIT_SCALE_MODES
+        row(content, "Scale in portrait (phone preview)", portraitScaleLabel(s.portraitScaleMode)) {
+            choose("Scale in portrait (Raw: unrectified images, whole)", portraitModes.map(::portraitScaleLabel), portraitModes.indexOf(s.portraitScaleMode)) { i ->
                 target.update { it.copy(portraitScaleMode = portraitModes[i]) }
             }
         }

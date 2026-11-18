@@ -254,6 +254,8 @@ class VideoEncoder(
 
     // region Gray input
 
+    private var loggedLayout = false
+
 
     /**
      * Queues an 8-bit [width]×[height] image at [timestampNs] (increasing). Returns false if it
@@ -286,6 +288,20 @@ class VideoEncoder(
             val index = freeInputs.removeFirst()
             try {
                 val image = codec.getInputImage(index) ?: continue
+                if (!loggedLayout) {
+                    loggedLayout = true
+                    val fmt = runCatching { codec.inputFormat }.getOrNull()
+                    val layout = org.json.JSONObject()
+                        .put("image", "${image.width}x${image.height} crop ${image.cropRect.toShortString()}")
+                        .put("planes", org.json.JSONArray(image.planes.map { pl -> "rowStride ${pl.rowStride} pixelStride ${pl.pixelStride} bytes ${pl.buffer.remaining()}" }))
+                    fmt?.let { f ->
+                        for (k in listOf(MediaFormat.KEY_STRIDE, MediaFormat.KEY_SLICE_HEIGHT, MediaFormat.KEY_COLOR_FORMAT)) {
+                            if (f.containsKey(k)) layout.put(k, f.getInteger(k))
+                        }
+                    }
+                    applied.put("gray_input_layout", layout)
+                    Log.i(TAG, "Gray input layout: $layout")
+                }
                 val y = image.planes[0]
                 val rowStride = y.rowStride
                 val buffer = y.buffer
@@ -293,7 +309,10 @@ class VideoEncoder(
                     buffer.position(r * rowStride)
                     buffer.put(frame.pixels, r * width, width)
                 }
-                for (p in 1..2) fillPlane(image.planes[p], width / 2, height / 2)
+                // Neutral chroma: every byte of both chroma planes is 128, so fill them whole
+                // instead of trusting row and pixel strides (a glasses encoder left a strip of
+                // chroma unset that way, showing as green lines on the right).
+                for (p in 1..2) fillNeutral(image.planes[p])
                 codec.queueInputBuffer(index, 0, width * height * 3 / 2, frame.ptsUs, 0)
             } catch (e: Exception) {
                 Log.w(TAG, "Feeding a frame failed", e)
@@ -302,20 +321,11 @@ class VideoEncoder(
         }
     }
 
-    private fun fillPlane(plane: android.media.Image.Plane, w: Int, h: Int) {
+    private fun fillNeutral(plane: android.media.Image.Plane) {
         val b = plane.buffer
-        if (plane.pixelStride == 1) {
-            val row = ByteArray(w) { 128.toByte() }
-            for (r in 0 until h) {
-                b.position(r * plane.rowStride)
-                b.put(row, 0, minOf(w, b.remaining()))
-            }
-        } else {
-            for (r in 0 until h) for (c in 0 until w) {
-                val i = r * plane.rowStride + c * plane.pixelStride
-                if (i < b.limit()) b.put(i, 128.toByte())
-            }
-        }
+        val chunk = ByteArray(4096) { 128.toByte() }
+        b.position(0)
+        while (b.hasRemaining()) b.put(chunk, 0, minOf(chunk.size, b.remaining()))
     }
 
     // endregion

@@ -166,13 +166,16 @@ class RecordingsActivity : AppCompatActivity() {
             text = label
             isAllCaps = false
             minWidth = 0
+            minimumWidth = 0
+            // Compact: Material's default 24 dp side padding spreads the row too wide.
+            setPaddingRelative(dp(if (filled) 14 else 8), paddingTop, dp(if (filled) 14 else 8), paddingBottom)
             isEnabled = !active
             setOnClickListener { if (busy != null) toast("Wait for: $busy") else action() }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(4) })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(1) })
         button("Preview", filled = true) { preview(f) }
         button("Rename") { rename(f) }
         if (f.isDirectory) button("Zip") { zip(f) } else button("Unzip") { unzip(f) }
-        button("To Downloads") { toDownloads(f) }
+        button("Downloads") { toDownloads(f) } // copies to Download/XREAL Stereo
         // ⋮ stays pinned at the right; the other buttons scroll if they don't fit.
         val more = (MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
             setIconResource(R.drawable.ic_more_vert)

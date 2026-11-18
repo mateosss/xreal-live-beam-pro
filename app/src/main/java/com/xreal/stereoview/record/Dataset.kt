@@ -29,6 +29,13 @@ class Dataset(
     val endNs: Long = (cameras.mapNotNull { it.timestamps.lastOrNull() } + listOfNotNull(imu0?.t?.lastOrNull())).maxOrNull() ?: 0L
     val durationNs: Long get() = endNs - startNs
 
+    /** Whether [camera] is a grayscale camera: the glasses' pair, the OAK's mono pair. */
+    fun isGrayscale(camera: Camera): Boolean = when (source) {
+        "GLASSES" -> true
+        "OAK" -> camera.name == "cam0" || camera.name == "cam1"
+        else -> false
+    }
+
     class Camera(
         val name: String,
         val dir: File,

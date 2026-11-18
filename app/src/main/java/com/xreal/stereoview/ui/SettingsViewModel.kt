@@ -22,6 +22,13 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** How each camera image is fitted into its half of the SBS frame. */
+/** Label of [ScaleMode.REAL] in the portrait phone preview, where it shows the raw images whole. */
+const val PORTRAIT_RAW_LABEL = "Raw"
+
+/** Labels and order of the portrait preview's modes. */
+val PORTRAIT_SCALE_MODES = listOf(ScaleMode.REAL, ScaleMode.FIT, ScaleMode.FILL, ScaleMode.STRETCH)
+fun portraitScaleLabel(m: ScaleMode) = if (m == ScaleMode.REAL) PORTRAIT_RAW_LABEL else m.label
+
 enum class ScaleMode(val label: String) {
     REAL("1:1"),        // camera angles shown at their true size in the glasses
     FILL("Fill"),       // keep aspect, crop overflow
@@ -109,10 +116,11 @@ data class StereoSettings(
     val exposure: Int = 0,
     val scaleMode: ScaleMode = ScaleMode.REAL,
     /**
-     * Scale of the phone's own preview in portrait, where each eye gets half the screen: Fit
-     * shows the whole image (1:1 means the same there). A display preference, not in profiles.
+     * Scale of the phone's own preview in portrait, where each eye gets half the screen. Its 1:1
+     * slot means Raw there ([PORTRAIT_RAW_LABEL]): the unrectified images, whole and undistorted.
+     * A display preference, not in profiles.
      */
-    val portraitScaleMode: ScaleMode = ScaleMode.FIT,
+    val portraitScaleMode: ScaleMode = ScaleMode.REAL,
     val showHud: Boolean = false,
     /** Image rotation in degrees, or -1 to derive it from sensor and display orientation. */
     val rotationOverride: Int = 270,

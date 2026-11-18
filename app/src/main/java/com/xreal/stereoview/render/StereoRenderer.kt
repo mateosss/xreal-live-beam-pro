@@ -309,7 +309,7 @@ class StereoRenderer(
         val eyeWidth = eyes.width
         val eyeAspect = eyes.aspect
         val zoom = eyes.zoom(s)
-        if (s.glassesRectify) {
+        if (s.glassesRectify && !eyes.raw(s)) {
             val geometry = glassesGeometry
             val (tanH, tanV) = geometry.displayTangents(eyes.mode(s), eyeAspect.toDouble(), s.glassesFovDeg.toDouble())
             viewDescription = "glasses cameras rectified, eye %.1f°×%.1f° %s, %s".format(
@@ -368,10 +368,14 @@ class StereoRenderer(
         private val x: IntArray, private val y: IntArray, private val portraitPreview: Boolean,
     ) {
         fun apply(eye: Int) = GLES20.glViewport(x[eye], y[eye], width, height)
-        /** Portrait: the phone preview's own mode (1:1 = Fit there). */
+        /**
+         * Portrait: the phone preview's own mode. Its 1:1 slot means Raw there: the cameras'
+         * own images, unrectified, whole and undistorted (fitted).
+         */
         fun mode(s: StereoSettings): ScaleMode =
             if (portraitPreview) s.portraitScaleMode.let { if (it == ScaleMode.REAL) ScaleMode.FIT else it } else s.scaleMode
         /** Depth zoom and convergence shift crop the image, so the portrait preview leaves them out. */
+        fun raw(s: StereoSettings): Boolean = portraitPreview && s.portraitScaleMode == ScaleMode.REAL
         fun zoom(s: StereoSettings): Float = if (portraitPreview) 1f else s.depth.coerceIn(StereoSettings.DEPTH_MIN, StereoSettings.DEPTH_MAX)
         fun convergencePx(s: StereoSettings): Float = if (portraitPreview) 0f else s.convergencePx
     }

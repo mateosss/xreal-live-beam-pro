@@ -72,8 +72,8 @@ class ControlsOverlay(
         binding.scaleButton.setOnClickListener {
             viewModel.update {
                 if (portrait) {
-                    // The phone's portrait preview has its own mode; 1:1 means nothing there.
-                    val modes = PORTRAIT_MODES
+                    // The phone's portrait preview has its own modes (Raw in place of 1:1).
+                    val modes = PORTRAIT_SCALE_MODES
                     it.copy(portraitScaleMode = modes[(modes.indexOf(it.portraitScaleMode) + 1) % modes.size])
                 } else {
                     val modes = ScaleMode.entries
@@ -222,7 +222,7 @@ class ControlsOverlay(
      */
     private var portrait = false
 
-    private fun portraitLabel(s: StereoSettings) = (if (s.portraitScaleMode == ScaleMode.REAL) ScaleMode.FIT else s.portraitScaleMode).label
+    private fun portraitLabel(s: StereoSettings) = portraitScaleLabel(s.portraitScaleMode)
 
     fun setPortrait(portrait: Boolean) {
         if (this.portrait != portrait) {
@@ -343,7 +343,4 @@ class ControlsOverlay(
         value = snapped.coerceIn(valueFrom, valueTo)
     }
 
-    private companion object {
-        val PORTRAIT_MODES = listOf(ScaleMode.FIT, ScaleMode.FILL, ScaleMode.STRETCH)
-    }
 }
