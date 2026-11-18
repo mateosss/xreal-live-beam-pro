@@ -26,6 +26,8 @@ data class EncoderOptions(
     /** Seconds between keyframes: shorter = faster seeking and less lost on corruption, larger files. */
     val keyframeIntervalS: Float = 1f,
     val profile: H264Profile = H264Profile.HIGH,
+    /** Android's software encoder instead of the device's (hardware) default. */
+    val software: Boolean = false,
 )
 
 enum class BitrateMode(val label: String, val android: Int) {
@@ -100,7 +102,7 @@ class VideoEncoder(
     private var pendingEos = false
 
     init {
-        val name = (if (grayInput) softwareEncoder(mime, width, height) else null)
+        val name = (if (options.software) softwareEncoder(mime, width, height) else null)
             ?: MediaCodecList(MediaCodecList.REGULAR_CODECS).findEncoderForFormat(MediaFormat.createVideoFormat(mime, width, height))
             ?: throw IllegalArgumentException("No $mime encoder for ${width}×$height")
         codecName = name
@@ -528,11 +530,9 @@ class VideoEncoder(
         const val MAX_PENDING = 30
 
         /**
-         * Android's own software encoder for [mime] at this size, if present. Gray input uses it:
-         * a MediaTek hardware encoder (c2.mtk.avc.encoder) left the last 32 pixels of the last
-         * chroma row of 480-wide frames unset, a green strip in every frame, however the input
-         * was written; the software encoder behaves the same on every device, and 480×640 at
-         * 30 fps is light work for it.
+         * Android's own software encoder for [mime] at this size, if present ([EncoderOptions.software]).
+         * It behaves the same on every device; e.g. MediaTek's c2.mtk.avc.encoder leaves the last
+         * 32 pixels of the last chroma row of 480-wide gray frames unset (a green strip).
          */
         fun softwareEncoder(mime: String, width: Int, height: Int): String? =
             MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.firstOrNull { info ->

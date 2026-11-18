@@ -262,6 +262,10 @@ class SettingsSheet(
                 choose("H.264 profile", profiles.map { it.label }, profiles.indexOf(s.videoProfile)) { i -> target.update { it.copy(videoProfile = profiles[i]) } }
             }
         }
+        val encoders = listOf("Hardware (the device's encoder)", "Software (Android's own encoder: same on every device, uses the CPU)")
+        row(content, "Encoder", if (s.videoSoftwareEncoder) "software" else "hardware", locked = recording) {
+            choose("Encoder", encoders, if (s.videoSoftwareEncoder) 1 else 0) { i -> target.update { it.copy(videoSoftwareEncoder = i == 1) } }
+        }
     }
 
     /** Format of recorded grayscale images, and the JPEG quality when it applies. */

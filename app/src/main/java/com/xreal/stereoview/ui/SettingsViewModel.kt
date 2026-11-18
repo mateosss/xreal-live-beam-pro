@@ -180,6 +180,8 @@ data class StereoSettings(
     val videoBitrateMode: com.xreal.stereoview.record.BitrateMode = com.xreal.stereoview.record.BitrateMode.CBR,
     val videoKeyframeIntervalS: Float = 1f,
     val videoProfile: com.xreal.stereoview.record.H264Profile = com.xreal.stereoview.record.H264Profile.HIGH,
+    /** Use Android's software encoder instead of the device's hardware one. */
+    val videoSoftwareEncoder: Boolean = false,
     /** Bitrate per camera of H.264 recordings of the glasses and OAK mono cameras, Mbit/s. */
     val glassesVideoBitrateMbps: Int = 4,
     val oakVideoBitrateMbps: Int = 12,
@@ -198,7 +200,7 @@ data class StereoSettings(
 ) {
     /** H.264/H.265 options for a stream at [bitrateMbps]. */
     fun encoderOptions(bitrateMbps: Int) =
-        com.xreal.stereoview.record.EncoderOptions(bitrateMbps * 1_000_000, videoBitrateMode, videoKeyframeIntervalS, videoProfile)
+        com.xreal.stereoview.record.EncoderOptions(bitrateMbps * 1_000_000, videoBitrateMode, videoKeyframeIntervalS, videoProfile, videoSoftwareEncoder)
 
     /** Eye alignment of the current camera source. */
     val alignPitchDeg: Float get() = when (cameraSource) {
@@ -265,6 +267,7 @@ class SettingsRepository(private val context: Context) {
         val VIDEO_BITRATE_MODE = stringPreferencesKey("video_bitrate_mode")
         val VIDEO_KEYFRAME_INTERVAL = floatPreferencesKey("video_keyframe_interval_s")
         val VIDEO_PROFILE = stringPreferencesKey("video_profile")
+        val VIDEO_SOFTWARE_ENCODER = booleanPreferencesKey("video_software_encoder")
         val GLASSES_VIDEO_BITRATE = intPreferencesKey("glasses_video_bitrate_mbps")
         val OAK_VIDEO_BITRATE = intPreferencesKey("oak_video_bitrate_mbps")
         val TARGET_FPS = intPreferencesKey("target_fps")
@@ -343,6 +346,7 @@ class SettingsRepository(private val context: Context) {
             videoBitrateMode = enumOrDefault(p[Keys.VIDEO_BITRATE_MODE], defaults.videoBitrateMode),
             videoKeyframeIntervalS = p[Keys.VIDEO_KEYFRAME_INTERVAL] ?: defaults.videoKeyframeIntervalS,
             videoProfile = enumOrDefault(p[Keys.VIDEO_PROFILE], defaults.videoProfile),
+            videoSoftwareEncoder = p[Keys.VIDEO_SOFTWARE_ENCODER] ?: defaults.videoSoftwareEncoder,
             glassesVideoBitrateMbps = p[Keys.GLASSES_VIDEO_BITRATE] ?: defaults.glassesVideoBitrateMbps,
             oakVideoBitrateMbps = p[Keys.OAK_VIDEO_BITRATE] ?: defaults.oakVideoBitrateMbps,
             targetFps = p[Keys.TARGET_FPS] ?: defaults.targetFps,
@@ -400,6 +404,7 @@ class SettingsRepository(private val context: Context) {
             p[Keys.VIDEO_BITRATE_MODE] = s.videoBitrateMode.name
             p[Keys.VIDEO_KEYFRAME_INTERVAL] = s.videoKeyframeIntervalS
             p[Keys.VIDEO_PROFILE] = s.videoProfile.name
+            p[Keys.VIDEO_SOFTWARE_ENCODER] = s.videoSoftwareEncoder
             p[Keys.GLASSES_VIDEO_BITRATE] = s.glassesVideoBitrateMbps
             p[Keys.OAK_VIDEO_BITRATE] = s.oakVideoBitrateMbps
             p[Keys.TARGET_FPS] = s.targetFps

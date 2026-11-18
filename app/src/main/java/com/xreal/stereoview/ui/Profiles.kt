@@ -186,6 +186,7 @@ data class Profile(val name: String, val settings: StereoSettings) {
                 put("videoBitrateMode", s.videoBitrateMode.name)
                 put("videoKeyframeIntervalS", s.videoKeyframeIntervalS.toDouble())
                 put("videoProfile", s.videoProfile.name)
+                put("videoSoftwareEncoder", s.videoSoftwareEncoder)
                 put("glassesVideoBitrateMbps", s.glassesVideoBitrateMbps)
                 put("oakVideoBitrateMbps", s.oakVideoBitrateMbps)
             })
@@ -236,6 +237,7 @@ data class Profile(val name: String, val settings: StereoSettings) {
                         videoBitrateMode = enumOr(j.optString("videoBitrateMode"), d.videoBitrateMode),
                         videoKeyframeIntervalS = j.optDouble("videoKeyframeIntervalS", d.videoKeyframeIntervalS.toDouble()).toFloat(),
                         videoProfile = enumOr(j.optString("videoProfile"), d.videoProfile),
+                        videoSoftwareEncoder = j.optBoolean("videoSoftwareEncoder", d.videoSoftwareEncoder),
                         glassesVideoBitrateMbps = j.optInt("glassesVideoBitrateMbps", d.glassesVideoBitrateMbps),
                         oakVideoBitrateMbps = j.optInt("oakVideoBitrateMbps", d.oakVideoBitrateMbps),
                     ),
@@ -285,6 +287,7 @@ fun StereoSettings.withProfile(profile: StereoSettings) = copy(
     videoBitrateMode = profile.videoBitrateMode,
     videoKeyframeIntervalS = profile.videoKeyframeIntervalS,
     videoProfile = profile.videoProfile,
+    videoSoftwareEncoder = profile.videoSoftwareEncoder,
     glassesVideoBitrateMbps = profile.glassesVideoBitrateMbps,
     oakVideoBitrateMbps = profile.oakVideoBitrateMbps,
 )

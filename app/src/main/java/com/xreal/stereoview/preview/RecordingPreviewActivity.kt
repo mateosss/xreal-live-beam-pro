@@ -106,7 +106,7 @@ class RecordingPreviewActivity : AppCompatActivity() {
                 result.onSuccess { (d, s) ->
                     dataset = d
                     stats = s
-                    loader = FrameLoader(d.cameras) { camera, frame, bitmap, error -> onFrameDecoded(camera, frame, bitmap, error) }
+                    loader = FrameLoader(d.cameras) { results -> results.forEach { onFrameDecoded(it.camera, it.frame, it.bitmap, it.error) } }
                     build()
                 }.onFailure { e ->
                     Dialogs.info(this, "Cannot open ${dir.name}", e.message ?: e.toString())
@@ -524,12 +524,8 @@ class RecordingPreviewActivity : AppCompatActivity() {
         val t = d.startNs + positionNs
         if (!fromTimeline) timeline?.setPosition(positionNs)
         plots.forEach { it.cursorNs = t }
-        d.cameras.forEachIndexed { i, c ->
-            if (c.timestamps.isEmpty()) return@forEachIndexed
-            val f = c.frameAt(t)
-            loader?.request(i, f)
-            tiles.getOrNull(i)?.second?.text = "${c.name}  ${f + 1}/${c.timestamps.size}  +%.3f s".format((c.timestamps[f] - d.startNs) / 1e9)
-        }
+        // All cameras' frames for this moment, decoded and shown together.
+        loader?.request(IntArray(d.cameras.size) { i -> d.cameras[i].let { c -> if (c.timestamps.isEmpty()) -1 else c.frameAt(t) } })
         timeText?.text = "%.3f s / %.3f s".format(positionNs / 1e9, d.durationNs / 1e9)
         frameText?.text = d.cameras.firstOrNull()?.let { c ->
             if (c.timestamps.isEmpty()) null else "${c.name} frame ${c.frameAt(t) + 1} / ${c.timestamps.size}"
@@ -537,7 +533,11 @@ class RecordingPreviewActivity : AppCompatActivity() {
     }
 
     private fun onFrameDecoded(camera: Int, frame: Int, bitmap: Bitmap?, error: String?) {
+        val d = dataset ?: return
+        val c = d.cameras.getOrNull(camera) ?: return
         tiles.getOrNull(camera)?.first?.bitmap = bitmap
+        // The caption changes with its image, so it always names the frame shown.
+        tiles.getOrNull(camera)?.second?.text = "${c.name}  ${frame + 1}/${c.timestamps.size}  +%.3f s".format((c.timestamps[frame] - d.startNs) / 1e9)
         tileErrors.getOrNull(camera)?.apply {
             text = error.orEmpty()
             visibility = if (bitmap == null && error != null) View.VISIBLE else View.GONE
