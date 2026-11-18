@@ -271,10 +271,12 @@ class VideoEncoder(
     // region Gray input
 
     /**
-     * Gray frames that may wait for the encoder: [GRAY_BACKLOG_BYTES] worth (3.5 s of 480×640,
-     * 1 s of 1280×800), at least [MIN_PENDING]; it absorbs CPU spikes before frames are dropped.
+     * Gray frames that may wait for the encoder: [grayBacklogBytes] worth, at least
+     * [MIN_PENDING]. It absorbs slow stretches (CPU spikes, thermal throttling) before frames
+     * are dropped. Bounded on purpose: an encoder slower than the camera on average fills any
+     * buffer during a long recording, and running out of memory would kill the recording.
      */
-    val maxPending: Int = (GRAY_BACKLOG_BYTES / (width.toLong() * height).coerceAtLeast(1)).toInt().coerceIn(MIN_PENDING, MAX_PENDING)
+    val maxPending: Int = (grayBacklogBytes() / (width.toLong() * height).coerceAtLeast(1)).toInt().coerceAtLeast(MIN_PENDING)
 
     /** Most gray frames waiting for the encoder at once ([maxPending]: frames are dropped). */
     @Volatile var peakPending = 0
@@ -550,11 +552,15 @@ class VideoEncoder(
         private val NEUTRAL = ByteArray(8192) { 128.toByte() }
         /** Encoded video that may wait for storage: tens of seconds at recording bitrates. */
         const val MAX_BACKLOG = 128 shl 20
-        /** Bounds of [maxPending], gray frames waiting for an encoder input buffer. */
+        /** Least [maxPending], gray frames waiting for an encoder input buffer. */
         const val MIN_PENDING = 30
-        const val MAX_PENDING = 150
-        /** Memory for gray frames waiting for the encoder, per encoder. */
-        const val GRAY_BACKLOG_BYTES = 32L shl 20
+
+        /**
+         * Memory for gray frames waiting for one encoder: a sixth of the app's heap limit
+         * (two encoders: a third), 32–256 MB. With a 512 MB heap: 85 MB, ≈9 s of 480×640 or
+         * ≈2.8 s of 1280×800 at 30 fps.
+         */
+        fun grayBacklogBytes(): Long = (Runtime.getRuntime().maxMemory() / 6).coerceIn(32L shl 20, 256L shl 20)
 
         /**
          * Android's own software encoder for [mime] at this size, if present ([EncoderOptions.software]).
