@@ -89,6 +89,18 @@ class PreviewZoomTest {
         assertTrue("vertical pinch zooms the values: ${p.valueZoom}", p.valueZoom > 3f)
         assertEquals("a vertical pinch leaves the span", window, p.windowNs)
         // Drawing at close zoom (dots) must work.
-        p.draw(android.graphics.Canvas(Bitmap.createBitmap(1080, 350, Bitmap.Config.ARGB_8888)))
+        val canvas = android.graphics.Canvas(Bitmap.createBitmap(1080, 350, Bitmap.Config.ARGB_8888))
+        p.draw(canvas)
+        // Vertical drag pans the values, no further than the highest value in view (channels 0..2: 0 to 2.98).
+        val down = SystemClock.uptimeMillis()
+        p.dispatchTouchEvent(event(down, down, MotionEvent.ACTION_DOWN, 500f to 20f))
+        for (k in 1..30) {
+            p.dispatchTouchEvent(event(down, down + k * 16L, MotionEvent.ACTION_MOVE, 500f to 20f + k * 100f))
+            p.draw(canvas)
+        }
+        p.dispatchTouchEvent(event(down, down + 600, MotionEvent.ACTION_UP, 500f to 3020f))
+        val c = p.pannedCenter
+        assertTrue("panned: $c", c != null && c > 1.5f && c < 2.99f)
+        assertEquals("a vertical drag doesn't scrub", 5_000_000_000L, p.cursorNs)
     }
 }

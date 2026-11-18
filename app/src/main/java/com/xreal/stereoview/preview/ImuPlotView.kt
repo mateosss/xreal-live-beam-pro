@@ -18,8 +18,8 @@ import kotlin.math.max
  * its samples, so long windows stay fast and spikes stay visible. The legend shows the values
  * at the cursor. Dragging horizontally scrubs like the timeline. Pinching zooms around the
  * cursor: horizontally the time span (reported through [onWindowChange], so plots stay in step),
- * vertically the value axis around the values at the cursor; double-tap returns the value axis to
- * auto-fit. Zoomed in far enough, each sample is drawn as a dot. Times are dataset ns.
+ * vertically the value axis around the values at the cursor; zoomed in, dragging vertically pans
+ * it, within the lowest and highest value in view. Double-tap returns the value axis to auto-fit. Zoomed in far enough, each sample is drawn as a dot. Times are dataset ns.
  */
 class ImuPlotView(context: Context, private val title: String, private val unit: String, private val channels: IntRange) : View(context) {
     var imu: Dataset.Imu? = null
@@ -46,8 +46,19 @@ class ImuPlotView(context: Context, private val title: String, private val unit:
     var valueZoom = 1f
         set(value) {
             field = value.coerceIn(1f, 1000f)
+            if (field == 1f) valueCenter = null
             invalidate()
         }
+    /** Middle of the zoomed value axis once panned; null follows the values at the cursor. */
+    private var valueCenter: Float? = null
+    /** The panned middle of the value axis (null: following the cursor). */
+    val pannedCenter: Float? get() = valueCenter
+    /** Last drawn value range: the visible samples' min and max, and the axis shown. */
+    private var dataLo = 0f
+    private var dataHi = 0f
+    private var shownLo = 0f
+    private var shownHi = 1f
+    private var plotHeight = 1f
 
     private val density = resources.displayMetrics.density
     private fun dp(v: Float) = v * density
@@ -93,6 +104,8 @@ class ImuPlotView(context: Context, private val title: String, private val unit:
             if (v > hi) hi = v
         }
         if (lo > hi) { lo = -1f; hi = 1f }
+        dataLo = lo
+        dataHi = hi
         var margin = max((hi - lo) * 0.1f, 1e-3f)
         lo -= margin
         hi += margin
@@ -100,12 +113,17 @@ class ImuPlotView(context: Context, private val title: String, private val unit:
             // Around the values at the cursor.
             val at = imu.indexAt(cursorNs)
             val here = channels.map { imu.values[it][at] }.filter { !it.isNaN() }
-            val center = if (here.isEmpty()) (lo + hi) / 2 else (here.min() + here.max()) / 2
             val half = (hi - lo) / 2 / valueZoom
+            // Panned: kept so the axis stays within the values in view.
+            val center = (valueCenter ?: if (here.isEmpty()) (lo + hi) / 2 else (here.min() + here.max()) / 2)
+                .let { c -> if (dataHi - dataLo > 2 * half) c.coerceIn(dataLo + half, dataHi - half) else (dataLo + dataHi) / 2 }
             lo = center - half
             hi = center + half
             margin = 0f
         }
+        shownLo = lo
+        shownHi = hi
+        plotHeight = bottom - top
         fun yOf(v: Float) = bottom - (v - lo) / (hi - lo) * (bottom - top)
         fun xOf(t: Long) = left + (right - left) * ((t - from).toDouble() / windowNs).toFloat()
         if (lo < 0 && hi > 0) canvas.drawLine(left, yOf(0f), right, yOf(0f), axis)
@@ -174,6 +192,12 @@ class ImuPlotView(context: Context, private val title: String, private val unit:
     }
 
     private var lastX = 0f
+    private var lastY = 0f
+    private var startX = 0f
+    private var startY = 0f
+    /** 0 undecided, 1 horizontal (scrub), 2 vertical (pan values). */
+    private var dragAxis = 0
+    private val touchSlop = android.view.ViewConfiguration.get(context).scaledTouchSlop
     /** Set once a second finger touches: no scrubbing until all fingers are up. */
     private var multiTouch = false
 
@@ -188,6 +212,7 @@ class ImuPlotView(context: Context, private val title: String, private val unit:
     private val gestures = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
         override fun onDoubleTap(e: MotionEvent): Boolean {
             valueZoom = 1f
+            valueCenter = null
             return true
         }
     })
@@ -198,12 +223,37 @@ class ImuPlotView(context: Context, private val title: String, private val unit:
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 lastX = e.x
+                lastY = e.y
+                startX = e.x
+                startY = e.y
+                dragAxis = 0
                 multiTouch = false
                 parent?.requestDisallowInterceptTouchEvent(true)
             }
             MotionEvent.ACTION_POINTER_DOWN -> multiTouch = true
             MotionEvent.ACTION_MOVE -> {
                 if (multiTouch || pinch.active) return true
+                if (dragAxis == 0) {
+                    // Lock the drag to the direction it starts in: horizontal scrubs, vertical pans values.
+                    val mx = abs(e.x - startX)
+                    val my = abs(e.y - startY)
+                    if (maxOf(mx, my) < touchSlop) return true
+                    dragAxis = if (my > mx) 2 else 1
+                    lastX = e.x
+                    lastY = e.y
+                }
+                if (dragAxis == 2) {
+                    val dy = e.y - lastY
+                    lastY = e.y
+                    if (valueZoom > 1f && dy != 0f) {
+                        // The curves follow the finger: dragging down brings higher values into view.
+                        val center = (shownLo + shownHi) / 2 + dy / plotHeight * (shownHi - shownLo)
+                        val half = (shownHi - shownLo) / 2
+                        valueCenter = if (dataHi - dataLo > 2 * half) center.coerceIn(dataLo + half, dataHi - half) else (dataLo + dataHi) / 2
+                        invalidate()
+                    }
+                    return true
+                }
                 val dx = e.x - lastX
                 if (abs(dx) > 0) {
                     lastX = e.x

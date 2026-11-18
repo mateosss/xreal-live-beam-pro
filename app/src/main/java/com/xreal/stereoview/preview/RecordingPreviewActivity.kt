@@ -106,7 +106,7 @@ class RecordingPreviewActivity : AppCompatActivity() {
                 result.onSuccess { (d, s) ->
                     dataset = d
                     stats = s
-                    loader = FrameLoader(d.cameras, d::isGrayscale) { camera, frame, bitmap, error -> onFrameDecoded(camera, frame, bitmap, error) }
+                    loader = FrameLoader(d.cameras) { camera, frame, bitmap, error -> onFrameDecoded(camera, frame, bitmap, error) }
                     build()
                 }.onFailure { e ->
                     Dialogs.info(this, "Cannot open ${dir.name}", e.message ?: e.toString())

@@ -13,7 +13,7 @@ import com.xreal.stereoview.record.Dataset
  * camera is kept, so scrubbing never builds a backlog; results arrive on the main thread.
  * Images are decoded at about [maxWidth] pixels wide; videos by [VideoFrameDecoder], by frame index.
  */
-class FrameLoader(private val cameras: List<Dataset.Camera>, private val grayscale: (Dataset.Camera) -> Boolean, private val onFrame: (camera: Int, frame: Int, Bitmap?, error: String?) -> Unit) {
+class FrameLoader(private val cameras: List<Dataset.Camera>, private val onFrame: (camera: Int, frame: Int, Bitmap?, error: String?) -> Unit) {
     private val thread = HandlerThread("PreviewFrames").apply { start() }
     private val handler = Handler(thread.looper)
     private val main = Handler(Looper.getMainLooper())
@@ -45,7 +45,7 @@ class FrameLoader(private val cameras: List<Dataset.Camera>, private val graysca
         val c = cameras[camera]
         return try {
             if (c.video != null) {
-                val d = decoders[camera] ?: VideoFrameDecoder(c.video, grayscale(c)).also { decoders[camera] = it }
+                val d = decoders[camera] ?: VideoFrameDecoder(c.video).also { decoders[camera] = it }
                 if (frame >= d.frameCount) {
                     return null to "${c.video.name} has ${d.frameCount} frames but data.csv has ${c.timestamps.size} rows"
                 }

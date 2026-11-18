@@ -9,8 +9,7 @@ import android.media.Image
  * encoders produce; grayscale recordings (neutral chroma) come out exactly gray.
  */
 object YuvToBitmap {
-    /** [grayOnly]: luma alone as gray (grayscale cameras), ignoring whatever the chroma holds. */
-    fun convert(image: Image, maxWidth: Int, grayOnly: Boolean = false): Bitmap {
+    fun convert(image: Image, maxWidth: Int): Bitmap {
         val crop = image.cropRect
         val step = ((crop.width() + maxWidth - 1) / maxWidth.coerceAtLeast(1)).coerceAtLeast(1)
         val w = crop.width() / step
@@ -31,11 +30,6 @@ object YuvToBitmap {
             val cy = sy / 2
             for (col in 0 until w) {
                 val sx = crop.left + col * step
-                if (grayOnly) {
-                    val g = y.getOrElse(sy * yRow + sx * yPix) { 0 }.toInt() and 0xff
-                    out[r * w + col] = (0xff shl 24) or (g shl 16) or (g shl 8) or g
-                    continue
-                }
                 val cx = sx / 2
                 val yy = ((y.getOrElse(sy * yRow + sx * yPix) { 0 }.toInt() and 0xff) - 16).coerceAtLeast(0) * 1192
                 val uu = (u.getOrElse(cy * cRow + cx * cPix) { -128 }.toInt() and 0xff) - 128

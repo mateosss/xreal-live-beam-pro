@@ -19,10 +19,10 @@ import java.nio.ByteBuffer
  * starting from the keyframe at or before it. Matroska files are read by [MkvReader], not by
  * Android's extractor, which cannot seek in files without a seek index on every device; MP4s
  * (H.265) go through MediaExtractor. Stepping forward reuses the running decoder, so playback
- * decodes each frame once. [grayOnly] shows grayscale cameras from luma alone (exact recorded
- * values, and immune to chroma left unset by some encoders). Not thread-safe: use from one thread.
+ * decodes each frame once. All channels are shown as recorded (chroma too, so encoder problems
+ * stay visible). Not thread-safe: use from one thread.
  */
-class VideoFrameDecoder(file: File, private val grayOnly: Boolean = false) : Closeable {
+class VideoFrameDecoder(file: File) : Closeable {
     private val source: Source = if (file.name.endsWith(".mkv")) MkvSource(file) else ExtractorSource(file)
     private var codec: MediaCodec? = null
     private var nextFeed = 0
@@ -73,7 +73,7 @@ class VideoFrameDecoder(file: File, private val grayOnly: Boolean = false) : Clo
             lastOut = frame
             if (frame >= index) {
                 val bitmap = try {
-                    c.getOutputImage(outIndex)?.use { YuvToBitmap.convert(it, maxWidth, grayOnly) }
+                    c.getOutputImage(outIndex)?.use { YuvToBitmap.convert(it, maxWidth) }
                 } finally {
                     c.releaseOutputBuffer(outIndex, false)
                 }
