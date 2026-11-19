@@ -73,27 +73,52 @@ const char* socketName(dai::CameraBoardSocket s) {
     }
 }
 
-/** Intrinsics, distortion and pose of one camera, at the streamed size; translations in meters. */
+/**
+ * Intrinsics, distortion and poses of one camera, at the streamed size; translations in meters.
+ * Each part is read on its own, so one the EEPROM lacks (errors listed under "errors") doesn't
+ * lose the others: imu_from_camera (measured), imu_from_camera_spec (design translation),
+ * left_from_camera (camera to the left mono camera).
+ */
 nlohmann::json cameraCalibration(const dai::CalibrationHandler& cal, dai::CameraBoardSocket socket, int w, int h) {
     nlohmann::json j;
+    nlohmann::json errors = nlohmann::json::object();
     j["socket"] = socketName(socket);
     j["width"] = w;
     j["height"] = h;
+    auto meters = [](std::vector<std::vector<float>> m) {
+        for(int r = 0; r < 3 && r < static_cast<int>(m.size()); r++) m[r][3] /= 100.0f;  // depthai uses centimeters
+        return m;
+    };
     try {
         j["intrinsics"] = cal.getCameraIntrinsics(socket, w, h);
         j["distortion"] = cal.getDistortionCoefficients(socket);
         auto model = cal.getDistortionModel(socket);
         j["model"] = model == dai::CameraModel::Fisheye ? "fisheye" : model == dai::CameraModel::Perspective ? "perspective" : "other";
-        // Camera → IMU: x_imu = R x_cam + t (depthai uses centimeters).
-        auto m = cal.getCameraToImuExtrinsics(socket, false);
-        for(int r = 0; r < 3; r++) m[r][3] /= 100.0f;
-        j["imu_from_camera"] = m;
-        auto spec = cal.getCameraToImuExtrinsics(socket, true);
-        for(int r = 0; r < 3; r++) spec[r][3] /= 100.0f;
-        j["imu_from_camera_spec"] = spec;
     } catch(const std::exception& e) {
-        j["error"] = e.what();
+        errors["intrinsics"] = e.what();
     }
+    // Camera → IMU: x_imu = R x_cam + t.
+    try {
+        j["imu_from_camera"] = meters(cal.getCameraToImuExtrinsics(socket, false));
+    } catch(const std::exception& e) {
+        errors["imu_from_camera"] = e.what();
+    }
+    try {
+        j["imu_from_camera_spec"] = meters(cal.getCameraToImuExtrinsics(socket, true));
+    } catch(const std::exception& e) {
+        errors["imu_from_camera_spec"] = e.what();
+    }
+    // Camera → left mono camera (identity for the left one).
+    try {
+        if(socket == dai::CameraBoardSocket::CAM_B) {
+            j["left_from_camera"] = std::vector<std::vector<float>>{{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}};
+        } else {
+            j["left_from_camera"] = meters(cal.getCameraExtrinsics(socket, dai::CameraBoardSocket::CAM_B, false));
+        }
+    } catch(const std::exception& e) {
+        errors["left_from_camera"] = e.what();
+    }
+    if(!errors.empty()) j["errors"] = errors;
     return j;
 }
 

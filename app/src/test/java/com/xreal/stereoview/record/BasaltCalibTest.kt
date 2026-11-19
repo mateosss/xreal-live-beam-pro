@@ -50,7 +50,7 @@ class BasaltCalibTest {
         val cal = JSONObject()
             .put("left", cam("perspective", listOf(0.1, 0.2, 0.01, 0.02, 0.3, 0.4, 0.5, 0.6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)))
             .put("right", cam("fisheye", listOf(0.11, 0.12, 0.13, 0.14)))
-        val v = JSONObject(OakRecording.basaltFactory(cal, listOf("left", "right"), 400.0)!!).getJSONObject("value0")
+        val v = JSONObject(OakRecording.basaltFactory(cal, listOf("left", "right"), 400.0).json!!).getJSONObject("value0")
         val left = v.getJSONArray("intrinsics").getJSONObject(0)
         assertEquals("pinhole-radtan8", left.getString("camera_type"))
         val li = left.getJSONObject("intrinsics")
@@ -60,7 +60,28 @@ class BasaltCalibTest {
         assertEquals("kb4", v.getJSONArray("intrinsics").getJSONObject(1).getString("camera_type"))
         assertEquals(0.05, v.getJSONArray("T_imu_cam").getJSONObject(0).getDouble("px"), 0.0)
         assertEquals(400.0, v.getDouble("imu_update_rate"), 0.0)
-        assertEquals(null, OakRecording.basaltFactory(cal, listOf("left", "rgb"), 400.0))
+        assertEquals(null, OakRecording.basaltFactory(cal, listOf("left", "rgb"), 400.0).json)
+    }
+
+    /** Without camera-IMU extrinsics (depthai throws for them), the export falls back instead of disappearing. */
+    @Test
+    fun oakFactoryWithoutImuExtrinsicsFallsBack() {
+        fun cam(withImu: Boolean, spec: Boolean) = JSONObject()
+            .put("width", 640).put("height", 400).put("model", "perspective")
+            .put("intrinsics", JSONArray("[[400,0,320],[0,401,200],[0,0,1]]"))
+            .put("distortion", JSONArray(List(14) { 0.0 }))
+            .put("left_from_camera", JSONArray("[[1,0,0,-0.075],[0,1,0,0],[0,0,1,0],[0,0,0,1]]"))
+            .apply {
+                if (withImu) put("imu_from_camera", JSONArray("[[1,0,0,0.05],[0,1,0,0],[0,0,1,0],[0,0,0,1]]"))
+                if (spec) put("imu_from_camera_spec", JSONArray("[[1,0,0,0.04],[0,1,0,0],[0,0,1,0],[0,0,0,1]]"))
+                if (!withImu) put("errors", JSONObject().put("imu_from_camera", "no IMU extrinsics"))
+            }
+        val spec = OakRecording.basaltFactory(JSONObject().put("left", cam(true, true)).put("right", cam(false, true)), listOf("left", "right"), 400.0)
+        assertEquals(0.04, JSONObject(spec.json!!).getJSONObject("value0").getJSONArray("T_imu_cam").getJSONObject(0).getDouble("px"), 0.0)
+        assertTrue(spec.notes.toString(), spec.notes.any { "DESIGN" in it })
+        val rel = OakRecording.basaltFactory(JSONObject().put("left", cam(false, false)).put("right", cam(false, false)), listOf("left", "right"), 400.0)
+        assertEquals(-0.075, JSONObject(rel.json!!).getJSONObject("value0").getJSONArray("T_imu_cam").getJSONObject(1).getDouble("px"), 0.0)
+        assertTrue(rel.notes.toString(), rel.notes.any { "NO camera-IMU" in it })
     }
 
     /** Basalt's fisheye624 projection of a camera-frame point. */
