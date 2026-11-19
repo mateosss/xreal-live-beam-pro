@@ -6,6 +6,7 @@ import android.hardware.usb.UsbDevice
 import android.os.SystemClock
 import android.util.Log
 import com.xreal.stereoview.glasses.GlassesDevice
+import com.xreal.stereoview.glasses.GlassesImuCalibration
 import com.xreal.stereoview.glasses.GlassesProtocol
 import com.xreal.stereoview.glasses.Kb4Camera
 import com.xreal.stereoview.ui.StereoSettings
@@ -81,6 +82,10 @@ class GlassesRecording private constructor(
     private val pairSpread = PairSpread()
     @Volatile
     private var calibration: String? = null
+    /** Converts samples to imu0 as Monado does: factory calibration, Monado's IMU axes. */
+    @Volatile private var imuCalibration = GlassesImuCalibration.parse(null)
+    /** imu0 rows written before the factory calibration arrived (axes only). */
+    private var imuWithoutFactory = 0L
 
     /** Smallest (arrival − timestamp) seen: the clock offset plus the minimum delivery delay. */
     private class OffsetEstimate {
@@ -146,11 +151,17 @@ class GlassesRecording private constructor(
         if (imuSamples == 0L) imuFirstNs = s.timestampNs
         imuLastNs = s.timestampNs
         imuSamples++
-        imu0?.line(buildString(120) {
-            append(s.timestampNs)
-            for (i in 0..2) append(',').append(s.gyroRadPerSec(i))
-            for (i in 0..2) append(',').append(s.accelMps2(i))
-        })
+        imu0?.let { out ->
+            val cal = imuCalibration
+            if (!cal.factory) imuWithoutFactory++
+            val g = cal.gyro(s)
+            val a = cal.accel(s)
+            out.line(buildString(120) {
+                append(s.timestampNs)
+                for (v in g) append(',').append(v)
+                for (v in a) append(',').append(v)
+            })
+        }
         w.line(buildString(220) {
             append(s.timestampNs).append(',').append(arrivalNs)
             for (i in 0..2) append(',').append(s.gyroRadPerSec(i))
@@ -167,6 +178,7 @@ class GlassesRecording private constructor(
 
     fun onCalibration(json: String) {
         calibration = json
+        imuCalibration = GlassesImuCalibration.parse(json)
         runCatching { File(dir, "glasses_calibration.json").writeText(json) }
     }
 
@@ -232,6 +244,12 @@ class GlassesRecording private constructor(
             if (cameraOffset.count > 0) put("boottime_minus_glasses_ns_from_camera", cameraOffset.min)
             if (imuOffset.count > 0) put("boottime_minus_glasses_ns_from_imu", imuOffset.min)
         })
+        if (imu0 != null) metadata.put("imu0_conversion", imuCalibration.toJson().apply {
+            put("as", "Monado xreal_air driver (read_sample_and_apply_calibration): gyroscope rotated by accel_q_gyro, " +
+                "SI units (g = ${GlassesImuCalibration.GRAVITY}), pre-biased axes (x,y,z)→(−x,−z,−y), minus bias, times scale, " +
+                "post-biased axes (x,y,z)→(x,−y,−z). Net axes: sensor (x,y,z) → (−x,z,y).")
+            put("rows_without_factory_calibration", imuWithoutFactory)
+        })
         metadata.put("glasses_factory_calibration", calibration?.let { runCatching { JSONObject(it) }.getOrElse { _ -> it } } ?: JSONObject.NULL)
         val camerasJson = metadata.getJSONArray("cameras")
         cams.forEachIndexed { i, cam ->
@@ -278,7 +296,8 @@ class GlassesRecording private constructor(
         private fun writeImu0Yaml(dir: File, rateHz: Double) {
             File(Euroc.mav(dir), "imu0/sensor.yaml").writeText(Euroc.imuYaml(
                 listOf(
-                    "XREAL Air 2 Ultra IMU in its own axes, uncalibrated (biases and scales: glasses_calibration.json).",
+                    "XREAL Air 2 Ultra IMU as Monado's driver outputs it: factory bias, scale and misalignment applied, in Monado's IMU axes",
+                    "(sensor x,y,z -> -x,z,y), the frame of Monado's reference calibration. Raw values: imu0/glasses_imu.csv.",
                     "Same clock as the cameras (glasses clock). Body frame = this IMU.",
                 ) + if (rateHz == 0.0) listOf("rate_hz is measured when the recording ends (0 = the recording did not end normally).") else emptyList(),
                 "glasses IMU", Euroc.transform(com.xreal.stereoview.util.Mat3.identity(), null), rateHz,
@@ -379,8 +398,8 @@ class GlassesRecording private constructor(
                     put("mav0/camN/sensor.yaml", "EuRoC camera description from Monado's reference calibration (another unit; recalibrate)")
                     put("mav0/camN/frames.csv", "timestamp_ns (the pair's, as data.csv), sensor_timestamp_ns (this image's own, glasses clock), " +
                         "sequence, arrival_ns (BOOTTIME), first 64 bytes of the frame's metadata row")
-                    put("mav0/imu0/data.csv", "EuRoC IMU: the glasses IMU (if taken over), SI units in its own axes, uncalibrated, glasses clock")
-                    put("mav0/imu0/glasses_imu.csv", "glasses IMU (if taken over): SI units, magnetometer, temperature and raw values")
+                    put("mav0/imu0/data.csv", "EuRoC IMU: the glasses IMU (if taken over) converted as Monado does (factory calibration applied, Monado's IMU axes; see imu0_conversion), glasses clock")
+                    put("mav0/imu0/glasses_imu.csv", "glasses IMU (if taken over), as the sensor reports it: SI units in the sensor's own axes without calibration, magnetometer, temperature and raw integer values")
                     put("glasses_calibration.json", "the glasses' factory calibration (if the IMU was taken over)")
                     put("settings.jsonl", "settings at start and after every change")
                 })

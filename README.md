@@ -338,9 +338,12 @@ resolution, focus, stabilization, camera pair or Beam Pro exposure).
   sequence number, arrival time on the Beam Pro clock and the first 64 bytes of its metadata
   row.
 - **Glasses IMU** (*Settings → Glasses IMU*, on in the *Glasses EuRoC dataset* profile): the
-  glasses' IMU is taken over too and recorded as `mav0/imu0` (same clock as the cameras), with
-  all report fields in `mav0/imu0/glasses_imu.csv`; its factory calibration JSON is saved with the
-  recording.
+  glasses' IMU is taken over too and recorded as `mav0/imu0` (same clock as the cameras),
+  converted exactly as Monado's driver does: factory misalignment, bias and scale applied, in
+  Monado's IMU axes (sensor x, y, z → −x, z, y), the frame its reference calibration and
+  calibrations of Monado recordings use (`metadata.json` → `imu0_conversion`). Every report field,
+  as the sensor gives it (its own axes, uncalibrated, plus the raw integers), is in
+  `mav0/imu0/glasses_imu.csv`; the factory calibration JSON is saved with the recording.
 - `metadata.json` estimates the offset between the glasses' clock and the Beam Pro's, and
   includes Monado's reference Basalt calibration (KB4). It comes from another unit, so
   calibrate yours (e.g. Kalibr, pinhole-equi) for SLAM.

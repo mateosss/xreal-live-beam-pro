@@ -110,6 +110,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     private var glassesTakeoverConfirmed = false
     @Volatile
     private var glassesCalibration: String? = null
+    @Volatile private var glassesImuCalibration = com.xreal.stereoview.glasses.GlassesImuCalibration.parse(null)
     private var glassesImuActive = false
     private var glassesStatsTime = 0L
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -887,13 +888,17 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         override fun onImu(sample: GlassesProtocol.ImuSample, arrivalNs: Long) {
             (recording as? GlassesRecording)?.onImu(sample, arrivalNs)
             capture?.let {
-                it.gyro.add(sample.timestampNs, sample.gyroRadPerSec(0).toFloat(), sample.gyroRadPerSec(1).toFloat(), sample.gyroRadPerSec(2).toFloat())
-                it.accel.add(sample.timestampNs, sample.accelMps2(0).toFloat(), sample.accelMps2(1).toFloat(), sample.accelMps2(2).toFloat())
+                // As recorded in imu0: calibrated, in Monado's IMU axes.
+                val g = glassesImuCalibration.gyro(sample)
+                val a = glassesImuCalibration.accel(sample)
+                it.gyro.add(sample.timestampNs, g[0].toFloat(), g[1].toFloat(), g[2].toFloat())
+                it.accel.add(sample.timestampNs, a[0].toFloat(), a[1].toFloat(), a[2].toFloat())
             }
         }
 
         override fun onCalibration(json: String) {
             glassesCalibration = json
+            glassesImuCalibration = com.xreal.stereoview.glasses.GlassesImuCalibration.parse(json)
             Log.i(TAG, "Glasses calibration: ${json.length} bytes")
             (recording as? GlassesRecording)?.onCalibration(json)
         }
