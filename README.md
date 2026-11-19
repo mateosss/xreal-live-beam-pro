@@ -193,6 +193,26 @@ that queue is full, and `metadata.json` records drops and the deepest queue seen
 the queues while recording. A recording stops by itself if a write fails or less than 200 MB of
 storage is left.
 
+**Basalt calibration.** Every recording carries `calibration.bslt.json`, a calibration in
+[Basalt](https://gitlab.com/VladyslavUsenko/basalt)'s format (cameras, their poses in imu0's
+frame as `T_imu_cam`, resolutions, IMU rate; zero IMU biases since imu0 is already calibrated;
+Basalt's EuRoC noise values as placeholders). By default it is the device's factory calibration:
+
+- **Beam Pro / phone:** Camera2's intrinsics, distortion (`pinhole-radtan8`, or `pinhole` for
+  rectified recordings) and lens poses.
+- **OAK:** depthai's calibration at the recorded sizes: fisheye cameras as `kb4`, perspective
+  ones as `pinhole-radtan8` (thin-prism and tilt terms, usually zero, dropped and noted).
+- **Glasses:** the glasses' own `SLAM_camera` calibration (read when the IMU is taken over) as
+  `fisheye624`, turned with the images to upright 480×640, poses in imu0's axes. Nothing else
+  uses these values yet, so the conventions are assumptions, listed in the file's `comment`
+  with a comparison against Monado's reference unit (`metadata.json → basalt_calibration`).
+  Without them: Monado's reference calibration of another unit (`kb4`).
+
+Factory values are a starting point; calibrate your setup for SLAM. *Settings → Calibration
+(Basalt)* imports your own file per device (Beam Pro, glasses, OAK): recordings of that device
+then carry it as `calibration.bslt.json`, with the factory one beside it as
+`calibration.factory.bslt.json`.
+
 *Settings → Focus → Locked at infinity* keeps the intrinsics fixed, which SLAM needs. For SLAM,
 also turn stabilization off when recording rectified images, or each frame is rotated by
 its logged `stab_q`.
@@ -373,16 +393,20 @@ the OAK-D Pro W) over USB through Luxonis' own library, depthai-core 2.34 built 
 arm64 (see `third_party/depthai-android/` and `tools/build_depthai_android.sh`).
 
 - **Preview:** the left and right global-shutter mono cameras in the two eyes, as they come
-  (not rectified yet), with scale, convergence and depth like the glasses. Auto/Manual
-  exposure in the panel controls all OAK cameras (compensation −9…9, or shutter and ISO 100–1600).
+  (not rectified yet), with scale, convergence and depth like the glasses. Exposure is per
+  camera: the panel's camera button picks **All**, **cam0** (left), **cam1** (right) or
+  **cam2** (color), and Auto/Manual, compensation −9…9, shutter and ISO 100–1600 then set that
+  camera (All sets every camera to the shown values; it reads "All ≠" when they differ).
 - **Profile settings:** mono resolution (1280×800, 1280×720, 640×400), frame rate (15–60 fps,
   all cameras synchronized), color camera (1280×800 or 1280×720 as JPEG encoded on the
   camera, or off), OAK IMU rate (100/200/250 Hz or off) and USB speed. Built-in profiles:
   *OAK passthrough* (720p mono, no color, no IMU) and *OAK EuRoC dataset* (800p mono, color,
   IMU 200 Hz).
 - **Recording** (EuRoC layout, all on the OAK's clock, mid-exposure):
-  `mav0/cam0` and `cam1` left/right mono PNGs, `mav0/cam2` color JPEGs written exactly as the
-  camera encoded them, `mav0/imu0` from the OAK's raw accelerometer and gyroscope (gyroscope
+  `mav0/cam0` and `cam1` left/right mono images (*Mono images*: PNG by default, JPEG or H.264
+  MKV), `mav0/cam2` the color camera in its own format (*Color images*: by default JPEGs written
+  exactly as the camera encoded them; or lossless RGB PNGs or H.264 MKV with its own bitrate,
+  both from the camera's raw NV12 frames, which need USB3: about 46 MB/s at 800p 30 fps), `mav0/imu0` from the OAK's raw accelerometer and gyroscope (gyroscope
   timestamps, accelerometer interpolated), `sensor.yaml` files from the camera's factory
   calibration (body frame = OAK IMU), `oak_calibration.json` with the full calibration,
   `frames.csv` per camera (sequence, host time, arrival time, exposure, ISO), the raw IMU streams

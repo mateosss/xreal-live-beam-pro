@@ -39,6 +39,7 @@ import java.util.Locale
  * the encoders' input surfaces.
  */
 class Recording private constructor(
+    private val appContext: android.content.Context,
     override val dir: File,
     val view: RecordView,
     val format: RecordFormat,
@@ -262,10 +263,26 @@ class Recording private constructor(
      * both were recorded, else uncalibrated): its sensor.yaml with the measured rate. Returns a
      * summary for metadata.json.
      */
+    /** The cameras' factory calibration in Basalt's format (from [writeEurocDescriptions]). */
+    private var basaltCameras: List<BasaltCalib.Camera> = emptyList()
+
+    /** calibration.bslt.json: the custom one, or the factory one from the camera characteristics. */
+    private fun writeBasalt(imuRateHz: Double) {
+        val factory = if (basaltCameras.isEmpty()) null else BasaltCalib.json(
+            basaltCameras, imuRateHz,
+            "Beam Pro / phone factory camera calibration (Camera2 LENS_INTRINSIC_CALIBRATION, LENS_DISTORTION, LENS_POSE_*), " +
+                "${view.name.lowercase()} images. T_imu_cam in the phone's IMU (Android sensor) frame; the translation is zero where the " +
+                "lens pose is not relative to the gyroscope. IMU noise values are placeholders. Factory values: recalibrate for best results.",
+        )
+        metadata.put("basalt_calibration", BasaltCalib.write(appContext, dir, com.xreal.stereoview.ui.CameraSource.BEAM_PRO, factory))
+    }
+
     private fun writeImu0(): JSONObject {
         val live = imu.imu0 ?: return JSONObject().put("samples", 0).put("note", "record the gyroscope and accelerometer streams")
+            .also { writeBasalt(0.0) }
         val pair = imu.imu0Pair!!
         writeImu0Yaml(dir, imu, live.rateHz)
+        writeBasalt(live.rateHz)
         return JSONObject().put("samples", live.rows).put("rate_hz", live.rateHz)
             .put("source", "${Euroc.RAW_IMU_PATH}/${pair.first.file}.csv + ${pair.second.file}.csv, written live")
     }
@@ -443,25 +460,35 @@ class Recording private constructor(
                     put("mav0/camN/capture_results.csv", "every capture result of the camera: exposure, readout and rolling shutter times, ISO, focus, per-frame intrinsics")
                     put("mav0/imu0/data.csv", "EuRoC IMU: gyroscope samples with the accelerometer interpolated to them (written when the recording ends)")
                     put("mav0/imu0/sensor.yaml", "EuRoC IMU description (noise values are placeholders)")
+                    put(BasaltCalib.FILE, "Basalt calibration (cameras, T_imu_cam in the phone IMU's frame): the custom one set in Settings, else the factory one")
                     put("mav0/imu0/<stream>.csv", "every recorded IMU stream as delivered (beside imu0's data.csv)")
                     put("settings.jsonl", "settings at start and after every change")
                 })
             }
             File(dir, "metadata.json").writeText(metadata.toString(2))
-            writeEurocDescriptions(dir, metadata, rig.targetFps.toDouble(), s.recordView == RecordView.RECTIFIED)
+            val basaltCameras = writeEurocDescriptions(dir, metadata, rig.targetFps.toDouble(), s.recordView == RecordView.RECTIFIED)
 
             val recording = Recording(
-                dir, s.recordView, s.recordFormat, outputs, imu, LineWriter(File(dir, "settings.jsonl")), metadata,
+                context.applicationContext, dir, s.recordView, s.recordFormat, outputs, imu, LineWriter(File(dir, "settings.jsonl")), metadata,
                 cameraClockIsBoottime = timestamps.getBoolean("camera_timestamps_comparable_with_imu"),
                 boottimeMinusMonotonicNs = startClocks.getLong("boottime_minus_monotonic_ns"),
             )
+            recording.basaltCameras = basaltCameras
+            // Written now in case the recording doesn't end normally, again at the end with the measured IMU rate.
+            recording.writeBasalt(if (s.imuRate.periodUs > 0) 1e6 / s.imuRate.periodUs else 200.0)
+            File(dir, "metadata.json").writeText(metadata.toString(2))
             recording.onSettingsChanged(s)
             imu.start()
             return recording
         }
 
-        /** mav0/body.yaml and each camera's sensor.yaml, from the camera entries of [metadata]. */
-        private fun writeEurocDescriptions(dir: File, metadata: JSONObject, fps: Double, rectified: Boolean) {
+        /**
+         * mav0/body.yaml and each camera's sensor.yaml, from the camera entries of [metadata].
+         * Returns the same calibration for Basalt (raw: pinhole-radtan8 with Android's k1, k2,
+         * k3, p1, p2; rectified: pinhole).
+         */
+        private fun writeEurocDescriptions(dir: File, metadata: JSONObject, fps: Double, rectified: Boolean): List<BasaltCalib.Camera> {
+            val basalt = mutableListOf<BasaltCalib.Camera>()
             File(Euroc.mav(dir), "body.yaml").writeText(Euroc.bodyYaml("The body frame is the Beam Pro IMU (Android device sensor frame)."))
             val cams = metadata.getJSONArray("cameras")
             for (i in 0 until cams.length()) {
@@ -478,6 +505,10 @@ class Recording private constructor(
                 }
                 val yaml = if (rectified) {
                     val r = cam.getJSONObject("rectified")
+                    basalt += BasaltCalib.Camera(
+                        "pinhole", BasaltCalib.pinhole(r.getDouble("fx"), r.getDouble("fy"), r.getDouble("cx"), r.getDouble("cy")),
+                        size.getInt(0), size.getInt(1), Euroc.transform(matrix("device_from_virtual_rotation", r), translation),
+                    )
                     Euroc.cameraYaml(
                         notes, cam.getString("name"), Euroc.transform(matrix("device_from_virtual_rotation", r), translation), fps,
                         size.getInt(0), size.getInt(1), doubleArrayOf(r.getDouble("fx"), r.getDouble("fy"), r.getDouble("cx"), r.getDouble("cy")),
@@ -487,6 +518,11 @@ class Recording private constructor(
                     val r = cam.getJSONObject("raw")
                     val d = (r.opt("opencv_radtan_k1_k2_p1_p2_k3") as? JSONArray)?.let(::doubles) ?: DoubleArray(5)
                     if (d.size > 4 && d[4] != 0.0) notes += "k3 = ${d[4]} is dropped: EuRoC's radial-tangential model has k1, k2, p1, p2 only."
+                    basalt += BasaltCalib.Camera(
+                        "pinhole-radtan8",
+                        BasaltCalib.radtan8(r.getDouble("fx"), r.getDouble("fy"), r.getDouble("cx"), r.getDouble("cy"), d[0], d[1], d[2], d[3], d.getOrElse(4) { 0.0 }),
+                        size.getInt(0), size.getInt(1), Euroc.transform(matrix("device_from_camera_rotation", cam), translation),
+                    )
                     Euroc.cameraYaml(
                         notes, cam.getString("name"), Euroc.transform(matrix("device_from_camera_rotation", cam), translation), fps,
                         size.getInt(0), size.getInt(1), doubleArrayOf(r.getDouble("fx"), r.getDouble("fy"), r.getDouble("cx"), r.getDouble("cy")),
@@ -495,6 +531,7 @@ class Recording private constructor(
                 }
                 File(File(Euroc.mav(dir), cam.getString("name")), "sensor.yaml").writeText(yaml)
             }
+            return basalt
         }
 
         private const val RESULT_COLUMNS = "frame_number,timestamp_ns,readout_timestamp_ns,exposure_time_ns,frame_duration_ns," +

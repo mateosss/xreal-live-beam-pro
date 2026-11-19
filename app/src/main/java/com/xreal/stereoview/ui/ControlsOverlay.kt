@@ -33,6 +33,8 @@ class ControlsOverlay(
         fun isRecording(): Boolean
         /** The folder being recorded into, if any. */
         fun recordingDir(): java.io.File?
+        /** Opens the system file picker; [onPicked] gets the chosen file's uri and display name. */
+        fun pickFile(onPicked: (android.net.Uri, String?) -> Unit)
 
         /** Selectable camera pairs as (key, description), best first. */
         fun cameraPairOptions(): List<Pair<String, String>>
@@ -58,6 +60,7 @@ class ControlsOverlay(
         override fun showProfiles() = profilesDialog.show()
         override fun probeUsb() = actions.onUsbProbe()
         override fun showRecordings() = RecordingsActivity.open(context, actions.recordingDir())
+        override fun pickFile(onPicked: (android.net.Uri, String?) -> Unit) = actions.pickFile(onPicked)
     })
     private val profilesDialog = ProfilesDialog(context, viewModel, actions::isRecording, ::setStatus)
 

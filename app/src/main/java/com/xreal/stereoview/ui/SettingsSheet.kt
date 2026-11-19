@@ -72,6 +72,8 @@ class SettingsSheet(
         fun showProfiles()
         fun probeUsb()
         fun showRecordings()
+        /** Lets the user pick a file; [onPicked] gets its uri and display name (or nothing if cancelled). */
+        fun pickFile(onPicked: (android.net.Uri, String?) -> Unit)
     }
 
     private var dialog: BottomSheetDialog? = null
@@ -185,12 +187,42 @@ class SettingsSheet(
         }
     }
 
+    /**
+     * The Basalt calibration recordings of [device] carry (calibration.bslt.json): the factory
+     * one, or a file imported here.
+     */
+    private fun calibrationRow(content: LinearLayout, device: CameraSource, recording: Boolean) {
+        val Custom = com.xreal.stereoview.record.BasaltCalib.Custom
+        val custom = Custom.name(context, device)
+        row(content, "Calibration (Basalt)", if (custom != null) "Custom: $custom" else "Factory calibration, exported with each recording", locked = recording) {
+            val options = listOf(
+                "Import a Basalt calibration file (calibration.bslt.json in every ${device.shortLabel} recording)",
+                "Use the factory calibration" + if (custom == null) " (current)" else "",
+            )
+            choose("Calibration for ${device.shortLabel} recordings", options, if (custom != null) 0 else 1) { i ->
+                if (i == 1) {
+                    Custom.clear(context, device)
+                    host.setStatus("${device.shortLabel} recordings will carry the factory calibration")
+                    refresh()
+                } else {
+                    host.pickFile { uri, name ->
+                        val message = runCatching { Custom.import(context, device, uri, name) }
+                            .fold({ "Calibration for ${device.shortLabel} recordings: ${name ?: "file"} ($it)" }, { "⚠ Not imported: ${it.message}" })
+                        host.setStatus(message)
+                        refresh()
+                    }
+                }
+            }
+        }
+    }
+
     private fun setupRows(content: LinearLayout, s: StereoSettings, recording: Boolean, device: CameraSource) {
         if (device == CameraSource.BEAM_PRO) beamProSetupRows(content, s, recording)
         row(content, "Eye alignment", "pitch %+.2f°, roll %+.2f° (Align measures it)".format(s.alignPitchDeg, s.alignRollDeg)) {
             showAlignmentDialog()
         }
         row(content, "Recording buffers", buffersSummary(s, device), locked = recording) { showBuffersDialog() }
+        calibrationRow(content, device, recording)
         if (device == CameraSource.GLASSES) {
             row(content, "Glasses USB probe", "Check whether the app can reach the glasses' cameras and IMU") { host.probeUsb() }
         }

@@ -38,6 +38,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * frames.csv (sensor_timestamp_ns), and metadata.json sums up how far apart they are.
  */
 class GlassesRecording private constructor(
+    private val appContext: Context,
     override val dir: File,
     private val cams: List<Cam>,
     private val glassesImu: LineWriter?,
@@ -181,6 +182,14 @@ class GlassesRecording private constructor(
         calibration = json
         imuCalibration = GlassesImuCalibration.parse(json)
         runCatching { File(dir, "glasses_calibration.json").writeText(json) }
+        writeBasalt(com.xreal.stereoview.glasses.GlassesDevice.IMU_RATE_HZ.toDouble())
+    }
+
+    /** calibration.bslt.json: the custom one, or the factory one from [calibration] (see [com.xreal.stereoview.glasses.GlassesBasalt]). */
+    private fun writeBasalt(imuRateHz: Double) {
+        val factory = com.xreal.stereoview.glasses.GlassesBasalt.factory(calibration, imuRateHz)
+        metadata.put("basalt_calibration", BasaltCalib.write(appContext, dir, com.xreal.stereoview.ui.CameraSource.GLASSES, factory.json)
+            .put("factory_conversion", factory.info))
     }
 
     override fun onSettingsChanged(s: StereoSettings) {
@@ -232,6 +241,9 @@ class GlassesRecording private constructor(
         if (imu0 != null) {
             val rate = if (imuSamples > 1) (imuSamples - 1) * 1e9 / (imuLastNs - imuFirstNs) else 0.0
             writeImu0Yaml(dir, rate)
+            writeBasalt(if (rate > 0) rate else com.xreal.stereoview.glasses.GlassesDevice.IMU_RATE_HZ.toDouble())
+        } else {
+            writeBasalt(com.xreal.stereoview.glasses.GlassesDevice.IMU_RATE_HZ.toDouble())
         }
 
         metadata.put("status", if (error == null) "complete" else "stopped with error: $error")
@@ -402,12 +414,14 @@ class GlassesRecording private constructor(
                     put("mav0/imu0/data.csv", "EuRoC IMU: the glasses IMU (if taken over) converted as Monado does (factory calibration applied, Monado's IMU axes; see imu0_conversion), glasses clock")
                     put("mav0/imu0/glasses_imu.csv", "glasses IMU (if taken over), as the sensor reports it: SI units in the sensor's own axes without calibration, magnetometer, temperature and raw integer values")
                     put("glasses_calibration.json", "the glasses' factory calibration (if the IMU was taken over)")
+                    put(BasaltCalib.FILE, "Basalt calibration (cameras, T_imu_cam in imu0's frame): the custom one set in Settings, else the factory one converted (see basalt_calibration)")
                     put("settings.jsonl", "settings at start and after every change")
                 })
             }
             File(dir, "metadata.json").writeText(metadata.toString(2))
-            recording = GlassesRecording(dir, cams, glassesImu, imu0, LineWriter(File(dir, "settings.jsonl")), metadata, s.glassesImageFormat, s.grayJpegQuality, 2 * backlog)
+            recording = GlassesRecording(context.applicationContext, dir, cams, glassesImu, imu0, LineWriter(File(dir, "settings.jsonl")), metadata, s.glassesImageFormat, s.grayJpegQuality, 2 * backlog)
             recording.onSettingsChanged(s)
+            recording.writeBasalt(com.xreal.stereoview.glasses.GlassesDevice.IMU_RATE_HZ.toDouble())
             return recording
         }
 

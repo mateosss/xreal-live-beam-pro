@@ -411,9 +411,14 @@ class OakRecording private constructor(
                     put("mav0/imu0", "EuRoC IMU from the OAK IMU: gyroscope timestamps, accelerometer interpolated (built at the end)")
                     put("mav0/imu0/oak_accelerometer.csv, oak_gyroscope.csv", IMU_HEADER + " (raw sensor values, m/s² and rad/s)")
                     put("oak_calibration.json", "the camera's full factory calibration (depthai EEPROM data)")
+                    put(BasaltCalib.FILE, "Basalt calibration (cameras, T_imu_cam in the OAK IMU's frame): the custom one set in Settings, else the factory one")
                     put("settings.jsonl", "settings at start and after every change")
                 })
             }
+            val imuRate = if (s.oakImuRateHz > 0) s.oakImuRateHz.toDouble() else 200.0
+            metadata.put("basalt_calibration", BasaltCalib.write(
+                context, dir, com.xreal.stereoview.ui.CameraSource.OAK, basaltFactory(calibration, specs.map { it.key }, imuRate),
+            ))
             File(dir, "metadata.json").writeText(metadata.toString(2))
             val queue = specs.filter { it.ext != GrayImageFormat.H264.extension }.sumOf { it.backlog }.coerceAtLeast(8)
             // RGB PNGs take several times longer than the mono ones: more writers.
@@ -424,6 +429,40 @@ class OakRecording private constructor(
             )
             recording.onSettingsChanged(s)
             return recording
+        }
+
+        /**
+         * The OAK's factory calibration (depthai, at the streamed sizes) of cameras [keys] in
+         * Basalt's format: fisheye cameras as kb4, perspective ones as pinhole-radtan8 (depthai's
+         * k1, k2, p1, p2, k3..k6; its thin-prism and tilt terms, usually zero, are dropped and
+         * noted in the comment). Null if a camera has no calibration.
+         */
+        fun basaltFactory(calibration: JSONObject?, keys: List<String>, imuRateHz: Double): String? {
+            val dropped = mutableListOf<String>()
+            val cameras = keys.mapIndexed { i, key ->
+                val c = calibration?.optJSONObject(key)?.takeIf { it.has("intrinsics") && it.has("imu_from_camera") } ?: return null
+                val k = c.getJSONArray("intrinsics")
+                val fx = k.getJSONArray(0).getDouble(0)
+                val fy = k.getJSONArray(1).getDouble(1)
+                val cx = k.getJSONArray(0).getDouble(2)
+                val cy = k.getJSONArray(1).getDouble(2)
+                val d = c.getJSONArray("distortion")
+                fun dist(j: Int) = d.optDouble(j, 0.0).takeUnless { it.isNaN() } ?: 0.0
+                val m = c.getJSONArray("imu_from_camera")
+                val t = DoubleArray(16) { j -> if (j < 12) m.getJSONArray(j / 4).getDouble(j % 4) else if (j == 15) 1.0 else 0.0 }
+                val (model, params) = if (c.optString("model") == "fisheye") {
+                    "kb4" to BasaltCalib.kb4(fx, fy, cx, cy, DoubleArray(4) { dist(it) })
+                } else {
+                    val rest = (8 until d.length()).map { dist(it) }
+                    if (rest.any { kotlin.math.abs(it) > 1e-9 }) dropped += "cam$i s1..s4, tx, ty = $rest"
+                    "pinhole-radtan8" to BasaltCalib.radtan8(fx, fy, cx, cy, dist(0), dist(1), dist(2), dist(3), dist(4), dist(5), dist(6), dist(7))
+                }
+                BasaltCalib.Camera(model, params, c.getInt("width"), c.getInt("height"), t)
+            }
+            val comment = "Luxonis OAK factory calibration (depthai), at the recorded image sizes; T_imu_cam from depthai's camera-to-IMU " +
+                "extrinsics. " + (if (dropped.isEmpty()) "" else "Dropped depthai terms Basalt's model lacks: ${dropped.joinToString("; ")}. ") +
+                "IMU noise values are placeholders. Factory values: recalibrate for best results."
+            return BasaltCalib.json(cameras, imuRateHz, comment)
         }
 
         /**
