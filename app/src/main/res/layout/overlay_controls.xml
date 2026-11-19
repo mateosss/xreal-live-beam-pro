@@ -136,7 +136,9 @@
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
+        <!-- Convergence and depth; hidden in the capture-style portrait preview. -->
         <LinearLayout
+            android:id="@+id/stereoSlidersRow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:baselineAligned="false"

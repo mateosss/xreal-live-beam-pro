@@ -134,6 +134,7 @@ class ControlsOverlay(
             else -> active.name
         }
 
+        renderStereoControls(s)
         binding.convergenceSlider.setSafe(s.convergencePx)
         binding.convergenceLabel.text = context.getString(R.string.convergence) + "  %+.0f px".format(s.convergencePx)
         binding.depthSlider.setSafe((s.depth - StereoSettings.DEPTH_MIN) / (StereoSettings.DEPTH_MAX - StereoSettings.DEPTH_MIN) * 100)
@@ -222,12 +223,26 @@ class ControlsOverlay(
      */
     private var portrait = false
 
+    /**
+     * Convergence, depth and align only shape the stereo (passthrough) view: the capture-style
+     * portrait preview shows every camera as streamed, so they are hidden there.
+     */
+    private fun renderStereoControls(s: StereoSettings) {
+        val stereo = !(portrait && s.previewStyle == PreviewStyle.CAPTURE)
+        val visibility = if (stereo) View.VISIBLE else View.GONE
+        binding.stereoSlidersRow.visibility = visibility
+        binding.alignButton.visibility = visibility
+    }
+
     private fun portraitLabel(s: StereoSettings) = portraitMode(s.portraitScaleMode).label
 
     fun setPortrait(portrait: Boolean) {
         if (this.portrait != portrait) {
             this.portrait = portrait
-            viewModel.settings.value.let { binding.scaleButton.text = if (portrait) portraitLabel(it) else it.scaleMode.label }
+            viewModel.settings.value.let {
+                binding.scaleButton.text = if (portrait) portraitLabel(it) else it.scaleMode.label
+                renderStereoControls(it)
+            }
         }
         val actions = binding.actionsScroll
         val target = if (portrait) binding.portraitActions else binding.toolbarRow

@@ -331,7 +331,7 @@ class RecordingPreviewActivity : AppCompatActivity() {
         }
         // Not selection-required: pinching a plot to another span unchecks the buttons.
         val spans = MaterialButtonToggleGroup(this).apply { isSingleSelection = true }
-        for (seconds in listOf(1, 5, 20, 60)) {
+        for (seconds in listOf(1, 5, 60)) {
             spans.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
                 id = View.generateViewId()
                 text = "${seconds}s"
@@ -377,10 +377,20 @@ class RecordingPreviewActivity : AppCompatActivity() {
     /** Toggles whether zooming one camera zooms all of them; the zoom starts over. */
     private fun linkZoomButton() = MaterialButton(this, null, if (linkZoom) com.google.android.material.R.attr.materialButtonStyle
     else com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-        text = if (linkZoom) "Zoom linked" else "Zoom per camera"
+        // Compact and on one line, so it never grows the row and squeezes the plots.
+        text = if (linkZoom) "Zoom: linked" else "Zoom: each"
         isAllCaps = false
+        maxLines = 1
+        textSize = 12f
         minWidth = 0
         minimumWidth = 0
+        minHeight = 0
+        minimumHeight = 0
+        insetTop = 0
+        insetBottom = 0
+        setPadding(dp(8), dp(6), dp(8), dp(6))
+        contentDescription = if (linkZoom) "Zoom linked across cameras; tap to zoom each camera separately"
+        else "Each camera zooms separately; tap to link the zoom"
         setOnClickListener {
             linkZoom = !linkZoom
             PreviewPrefs.setLinkZoom(this@RecordingPreviewActivity, linkZoom)

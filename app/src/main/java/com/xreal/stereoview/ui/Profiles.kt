@@ -48,7 +48,7 @@ data class Profile(val name: String, val settings: StereoSettings) {
             get() {
                 val base = StereoSettings()
                 return listOf(
-                    Profile(PASSTHROUGH, base.copy(stabilization = Stabilization.OFF)),
+                    Profile(PASSTHROUGH, base.copy(stabilization = Stabilization.OFF, previewStyle = PreviewStyle.PASSTHROUGH)),
                     Profile(
                         EUROC,
                         base.copy(
@@ -76,6 +76,7 @@ data class Profile(val name: String, val settings: StereoSettings) {
                             oakMonoHeight = 400,
                             oakRgbHeight = 0,
                             oakImuRateHz = 0,
+                            previewStyle = PreviewStyle.PASSTHROUGH,
                         ),
                     ),
                     Profile(
@@ -99,6 +100,7 @@ data class Profile(val name: String, val settings: StereoSettings) {
                             glassesImu = false,
                             convergencePx = 0f,
                             scaleMode = ScaleMode.FILL,
+                            previewStyle = PreviewStyle.PASSTHROUGH,
                         ),
                     ),
                     Profile(
@@ -118,13 +120,23 @@ data class Profile(val name: String, val settings: StereoSettings) {
          * Updates stored copies of built-in profiles whose defaults changed, if they still hold
          * one of their old defaults (never touched by the user): the glasses profiles now use
          * Fill (0.13), Passthrough has no stabilization (0.14); the OAK profiles stream the mono
-         * pair at 640×400 and the dataset one the IMU at its maximum, without the phone's IMU (0.15).
+         * pair at 640×400 and the dataset one the IMU at its maximum, without the phone's IMU (0.15);
+         * the passthrough profiles show the passthrough-style portrait preview (0.15.1).
          */
         fun migrate(profiles: List<Profile>): List<Profile> {
             val old: Map<String, List<(StereoSettings) -> StereoSettings>> = mapOf(
-                GLASSES_PASSTHROUGH to listOf({ s -> s.copy(scaleMode = ScaleMode.REAL) }),
-                PASSTHROUGH to listOf({ s -> s.copy(stabilization = Stabilization.MEDIUM) }),
-                OAK_PASSTHROUGH to listOf({ s -> s.copy(oakMonoHeight = 720, oakImuRateHz = 0, previewStyle = PreviewStyle.CAPTURE) }),
+                GLASSES_PASSTHROUGH to listOf(
+                    { s -> s.copy(scaleMode = ScaleMode.REAL, previewStyle = PreviewStyle.CAPTURE) },
+                    { s -> s.copy(previewStyle = PreviewStyle.CAPTURE) },
+                ),
+                PASSTHROUGH to listOf(
+                    { s -> s.copy(stabilization = Stabilization.MEDIUM, previewStyle = PreviewStyle.CAPTURE) },
+                    { s -> s.copy(previewStyle = PreviewStyle.CAPTURE) },
+                ),
+                OAK_PASSTHROUGH to listOf(
+                    { s -> s.copy(oakMonoHeight = 720, oakImuRateHz = 0, previewStyle = PreviewStyle.CAPTURE) },
+                    { s -> s.copy(previewStyle = PreviewStyle.CAPTURE) },
+                ),
                 OAK_EUROC to listOf({ s ->
                     s.copy(
                         oakMonoHeight = 800, oakImuRateHz = 200, imuRate = ImuRate.DIRECT_VERY_FAST,

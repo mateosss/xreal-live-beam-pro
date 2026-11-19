@@ -66,8 +66,24 @@ class ProfileMigrationTest {
         assertEquals(800, edited.oakMonoHeight)
 
         val pass = Profile.defaults.first { it.name == Profile.OAK_PASSTHROUGH }
-        val oldPass = pass.copy(settings = pass.settings.copy(oakMonoHeight = 720))
+        val oldPass = pass.copy(settings = pass.settings.copy(oakMonoHeight = 720, previewStyle = PreviewStyle.CAPTURE))
         assertEquals(400, Profile.migrate(listOf(oldPass))[0].settings.oakMonoHeight)
+    }
+
+    @Test
+    fun passthroughProfilesShowPassthroughStyleAndDatasetOnesCapture() {
+        for (p in Profile.defaults) {
+            val expected = if (p.name.contains("EuRoC")) PreviewStyle.CAPTURE else PreviewStyle.PASSTHROUGH
+            assertEquals(p.name, expected, p.settings.previewStyle)
+        }
+        // As stored by 0.15.0 (capture style everywhere): untouched ones move, edited ones stay.
+        for (name in listOf(Profile.PASSTHROUGH, Profile.OAK_PASSTHROUGH, Profile.GLASSES_PASSTHROUGH)) {
+            val p = Profile.defaults.first { it.name == name }
+            val old = p.settings.copy(previewStyle = PreviewStyle.CAPTURE)
+            assertEquals(name, PreviewStyle.PASSTHROUGH, Profile.migrate(listOf(p.copy(settings = old)))[0].settings.previewStyle)
+            val edited = old.copy(convergencePx = 7f)
+            assertEquals(name, PreviewStyle.CAPTURE, Profile.migrate(listOf(p.copy(settings = edited)))[0].settings.previewStyle)
+        }
     }
 
     private companion object {
