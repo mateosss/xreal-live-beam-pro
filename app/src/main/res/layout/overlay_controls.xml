@@ -129,7 +129,14 @@
         android:layout_height="wrap_content"
         android:visibility="gone" />
 
-    <!-- Sliders; hidden when the panel is collapsed. -->
+    <!-- Sliders; hidden when the panel is collapsed. Scroll when taller than allowed (portrait). -->
+    <com.xreal.stereoview.ui.MaxHeightScrollView
+        android:id="@+id/slidersScroll"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:fadeScrollbars="false"
+        android:scrollbarStyle="outsideOverlay">
+
     <LinearLayout
         android:id="@+id/sliders"
         android:layout_width="match_parent"
@@ -193,12 +200,21 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- Exposure: mode buttons, then the sliders beside them (landscape) or below, one per line (portrait). -->
         <LinearLayout
+            android:id="@+id/exposureRow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:baselineAligned="false"
             android:gravity="center_vertical"
             android:orientation="horizontal">
+
+            <LinearLayout
+                android:id="@+id/exposureButtons"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/oakCameraButton"
@@ -240,6 +256,15 @@
                     android:text="@string/exposure_manual"
                     android:textAllCaps="false" />
             </com.google.android.material.button.MaterialButtonToggleGroup>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/exposureSliders"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:baselineAligned="false"
+                android:orientation="horizontal">
 
             <LinearLayout
                 android:id="@+id/brightnessColumn"
@@ -315,8 +340,10 @@
                     app:labelBehavior="gone"
                     app:tickVisible="false" />
             </LinearLayout>
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
+    </com.xreal.stereoview.ui.MaxHeightScrollView>
 
     <TextView
         android:id="@+id/statusText"

@@ -3,6 +3,7 @@ package com.xreal.stereoview.ui
 import android.content.res.ColorStateList
 import android.util.Range
 import android.view.View
+import android.widget.LinearLayout.LayoutParams as LP
 import androidx.core.content.ContextCompat
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.slider.Slider
@@ -306,6 +307,7 @@ class ControlsOverlay(
                 renderStereoControls(it)
             }
         }
+        layoutExposure(portrait)
         val actions = binding.actionsScroll
         val target = if (portrait) binding.portraitActions else binding.toolbarRow
         if (actions.parent === target) return
@@ -321,6 +323,23 @@ class ControlsOverlay(
         }
         binding.portraitActions.visibility = if (portrait) View.VISIBLE else View.GONE
         binding.actionsRow.gravity = (if (portrait) android.view.Gravity.START else android.view.Gravity.END) or android.view.Gravity.CENTER_VERTICAL
+    }
+
+    /**
+     * Landscape: the exposure sliders beside the mode buttons, sharing the row. Portrait: below
+     * them, each across the full width, and the sliders area scrolls past 40% of the screen.
+     */
+    private fun layoutExposure(portrait: Boolean) {
+        val match = android.view.ViewGroup.LayoutParams.MATCH_PARENT
+        val wrap = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+        binding.exposureRow.orientation = if (portrait) android.widget.LinearLayout.VERTICAL else android.widget.LinearLayout.HORIZONTAL
+        binding.exposureRow.gravity = if (portrait) android.view.Gravity.START else android.view.Gravity.CENTER_VERTICAL
+        binding.exposureSliders.orientation = if (portrait) android.widget.LinearLayout.VERTICAL else android.widget.LinearLayout.HORIZONTAL
+        binding.exposureSliders.layoutParams = if (portrait) LP(match, wrap) else LP(0, wrap, 1f)
+        for ((column, weight) in listOf(binding.brightnessColumn to 2f, binding.shutterColumn to 1f, binding.isoColumn to 1f)) {
+            column.layoutParams = if (portrait) LP(match, wrap) else LP(0, wrap, weight)
+        }
+        binding.slidersScroll.maxHeightPx = if (portrait) (context.resources.displayMetrics.heightPixels * 0.4).toInt() else 0
     }
 
     /** OAK cameras: auto exposure with compensation −9..9, or manual shutter and ISO 100–1600. */
