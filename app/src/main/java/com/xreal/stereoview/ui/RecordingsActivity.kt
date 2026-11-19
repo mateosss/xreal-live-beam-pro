@@ -30,6 +30,7 @@ import com.xreal.stereoview.R
 import com.xreal.stereoview.preview.RecordingPreviewActivity
 import com.xreal.stereoview.record.Recording
 import com.xreal.stereoview.record.RecordingFiles
+import com.xreal.stereoview.record.RecordingQueue
 import org.json.JSONObject
 import java.io.File
 import kotlin.concurrent.thread
@@ -37,16 +38,16 @@ import kotlin.concurrent.thread
 /**
  * The saved recordings, newest first. Each card shows its kind, size, source, duration and
  * status, with Preview (the recording viewer) and actions: copy its path, zip/unzip (replacing
- * the other form), copy to Downloads (with .nomedia), share (zips) and delete. One file
- * operation runs at a time in the background, with progress at the top.
+ * the other form), copy to Downloads (with .nomedia), share (zips) and delete. File operations
+ * are queued ([RecordingQueue]) and run one at a time in the background, with progress at the
+ * top and on the card; queued ones can be cancelled.
  */
-class RecordingsActivity : AppCompatActivity() {
+class RecordingsActivity : AppCompatActivity(), RecordingQueue.Listener {
     private val main = Handler(Looper.getMainLooper())
     private val density by lazy { resources.displayMetrics.density }
     private fun dp(v: Int) = (v * density).toInt()
     private lateinit var list: LinearLayout
     private lateinit var status: TextView
-    private var busy: String? = null
     /** The folder being recorded into, if any: it can't be touched until the recording ends. */
     private val activeDir: File? by lazy { intent.getStringExtra(EXTRA_ACTIVE)?.let(::File) }
 
@@ -99,8 +100,22 @@ class RecordingsActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        RecordingQueue.listener = this
         refresh()
     }
+
+    override fun onPause() {
+        if (RecordingQueue.listener === this) RecordingQueue.listener = null
+        super.onPause()
+    }
+
+    override val activity get() = this
+
+    override fun onQueueChanged() = refresh()
+
+    override fun onProgress(text: String, fraction: Float) = showProgress(text, fraction)
+
+    override fun onJobDone(job: RecordingQueue.Job, message: String, result: File?) = toast(message)
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
@@ -114,9 +129,15 @@ class RecordingsActivity : AppCompatActivity() {
     private fun refresh() {
         list.removeAllViews()
         cardProgress = null
-        topProgress.visibility = if (busy != null) View.VISIBLE else View.GONE
+        val running = RecordingQueue.current
+        topProgress.visibility = if (running != null) View.VISIBLE else View.GONE
+        if (running != null) {
+            topProgress.isIndeterminate = RecordingQueue.fraction < 0
+            if (RecordingQueue.fraction >= 0) topProgress.setProgressCompat((RecordingQueue.fraction * 1000).toInt(), false)
+        }
         val root = Recording.root(this)
-        status.text = busy ?: "%.1f GB free · %s".format(
+        status.text = if (running != null) statusText(RecordingQueue.progressText ?: "${running.label}…")
+        else "%.1f GB free · %s".format(
             (if (root.exists()) root.usableSpace else getExternalFilesDir(null)?.usableSpace ?: 0L) / 1e9, root.path,
         )
         val items = entries()
@@ -170,7 +191,7 @@ class RecordingsActivity : AppCompatActivity() {
             // Compact: Material's default 24 dp side padding spreads the row too wide.
             setPaddingRelative(dp(if (filled) 14 else 8), paddingTop, dp(if (filled) 14 else 8), paddingBottom)
             isEnabled = !active
-            setOnClickListener { if (busy != null) toast("Wait for: $busy") else action() }
+            setOnClickListener { action() }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(1) })
         button("Preview", filled = true) { preview(f) }
         button("Rename") { rename(f) }
@@ -186,29 +207,51 @@ class RecordingsActivity : AppCompatActivity() {
             setOnClickListener { v ->
                 PopupMenu(this@RecordingsActivity, v).apply {
                     fun item(label: String, action: () -> Unit) = menu.add(label).setOnMenuItemClickListener {
-                        if (busy != null) toast("Wait for: $busy") else action()
+                        action()
                         true
                     }
                     item("Copy path") { copyPath(f) }
                     item("Share") { share(f) }
                     menu.add("Delete").setOnMenuItemClickListener {
-                        Dialogs.confirm(this@RecordingsActivity, "Delete ${f.name}?", "Delete") {
-                            f.deleteRecursively()
-                            toast("Deleted ${f.name}")
-                            refresh()
+                        val note = if (RecordingQueue.isBusy(f)) " It is deleted after the operations already queued for it." else ""
+                        Dialogs.confirm(this@RecordingsActivity, "Delete ${f.name}?$note", "Delete") {
+                            run("Deleting ${f.name}", f) { _ ->
+                                if (!f.deleteRecursively()) throw java.io.IOException("could not delete every file")
+                                "Deleted ${f.name}"
+                            }
                         }
                         true
                     }
                 }.show()
             }
         })
-        if (busyFile?.canonicalPath == f.canonicalPath) {
+        if (RecordingQueue.current?.file?.canonicalPath == f.canonicalPath) {
             content.addView(LinearProgressIndicator(this).apply {
-                isIndeterminate = busyFraction < 0
-                if (busyFraction >= 0) setProgressCompat((busyFraction * 1000).toInt(), false)
+                isIndeterminate = RecordingQueue.fraction < 0
+                if (RecordingQueue.fraction >= 0) setProgressCompat((RecordingQueue.fraction * 1000).toInt(), false)
                 max = 1000
                 cardProgress = this
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6); marginEnd = dp(8) })
+        }
+        // Queued operations, each with Cancel.
+        val all = RecordingQueue.queued
+        for (job in RecordingQueue.queuedFor(f)) {
+            content.addView(LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                addView(secondary("Queued (#${all.indexOf(job) + 1}): ${job.label}"), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(MaterialButton(this@RecordingsActivity, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
+                    text = "Cancel"
+                    isAllCaps = false
+                    minWidth = 0
+                    minimumWidth = 0
+                    minHeight = 0
+                    minimumHeight = 0
+                    insetTop = 0
+                    insetBottom = 0
+                    setPadding(dp(8), dp(4), dp(8), dp(4))
+                    setOnClickListener { RecordingQueue.cancel(job) }
+                })
+            })
         }
         content.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -232,13 +275,17 @@ class RecordingsActivity : AppCompatActivity() {
     // region Actions
 
     private fun preview(f: File) {
+        if (RecordingQueue.isBusy(f)) {
+            toast("${f.name} has operations queued or running; preview it once they finish")
+            return
+        }
         if (f.isDirectory) {
             RecordingPreviewActivity.open(this, f)
             return
         }
         Dialogs.confirm(this, "${f.name} is zipped. Unzip it (the zip is replaced by the folder) to preview it?", "Unzip and preview") {
-            run("Unzipping ${f.name}", f, then = { dir -> dir?.let { RecordingPreviewActivity.open(this, it) } }) { p ->
-                RecordingFiles.unzip(f, p).also { result = it }.let { "Unzipped to ${it.name}" }
+            run("Unzipping ${f.name}", f, then = { a, dir -> dir?.let { RecordingPreviewActivity.open(a, it) } }) { p ->
+                RecordingFiles.unzip(f, p).let { "Unzipped to ${it.name}" to it }
             }
         }
     }
@@ -264,10 +311,14 @@ class RecordingsActivity : AppCompatActivity() {
     private fun share(f: File) {
         if (f.isDirectory) {
             Dialogs.confirm(this, "Only a zip can be shared. Zip ${f.name} (the folder is replaced by the zip) and share it?", "Zip and share") {
-                run("Zipping ${f.name}", f, then = { zip -> zip?.let(::launchShare) }) { p ->
-                    RecordingFiles.zip(f, p).also { result = it }.let { "Zipped to ${it.name}" }
+                run("Zipping ${f.name}", f, then = { a, zip -> zip?.let { (a as RecordingsActivity).launchShare(it) } }) { p ->
+                    RecordingFiles.zip(f, p).let { "Zipped to ${it.name}" to it }
                 }
             }
+            return
+        }
+        if (RecordingQueue.isBusy(f)) {
+            toast("${f.name} has operations queued or running; share it once they finish")
             return
         }
         launchShare(f)
@@ -285,52 +336,31 @@ class RecordingsActivity : AppCompatActivity() {
         startActivity(Intent.createChooser(send, "Share ${zip.name}").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
     }
 
-    private var result: File? = null
-    private var busyFile: File? = null
-    /** Progress of the running operation, 0..1 (negative: not known yet). */
-    private var busyFraction = -1f
     private lateinit var topProgress: LinearProgressIndicator
     private var cardProgress: LinearProgressIndicator? = null
 
-    /** Runs [work] in the background with progress; [then] gets [result] on the main thread. */
-    private fun run(label: String, f: File, then: (File?) -> Unit = {}, work: ((Long, Long) -> Unit) -> String) {
+    /** Queues [work] (background, with progress; returns its message); [then] gets nothing. */
+    private fun run(label: String, f: File, work: ((Long, Long) -> Unit) -> String) =
+        run(label, f, then = null) { p -> work(p) to null }
+
+    /** Queues [work], which returns its message and a resulting file for [then] (main thread). */
+    @JvmName("runWithResult")
+    private fun run(label: String, f: File, then: ((android.app.Activity, File?) -> Unit)?, work: ((Long, Long) -> Unit) -> Pair<String, File?>) {
         if (activeDir?.canonicalPath == f.canonicalPath) return
-        busy = label
-        busyFile = f
-        busyFraction = -1f
-        topProgress.isIndeterminate = true
-        result = null
-        refresh()
-        var lastUpdate = 0L
-        thread(name = "RecordingFiles") {
-            val message = try {
-                work { done, total ->
-                    val now = System.currentTimeMillis()
-                    if (now - lastUpdate > 200) {
-                        lastUpdate = now
-                        val fraction = (done.toFloat() / total.coerceAtLeast(1)).coerceIn(0f, 1f)
-                        val text = "$label… %.0f%% (%.0f / %.0f MB)".format(100.0 * fraction, done / 1e6, total / 1e6)
-                        main.post { showProgress(text, fraction) }
-                    }
-                }
-            } catch (e: Exception) {
-                "⚠ $label failed: ${e.message}"
-            }
-            main.post {
-                busy = null
-                busyFile = null
-                if (isDestroyed) return@post
-                toast(message)
-                refresh()
-                then(result)
-            }
-        }
+        val waiting = RecordingQueue.current != null
+        RecordingQueue.add(RecordingQueue.Job(label, f, then, work))
+        if (waiting) toast("Queued: $label (${RecordingQueue.queued.size} waiting)")
+    }
+
+    /** The running operation's progress, and how many wait after it. */
+    private fun statusText(progress: String): String {
+        val n = RecordingQueue.queued.size
+        return if (n == 0) progress else "$progress · $n queued"
     }
 
     private fun showProgress(text: String, fraction: Float) {
-        if (busy == null) return
-        status.text = text
-        busyFraction = fraction
+        if (RecordingQueue.current == null) return
+        status.text = statusText(text)
         for (bar in listOfNotNull(topProgress, cardProgress)) {
             if (bar.isIndeterminate) {
                 // Switching off indeterminate mode needs the bar hidden first.
@@ -344,6 +374,10 @@ class RecordingsActivity : AppCompatActivity() {
 
     /** Renames a recording folder (and the name in its metadata.json) or a zip. */
     private fun rename(f: File) {
+        if (RecordingQueue.isBusy(f)) {
+            toast("${f.name} has operations queued or running; rename it once they finish")
+            return
+        }
         val zipped = !f.isDirectory
         val current = if (zipped) f.name.removeSuffix(".zip") else f.name
         Dialogs.askText(this, "Rename recording", current, "Rename") { input ->

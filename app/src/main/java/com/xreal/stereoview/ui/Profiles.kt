@@ -28,7 +28,7 @@ data class Profile(val name: String, val settings: StereoSettings) {
                 return@with listOf(
                     "glasses cameras 30 fps per eye, ${glassesImageFormat.name}",
                     if (glassesManualExposure) "exposure %.1f ms".format(glassesExposure100us / 10.0) else "auto exposure",
-                    if (glassesRectify) "rectified preview" else "raw preview",
+                    if (glassesRectify) "rectified stereo view" else "raw stereo view",
                     if (glassesImu) "glasses IMU taken over" else "glasses IMU left to the system",
                 ).joinToString(" · ")
             }

@@ -67,11 +67,8 @@ class RecordingPreviewActivity : AppCompatActivity() {
     private lateinit var root: LinearLayout
     private var timeline: TimelineView? = null
     private var tiles: List<Pair<ZoomImageView, TextView>> = emptyList()
-    /** Zoom and pan shared by all camera tiles; while zoomed in, frames are decoded at full resolution. */
-    private val zoom = ZoomState()
-    /** Zoom linked across tiles ([zoom]) or one per tile ([tileZooms]); a stored preference. */
-    private var linkZoom = true
-    private var tileZooms: List<ZoomState> = emptyList()
+    /** Zoom and pan of the camera tiles, linked or per tile (a stored preference); while zoomed in, frames are decoded at full resolution. */
+    private lateinit var zoom: ZoomGroup
     private var fitWidth = 640
     private var zoomedIn = false
     /** Per camera: why its frame cannot be shown (hidden when it can). */
@@ -89,7 +86,7 @@ class RecordingPreviewActivity : AppCompatActivity() {
             setBackgroundColor(ContextCompat.getColor(this@RecordingPreviewActivity, R.color.home_background))
         }
         setContentView(root)
-        linkZoom = PreviewPrefs.linkZoom(this)
+        zoom = ZoomGroup(PreviewPrefs.linkZoom(this))
         zoom.addListener(::onZoomChanged)
         positionNs = savedInstanceState?.getLong(KEY_POSITION) ?: 0L
         val dir = File(intent.getStringExtra(EXTRA_DIR) ?: run { finish(); return })
@@ -112,7 +109,7 @@ class RecordingPreviewActivity : AppCompatActivity() {
 
     /** Zoomed in anywhere: decode full images so their own pixels are shown; back at fit size again. */
     private fun onZoomChanged() {
-        val zoomed = if (linkZoom) zoom.scale > 1f else tileZooms.any { it.scale > 1f }
+        val zoomed = zoom.anyZoomed(tiles.size)
         if (zoomed != zoomedIn) {
             zoomedIn = zoomed
             loader?.maxWidth = if (zoomed) FULL_RESOLUTION else fitWidth
@@ -277,13 +274,12 @@ class RecordingPreviewActivity : AppCompatActivity() {
             else -> minOf(d.cameras.size, 3)
         }
         val tileViews = ArrayList<Pair<ZoomImageView, TextView>>()
-        tileZooms = if (linkZoom) emptyList() else List(d.cameras.size) { ZoomState().apply { addListener(::onZoomChanged) } }
         val errorViews = ArrayList<TextView>()
         d.cameras.chunked(columns).forEach { rowCams ->
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             for (c in rowCams) {
                 val tile = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
-                val image = ZoomImageView(this, tileZooms.getOrNull(tileViews.size) ?: zoom)
+                val image = ZoomImageView(this, zoom.stateFor(tileViews.size))
                 tile.addView(image, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
                 val caption = label(c.name, 11f).apply {
                     setBackgroundColor(Color.argb(150, 0, 0, 0))
@@ -374,31 +370,12 @@ class RecordingPreviewActivity : AppCompatActivity() {
         return pane
     }
 
-    /** Toggles whether zooming one camera zooms all of them; the zoom starts over. */
-    private fun linkZoomButton() = MaterialButton(this, null, if (linkZoom) com.google.android.material.R.attr.materialButtonStyle
-    else com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-        // Compact and on one line, so it never grows the row and squeezes the plots.
-        text = if (linkZoom) "Zoom: linked" else "Zoom: each"
-        isAllCaps = false
-        maxLines = 1
-        textSize = 12f
-        minWidth = 0
-        minimumWidth = 0
-        minHeight = 0
-        minimumHeight = 0
-        insetTop = 0
-        insetBottom = 0
-        setPadding(dp(8), dp(6), dp(8), dp(6))
-        contentDescription = if (linkZoom) "Zoom linked across cameras; tap to zoom each camera separately"
-        else "Each camera zooms separately; tap to link the zoom"
-        setOnClickListener {
-            linkZoom = !linkZoom
-            PreviewPrefs.setLinkZoom(this@RecordingPreviewActivity, linkZoom)
-            zoom.reset()
-            tileZooms.forEach { it.reset() }
-            build()
-            onZoomChanged()
-        }
+    /** Toggles whether zooming one camera zooms all of them (see [ZoomGroup.setLinked]). */
+    private fun linkZoomButton() = ZoomLinkButton(this, zoom.linked) { on ->
+        PreviewPrefs.setLinkZoom(this, on)
+        zoom.setLinked(on, tiles.size)
+        tiles.forEachIndexed { i, (image, _) -> image.zoom = zoom.stateFor(i) }
+        onZoomChanged()
     }
 
     private fun statsPane(d: Dataset): View {

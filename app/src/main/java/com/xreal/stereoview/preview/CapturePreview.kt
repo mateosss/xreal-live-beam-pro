@@ -15,7 +15,6 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
-import com.google.android.material.button.MaterialButton
 import com.xreal.stereoview.R
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
@@ -51,8 +50,7 @@ class CapturePreview(context: Context) : LinearLayout(context) {
     }
 
     private var tiles: List<TileState> = emptyList()
-    private val sharedZoom = ZoomState()
-    private var linkZoom = PreviewPrefs.linkZoom(context)
+    private val zoom = ZoomGroup(PreviewPrefs.linkZoom(context))
 
     /** The area of the camera tiles (for laying the stereo renderer over external tiles). */
     val cameraArea: LinearLayout = LinearLayout(context).apply { orientation = VERTICAL }
@@ -62,15 +60,10 @@ class CapturePreview(context: Context) : LinearLayout(context) {
         textSize = 12f
         setTextColor(ContextCompat.getColor(context, R.color.panel_text_secondary))
     }
-    private val zoomButton = MaterialButton(context, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-        isAllCaps = false
-        minWidth = 0
-        minimumWidth = 0
-        setOnClickListener {
-            linkZoom = !linkZoom
-            PreviewPrefs.setLinkZoom(context, linkZoom)
-            setTiles(tiles.map { it.spec })
-        }
+    private val zoomButton = ZoomLinkButton(context, zoom.linked) { on ->
+        PreviewPrefs.setLinkZoom(context, on)
+        zoom.setLinked(on, tiles.size)
+        tiles.forEachIndexed { i, t -> t.image?.zoom = zoom.stateFor(i) }
     }
     private var cameraNote: TextView? = null
 
@@ -114,14 +107,14 @@ class CapturePreview(context: Context) : LinearLayout(context) {
     /** Lays out one tile per camera: two columns, as the recording preview in portrait. */
     fun setTiles(specs: List<Tile>) {
         cameraArea.removeAllViews()
-        sharedZoom.reset()
+        zoom.reset()
         val columns = if (specs.size <= 1) 1 else 2
         val states = ArrayList<TileState>()
         specs.chunked(columns).forEach { rowSpecs ->
             val row = LinearLayout(context).apply { orientation = HORIZONTAL }
             for (spec in rowSpecs) {
                 val tile = FrameLayout(context).apply { if (!spec.external) setBackgroundColor(Color.BLACK) }
-                val image = if (spec.external) null else ZoomImageView(context, if (linkZoom) sharedZoom else ZoomState())
+                val image = if (spec.external) null else ZoomImageView(context, zoom.stateFor(states.size))
                 image?.let { tile.addView(it, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)) }
                 val caption = TextView(context).apply {
                     text = spec.name
@@ -141,7 +134,6 @@ class CapturePreview(context: Context) : LinearLayout(context) {
         cameraNote = null
         tiles = states
         invalidate()
-        zoomButton.text = if (linkZoom) "Zoom linked" else "Zoom per camera"
         zoomButton.visibility = if (states.count { it.image != null } > 1) View.VISIBLE else View.GONE
     }
 

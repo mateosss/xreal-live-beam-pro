@@ -444,13 +444,14 @@ class SettingsSheet(
             ) { i -> target.update { it.copy(glassesImu = i == 1) } }
         }
         row(
-            content, "Rectify",
-            if (s.glassesRectify) "On: undistorted and aligned (reference calibration); preview only" else "Off: images as streamed",
+            content, "Rectify the stereo view",
+            (if (s.glassesRectify) "On: undistorted and aligned (reference calibration)" else "Off: images as streamed") +
+                ". Only the passthrough stereo view; the capture view and recordings stay raw",
         ) {
             choose(
-                "Glasses camera view",
+                "Glasses stereo view (passthrough style and landscape)",
                 listOf(
-                    "Rectified: fisheye undistorted, eyes aligned (Monado's reference calibration); recordings stay raw",
+                    "Rectified: fisheye undistorted, eyes aligned (Monado's reference calibration), for comfortable stereo viewing",
                     "As streamed (distorted)",
                 ),
                 if (s.glassesRectify) 0 else 1,

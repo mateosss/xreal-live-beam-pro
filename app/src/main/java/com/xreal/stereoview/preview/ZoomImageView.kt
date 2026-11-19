@@ -36,8 +36,51 @@ class ZoomState {
 
     fun reset() = set(1f, 0.5f, 0.5f)
 
+    fun copyFrom(other: ZoomState) = set(other.scale, other.u, other.v)
+
     companion object {
         const val MAX_SCALE = 64f
+    }
+}
+
+/**
+ * The zoom of a row of camera tiles, linked (one [shared] state) or per tile. Unlinking keeps
+ * the current zoom in every tile; linking moves every tile to the first one's (cam0) zoom and pan.
+ */
+class ZoomGroup(linked: Boolean) {
+    var linked = linked
+        private set
+    val shared = ZoomState()
+    private val own = ArrayList<ZoomState>()
+    private val listeners = ArrayList<() -> Unit>()
+
+    /** Called on any zoom change, linked or not. */
+    fun addListener(l: () -> Unit) {
+        listeners += l
+        shared.addListener(l)
+        own.forEach { it.addListener(l) }
+    }
+
+    private fun own(i: Int): ZoomState {
+        while (own.size <= i) own += ZoomState().also { s -> listeners.forEach { s.addListener(it) } }
+        return own[i]
+    }
+
+    /** The state tile [i] follows now. */
+    fun stateFor(i: Int): ZoomState = if (linked) shared else own(i)
+
+    fun anyZoomed(count: Int) = if (linked) shared.scale > 1f else (0 until count).any { own(it).scale > 1f }
+
+    /** Links or unlinks [count] tiles; then give each tile [stateFor] its index. */
+    fun setLinked(on: Boolean, count: Int) {
+        if (on == linked) return
+        if (on) shared.copyFrom(own(0)) else for (i in 0 until count) own(i).copyFrom(shared)
+        linked = on
+    }
+
+    fun reset() {
+        shared.reset()
+        own.forEach { it.reset() }
     }
 }
 
@@ -46,7 +89,19 @@ class ZoomState {
  * double-tap to zoom in ×4 there or back out. Pixels are drawn nearest-neighbour, so zoomed
  * images show the recorded pixels rather than a blur.
  */
-class ZoomImageView(context: Context, private val zoom: ZoomState) : View(context) {
+class ZoomImageView(context: Context, zoom: ZoomState) : View(context) {
+    /** The zoom this tile follows; may be swapped (linking or unlinking tiles). */
+    var zoom: ZoomState = zoom
+        set(value) {
+            if (value === field) return
+            if (isAttachedToWindow) {
+                field.removeListener(onZoom)
+                value.addListener(onZoom)
+            }
+            field = value
+            invalidate()
+        }
+
     var bitmap: Bitmap? = null
         set(value) {
             field = value
