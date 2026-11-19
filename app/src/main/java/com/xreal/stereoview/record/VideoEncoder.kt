@@ -95,7 +95,8 @@ class VideoEncoder(
     val dropped = AtomicInteger()
 
     // Gray input state (declared before init: the codec calls back as soon as it starts).
-    private class GrayFrame(val ptsUs: Long, val pixels: ByteArray)
+    /** [pixels]: 8-bit gray, or NV12 if [nv12]. */
+    private class GrayFrame(val ptsUs: Long, val pixels: ByteArray, val nv12: Boolean = false)
     private val freeInputs = ArrayDeque<Int>()
     private val pending = ArrayDeque<GrayFrame>()
     private var lastPtsUs = Long.MIN_VALUE
@@ -291,7 +292,12 @@ class VideoEncoder(
      * Queues an 8-bit [width]×[height] image at [timestampNs] (increasing). Returns false if it
      * was dropped (encoder behind, or not after the previous frame). The array must not change.
      */
-    fun submitGray(timestampNs: Long, pixels: ByteArray): Boolean {
+    fun submitGray(timestampNs: Long, pixels: ByteArray): Boolean = submit(timestampNs, pixels, false)
+
+    /** As [submitGray], for a color image in NV12 (Y plane, then interleaved U, V at half resolution). */
+    fun submitNv12(timestampNs: Long, nv12: ByteArray): Boolean = submit(timestampNs, nv12, true)
+
+    private fun submit(timestampNs: Long, pixels: ByteArray, nv12: Boolean): Boolean {
         val pts = timestampNs / 1000
         synchronized(pending) {
             if (pts <= lastPtsUs || pending.size >= maxPending) {
@@ -299,7 +305,7 @@ class VideoEncoder(
                 return false
             }
             lastPtsUs = pts
-            pending.addLast(GrayFrame(pts, pixels))
+            pending.addLast(GrayFrame(pts, pixels, nv12))
             if (pending.size > peakPending) peakPending = pending.size
         }
         handler.post(::feed)
@@ -333,6 +339,10 @@ class VideoEncoder(
                     applied.put("gray_input_layout", layout)
                     Log.i(TAG, "Gray input layout: $layout")
                 }
+                if (frame.nv12) {
+                    feedNv12(index, image, frame)
+                    continue
+                }
                 val yStride = image.planes[0].rowStride
                 val yPixel = image.planes[0].pixelStride
                 // Write the raw input buffer rather than the Image's planes: luma rows at the
@@ -363,6 +373,40 @@ class VideoEncoder(
                 error = error ?: e.toString()
             }
         }
+    }
+
+    /**
+     * Writes an NV12 frame into the codec's input image, whatever its layout (planar or
+     * semi-planar, U or V first, any strides), and queues the whole input buffer: encoders may
+     * read beyond width×height×1.5 bytes (padded strides or plane heights).
+     */
+    private fun feedNv12(index: Int, image: android.media.Image, frame: GrayFrame) {
+        val px = frame.pixels
+        val y = image.planes[0]
+        val yBuf = y.buffer
+        for (r in 0 until height) {
+            if (y.pixelStride == 1) {
+                yBuf.position(r * y.rowStride)
+                yBuf.put(px, r * width, width)
+            } else {
+                for (c in 0 until width) yBuf.put(r * y.rowStride + c * y.pixelStride, px[r * width + c])
+            }
+        }
+        val u = image.planes[1]
+        val v = image.planes[2]
+        val uBuf = u.buffer
+        val vBuf = v.buffer
+        val uv0 = width * height
+        for (r in 0 until height / 2) {
+            val src = uv0 + r * width
+            for (c in 0 until width / 2) {
+                uBuf.put(r * u.rowStride + c * u.pixelStride, px[src + 2 * c])
+                vBuf.put(r * v.rowStride + c * v.pixelStride, px[src + 2 * c + 1])
+            }
+        }
+        // The data stays in the buffer; the Image is not used after this.
+        val size = runCatching { codec.getInputBuffer(index)?.capacity() }.getOrNull() ?: (width * height * 3 / 2)
+        codec.queueInputBuffer(index, 0, size, frame.ptsUs, 0)
     }
 
     /** Sets every byte from [b]'s position to its limit to 128 (neutral chroma). */

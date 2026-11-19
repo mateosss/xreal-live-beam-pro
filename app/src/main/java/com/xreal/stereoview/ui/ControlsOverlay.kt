@@ -44,6 +44,8 @@ class ControlsOverlay(
     private var glassesControls: GlassesDevice.CameraControls? = null
     private var collapsed = false
     private var recordingShown = false
+    /** OAK: the camera the exposure controls set, −1 for all (cam0's values shown). */
+    private var oakTarget = -1
     /** Set while [render] moves widgets, so their listeners don't write the values back. */
     private var rendering = false
 
@@ -87,8 +89,23 @@ class ControlsOverlay(
             val depth = StereoSettings.DEPTH_MIN + (StereoSettings.DEPTH_MAX - StereoSettings.DEPTH_MIN) * v / 100f
             viewModel.update { it.copy(depth = depth) }
         }
-        binding.brightnessSlider.onUserChange { v -> viewModel.update { it.copy(exposure = v.roundToInt()) } }
+        binding.oakCameraButton.setOnClickListener {
+            val s = viewModel.settings.value
+            val cameras = if (s.oakRgbHeight > 0) 3 else 2
+            oakTarget = if (oakTarget + 1 >= cameras) -1 else oakTarget + 1
+            setStatus("Exposure controls set " + if (oakTarget < 0) "all OAK cameras alike" else com.xreal.stereoview.oak.OakDevice.Exposure.CAMERAS[oakTarget])
+            render(s)
+        }
+        binding.brightnessSlider.onUserChange { v ->
+            if (viewModel.settings.value.cameraSource == CameraSource.OAK) updateOak { it.copy(compensation = v.roundToInt()) }
+            else viewModel.update { it.copy(exposure = v.roundToInt()) }
+        }
         binding.shutterSlider.onUserChange { v ->
+            if (viewModel.settings.value.cameraSource == CameraSource.OAK) {
+                val (min, max) = shutterRange(viewModel.settings.value, oakTarget == 2)
+                updateOak { it.copy(exposureUs = (fromLog(v / 1000.0, min.toDouble(), max.toDouble()) / 1000).roundToInt()) }
+                return@onUserChange
+            }
             viewModel.update {
                 if (it.cameraSource == CameraSource.GLASSES) {
                     val (min, max) = glassesExposureRange() ?: return@update it
@@ -100,6 +117,11 @@ class ControlsOverlay(
             }
         }
         binding.isoSlider.onUserChange { v ->
+            if (viewModel.settings.value.cameraSource == CameraSource.OAK) {
+                val (min, max) = isoRange()
+                updateOak { it.copy(iso = fromLog(v / 1000.0, min.toDouble(), max.toDouble()).roundToInt()) }
+                return@onUserChange
+            }
             viewModel.update {
                 if (it.cameraSource == CameraSource.GLASSES) {
                     val r = glassesControls?.gain ?: return@update it
@@ -113,7 +135,9 @@ class ControlsOverlay(
         binding.exposureModeGroup.addOnButtonCheckedListener { _, id, checked ->
             if (rendering || !checked) return@addOnButtonCheckedListener
             val manual = id == R.id.exposureManualButton
-            if (viewModel.settings.value.cameraSource == CameraSource.GLASSES) {
+            if (viewModel.settings.value.cameraSource == CameraSource.OAK) {
+                updateOak { it.copy(auto = !manual) }
+            } else if (viewModel.settings.value.cameraSource == CameraSource.GLASSES) {
                 viewModel.update { it.copy(glassesManualExposure = manual) }
             } else if (manual && rig?.manualSensor == false) {
                 setStatus("This camera does not support manual exposure")
@@ -140,10 +164,11 @@ class ControlsOverlay(
         binding.depthSlider.setSafe((s.depth - StereoSettings.DEPTH_MIN) / (StereoSettings.DEPTH_MAX - StereoSettings.DEPTH_MIN) * 100)
         binding.depthLabel.text = context.getString(R.string.depth) + "  %.2f×".format(s.depth)
 
-        if (s.cameraSource == CameraSource.GLASSES) {
-            renderGlassesExposure(s)
-        } else {
-            renderBeamProExposure(s)
+        binding.oakCameraButton.visibility = if (s.cameraSource == CameraSource.OAK) View.VISIBLE else View.GONE
+        when (s.cameraSource) {
+            CameraSource.GLASSES -> renderGlassesExposure(s)
+            CameraSource.OAK -> renderOakExposure(s)
+            CameraSource.BEAM_PRO -> renderBeamProExposure(s)
         }
 
         setActive(binding.swapButton, s.swapEyes)
@@ -172,6 +197,40 @@ class ControlsOverlay(
         val iso = s.iso.coerceIn(isoMin, isoMax)
         binding.isoSlider.setSafe((toLog(iso.toDouble(), isoMin.toDouble(), isoMax.toDouble()) * 1000).toFloat())
         binding.isoLabel.text = "ISO  $iso"
+    }
+
+    /** Exposure of the OAK camera(s) the controls set ([oakTarget]): auto with compensation, or shutter and ISO. */
+    private fun renderOakExposure(s: StereoSettings) {
+        if (oakTarget == 2 && s.oakRgbHeight <= 0) oakTarget = -1
+        val e = s.oakExposures[oakTarget.coerceAtLeast(0)]
+        val alike = s.oakExposures.take(if (s.oakRgbHeight > 0) 3 else 2).distinct().size == 1
+        binding.oakCameraButton.text = if (oakTarget < 0) (if (alike) "All" else "All ≠") else "cam$oakTarget"
+        binding.exposureModeGroup.visibility = View.VISIBLE
+        binding.exposureManualButton.isEnabled = true
+        binding.exposureModeGroup.check(if (e.auto) R.id.exposureAutoButton else R.id.exposureManualButton)
+        binding.brightnessColumn.visibility = if (e.auto) View.VISIBLE else View.GONE
+        binding.shutterColumn.visibility = if (e.auto) View.GONE else View.VISIBLE
+        binding.isoColumn.visibility = if (e.auto) View.GONE else View.VISIBLE
+        binding.brightnessSlider.setSafe(e.compensation.toFloat())
+        binding.brightnessLabel.text = context.getString(R.string.brightness) + "  %+d".format(e.compensation)
+        val (tMin, tMax) = shutterRange(s, oakTarget == 2)
+        val shutter = (e.exposureUs * 1000L).coerceIn(tMin, tMax)
+        binding.shutterSlider.setSafe((toLog(shutter.toDouble(), tMin.toDouble(), tMax.toDouble()) * 1000).toFloat())
+        binding.shutterLabel.text = if (e.exposureUs >= 1000) "Shutter  %.1f ms".format(e.exposureUs / 1000.0) else "Shutter  ${e.exposureUs} µs"
+        val (isoMin, isoMax) = isoRange()
+        binding.isoSlider.setSafe((toLog(e.iso.coerceIn(isoMin, isoMax).toDouble(), isoMin.toDouble(), isoMax.toDouble()) * 1000).toFloat())
+        binding.isoLabel.text = "ISO  ${e.iso}"
+    }
+
+    /**
+     * Changes the exposure of the OAK camera the controls set: [oakTarget], or all of them, which
+     * then all take the shown (cam0's) values with the change.
+     */
+    private fun updateOak(change: (com.xreal.stereoview.oak.OakDevice.Exposure) -> com.xreal.stereoview.oak.OakDevice.Exposure) {
+        viewModel.update { s ->
+            val e = change(s.oakExposures[oakTarget.coerceAtLeast(0)]).clamped()
+            s.copy(oakExposures = s.oakExposures.mapIndexed { i, old -> if (oakTarget < 0 || i == oakTarget) e else old })
+        }
     }
 
     /**
@@ -328,12 +387,13 @@ class ControlsOverlay(
     }
 
     /** Shortest and longest selectable exposure: down to 1/20000 s, up to one frame. */
-    private fun shutterRange(s: StereoSettings): Pair<Long, Long> {
+    private fun shutterRange(s: StereoSettings, oakColor: Boolean = false): Pair<Long, Long> {
         val range = rig?.exposureTimeRange
         val min = maxOf(range?.lower ?: 50_000L, 50_000L)
         // OAK: the sensors' own rate (higher than the mono rate when the color camera runs faster).
         val fps = if (s.cameraSource == CameraSource.OAK) {
-            com.xreal.stereoview.oak.OakDevice.FpsPlan.of(s.oakFps, if (s.oakRgbHeight > 0 && s.oakRgbFps > 0) s.oakRgbFps else s.oakFps).monoSensorFps
+            val plan = com.xreal.stereoview.oak.OakDevice.FpsPlan.of(s.oakFps, if (s.oakRgbHeight > 0 && s.oakRgbFps > 0) s.oakRgbFps else s.oakFps)
+            if (oakColor) plan.rgbSensorFps else plan.monoSensorFps
         } else {
             s.targetFps
         }

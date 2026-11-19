@@ -226,6 +226,15 @@ data class StereoSettings(
     val oakRgbHeight: Int = 800,
     /** OAK: JPEG quality of the color images (encoded on the camera). */
     val oakJpegQuality: Int = 95,
+    /** OAK color camera: how recorded images are stored (JPEG from the camera, or raw frames as PNG or video). */
+    val oakRgbFormat: com.xreal.stereoview.record.OakRgbFormat = com.xreal.stereoview.record.OakRgbFormat.JPEG,
+    /** Bitrate of H.264 recordings of the OAK color camera, Mbit/s. */
+    val oakRgbVideoBitrateMbps: Int = 20,
+    /**
+     * OAK exposure per camera: cam0 (left), cam1 (right), cam2 (color). Each camera runs its
+     * own auto exposure or its own manual shutter and ISO.
+     */
+    val oakExposures: List<com.xreal.stereoview.oak.OakDevice.Exposure> = OAK_DEFAULT_EXPOSURES,
     /**
      * OAK: gyroscope rate in Hz, or 0 to leave the IMU off; [com.xreal.stereoview.oak.OakDevice.MAX_GYRO_HZ]
      * also runs the accelerometer at its maximum (see OakDevice.accelRateFor).
@@ -264,6 +273,11 @@ data class StereoSettings(
         const val ALIGN_RANGE_DEG = 3f
         const val DEPTH_MIN = 1f
         const val DEPTH_MAX = 2f
+        val OAK_DEFAULT_EXPOSURES = List(3) { com.xreal.stereoview.oak.OakDevice.Exposure() }
+
+        /** The OAK exposures as the shared exposure settings set them before 0.16 (all cameras alike). */
+        fun legacyOakExposures(manual: Boolean, exposureTimeNs: Long, iso: Int, compensation: Int) =
+            List(3) { com.xreal.stereoview.oak.OakDevice.Exposure(!manual, (exposureTimeNs / 1000).toInt(), iso, compensation).clamped() }
     }
 }
 
@@ -301,6 +315,9 @@ class SettingsRepository(private val context: Context) {
         val OAK_JPEG_QUALITY = intPreferencesKey("oak_jpeg_quality")
         val OAK_IMU_RATE = intPreferencesKey("oak_imu_rate_hz")
         val OAK_USB3 = booleanPreferencesKey("oak_usb3")
+        val OAK_RGB_FORMAT = stringPreferencesKey("oak_rgb_format")
+        val OAK_RGB_VIDEO_BITRATE = intPreferencesKey("oak_rgb_video_bitrate_mbps")
+        val OAK_EXPOSURES = stringPreferencesKey("oak_exposures")
         val GLASSES_IMAGE_FORMAT = stringPreferencesKey("glasses_image_format")
         val OAK_IMAGE_FORMAT = stringPreferencesKey("oak_image_format")
         val GRAY_JPEG_QUALITY = intPreferencesKey("gray_jpeg_quality")
@@ -388,6 +405,14 @@ class SettingsRepository(private val context: Context) {
             oakJpegQuality = p[Keys.OAK_JPEG_QUALITY] ?: defaults.oakJpegQuality,
             oakImuRateHz = p[Keys.OAK_IMU_RATE] ?: defaults.oakImuRateHz,
             oakUsb3 = p[Keys.OAK_USB3] ?: defaults.oakUsb3,
+            oakRgbFormat = enumOrDefault(p[Keys.OAK_RGB_FORMAT], defaults.oakRgbFormat),
+            oakRgbVideoBitrateMbps = p[Keys.OAK_RGB_VIDEO_BITRATE] ?: defaults.oakRgbVideoBitrateMbps,
+            // Before 0.16 the OAK took the shared exposure settings, for all cameras.
+            oakExposures = com.xreal.stereoview.oak.OakDevice.Exposure.listFromJson(p[Keys.OAK_EXPOSURES])
+                ?: StereoSettings.legacyOakExposures(
+                    p[Keys.MANUAL_EXPOSURE] ?: defaults.manualExposure, p[Keys.EXPOSURE_TIME] ?: defaults.exposureTimeNs,
+                    p[Keys.ISO] ?: defaults.iso, p[Keys.EXPOSURE] ?: defaults.exposure,
+                ),
             glassesImageFormat = enumOrDefault(p[Keys.GLASSES_IMAGE_FORMAT], defaults.glassesImageFormat),
             oakImageFormat = enumOrDefault(p[Keys.OAK_IMAGE_FORMAT], defaults.oakImageFormat),
             grayJpegQuality = p[Keys.GRAY_JPEG_QUALITY] ?: defaults.grayJpegQuality,
@@ -458,6 +483,9 @@ class SettingsRepository(private val context: Context) {
             p[Keys.OAK_JPEG_QUALITY] = s.oakJpegQuality
             p[Keys.OAK_IMU_RATE] = s.oakImuRateHz
             p[Keys.OAK_USB3] = s.oakUsb3
+            p[Keys.OAK_RGB_FORMAT] = s.oakRgbFormat.name
+            p[Keys.OAK_RGB_VIDEO_BITRATE] = s.oakRgbVideoBitrateMbps
+            p[Keys.OAK_EXPOSURES] = com.xreal.stereoview.oak.OakDevice.Exposure.listToJson(s.oakExposures)
             p[Keys.GLASSES_IMAGE_FORMAT] = s.glassesImageFormat.name
             p[Keys.OAK_IMAGE_FORMAT] = s.oakImageFormat.name
             p[Keys.GRAY_JPEG_QUALITY] = s.grayJpegQuality

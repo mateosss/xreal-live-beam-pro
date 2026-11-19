@@ -181,6 +181,18 @@ class CapturePreview(context: Context) : LinearLayout(context) {
         }
     }
 
+    /** A raw NV12 color frame for tile [index], converted at half size or less. */
+    fun nv12(index: Int, nv12: ByteArray, width: Int, height: Int) {
+        val tile = accept(index) ?: return
+        worker.execute {
+            val step = if (width > 960) 2 else 1
+            val bitmap = runCatching {
+                Bitmap.createBitmap(com.xreal.stereoview.util.Nv12.toArgb(nv12, width, height, step), width / step, height / step, Bitmap.Config.ARGB_8888)
+            }.getOrNull()
+            if (bitmap == null) tile.busy.set(false) else show(tile, bitmap, "${width}×$height")
+        }
+    }
+
     /** Counts a frame of an external tile (drawn by the renderer), for its caption. */
     fun frame(index: Int, size: String) {
         val tile = tiles.getOrNull(index) ?: return

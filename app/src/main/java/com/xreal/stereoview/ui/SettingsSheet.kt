@@ -199,13 +199,31 @@ class SettingsSheet(
     private fun recordingRows(content: LinearLayout, s: StereoSettings, recording: Boolean) {
         val glassesSource = s.cameraSource == CameraSource.GLASSES
         if (s.cameraSource == CameraSource.OAK) {
+            val monoVideo = s.oakImageFormat == com.xreal.stereoview.record.GrayImageFormat.H264
             grayFormatRows(content, s, recording, s.oakImageFormat, "Mono images") { f -> target.update { it.copy(oakImageFormat = f) } }
-            if (s.oakImageFormat == com.xreal.stereoview.record.GrayImageFormat.H264) {
-                videoRows(content, s, recording, s.oakVideoBitrateMbps, listOf(4, 8, 12, 20, 40), true) { v -> target.update { it.copy(oakVideoBitrateMbps = v) } }
+            if (monoVideo) {
+                bitrateRow(content, s, recording, "Mono video bitrate", s.oakVideoBitrateMbps, listOf(4, 8, 12, 20, 40)) { v -> target.update { it.copy(oakVideoBitrateMbps = v) } }
             }
+            val rgbFormats = com.xreal.stereoview.record.OakRgbFormat.entries
+            val rgbVideo = s.oakRgbHeight > 0 && s.oakRgbFormat == com.xreal.stereoview.record.OakRgbFormat.H264
+            if (s.oakRgbHeight > 0) {
+                row(content, "Color images", s.oakRgbFormat.label, locked = recording) {
+                    choose("Color images (cam2)", rgbFormats.map { it.label }, rgbFormats.indexOf(s.oakRgbFormat)) { i -> target.update { it.copy(oakRgbFormat = rgbFormats[i]) } }
+                }
+                if (s.oakRgbFormat == com.xreal.stereoview.record.OakRgbFormat.JPEG) {
+                    row(content, "Color JPEG quality", "${s.oakJpegQuality} (encoded on the camera)", locked = recording) {
+                        val values = listOf(98, 95, 90, 85, 75)
+                        choose("Color JPEG quality", values.map { "$it" }, values.indexOf(s.oakJpegQuality)) { i -> target.update { it.copy(oakJpegQuality = values[i]) } }
+                    }
+                }
+                if (rgbVideo) {
+                    bitrateRow(content, s, recording, "Color video bitrate", s.oakRgbVideoBitrateMbps, listOf(8, 12, 20, 40, 60)) { v -> target.update { it.copy(oakRgbVideoBitrateMbps = v) } }
+                }
+            }
+            if (monoVideo || rgbVideo) videoRows(content, s, recording, null, emptyList(), true) {}
             row(
                 content, "Layout",
-                "Mono pair in cam0, cam1" + (if (s.oakRgbHeight > 0) ", color as the camera's JPEGs in cam2" else "") +
+                "Mono pair in cam0, cam1" + (if (s.oakRgbHeight > 0) ", color in cam2" else "") +
                     "; OAK IMU as imu0; EuRoC layout on the OAK's clock",
             ) {}
         } else if (glassesSource) {
@@ -247,17 +265,13 @@ class SettingsSheet(
 
     /** Bitrate, rate control, keyframe interval and (H.264) profile of video recordings. */
     private fun videoRows(
-        content: LinearLayout, s: StereoSettings, recording: Boolean, bitrate: Int, choices: List<Int>, h264: Boolean, setBitrate: (Int) -> Unit,
+        content: LinearLayout, s: StereoSettings, recording: Boolean, bitrate: Int?, choices: List<Int>, h264: Boolean, setBitrate: (Int) -> Unit,
     ) {
         val modes = com.xreal.stereoview.record.BitrateMode.entries
         row(content, "Rate control", s.videoBitrateMode.label.substringBefore(":"), locked = recording) {
             choose("Rate control", modes.map { it.label }, modes.indexOf(s.videoBitrateMode)) { i -> target.update { it.copy(videoBitrateMode = modes[i]) } }
         }
-        if (s.videoBitrateMode != com.xreal.stereoview.record.BitrateMode.CQ) {
-            row(content, "Video bitrate", "$bitrate Mbit/s per camera" + if (s.videoBitrateMode == com.xreal.stereoview.record.BitrateMode.VBR) " (average)" else "", locked = recording) {
-                choose("Video bitrate per camera", choices.map { "$it Mbit/s" }, choices.indexOf(bitrate)) { i -> setBitrate(choices[i]) }
-            }
-        }
+        if (bitrate != null) bitrateRow(content, s, recording, "Video bitrate", bitrate, choices, setBitrate)
         val intervals = listOf(0.5f, 1f, 2f, 5f)
         row(content, "Keyframe interval", "every %s s".format(s.videoKeyframeIntervalS.toString().removeSuffix(".0")), locked = recording) {
             val labels = listOf("0.5 s (fast seeking, robust)", "1 s", "2 s", "5 s (smallest files)")
@@ -272,6 +286,16 @@ class SettingsSheet(
         val encoders = listOf("Hardware (the device's encoder)", "Software (Android's own encoder: same on every device, uses the CPU)")
         row(content, "Encoder", if (s.videoSoftwareEncoder) "software" else "hardware", locked = recording) {
             choose("Encoder", encoders, if (s.videoSoftwareEncoder) 1 else 0) { i -> target.update { it.copy(videoSoftwareEncoder = i == 1) } }
+        }
+    }
+
+    /** Bitrate of one video stream (hidden in constant-quality mode, which has none). */
+    private fun bitrateRow(
+        content: LinearLayout, s: StereoSettings, recording: Boolean, title: String, bitrate: Int, choices: List<Int>, set: (Int) -> Unit,
+    ) {
+        if (s.videoBitrateMode == com.xreal.stereoview.record.BitrateMode.CQ) return
+        row(content, title, "$bitrate Mbit/s per camera" + if (s.videoBitrateMode == com.xreal.stereoview.record.BitrateMode.VBR) " (average)" else "", locked = recording) {
+            choose("$title per camera", choices.map { "$it Mbit/s" }, choices.indexOf(bitrate)) { i -> set(choices[i]) }
         }
     }
 
@@ -374,11 +398,12 @@ class SettingsSheet(
                 target.update { it.copy(oakFps = values[i]) }
             }
         }
-        row(content, "Color camera", if (s.oakRgbHeight > 0) "1280×${s.oakRgbHeight}, JPEG quality ${s.oakJpegQuality} (encoded on the camera)" else "Off", locked = recording) {
-            val options = listOf(800 to 95, 800 to 85, 720 to 95, 0 to 95)
-            val labels = listOf("1280×800, JPEG 95", "1280×800, JPEG 85 (smaller)", "1280×720, JPEG 95", "Off (mono pair only)")
-            choose("Color camera", labels, options.indexOfFirst { it.first == s.oakRgbHeight && (it.first == 0 || it.second == s.oakJpegQuality) }) { i ->
-                target.update { it.copy(oakRgbHeight = options[i].first, oakJpegQuality = options[i].second) }
+        val rgbStream = if (s.oakRgbFormat == com.xreal.stereoview.record.OakRgbFormat.JPEG) "JPEG ${s.oakJpegQuality} from the camera" else "raw NV12 over USB (USB3 needed)"
+        row(content, "Color camera", if (s.oakRgbHeight > 0) "1280×${s.oakRgbHeight}, $rgbStream" else "Off", locked = recording) {
+            val values = listOf(800, 720, 0)
+            val labels = listOf("1280×800", "1280×720", "Off (mono pair only)")
+            choose("Color camera (its format: Recording → Color images)", labels, values.indexOf(s.oakRgbHeight)) { i ->
+                target.update { it.copy(oakRgbHeight = values[i]) }
             }
         }
         if (s.oakRgbHeight > 0) {
@@ -413,7 +438,8 @@ class SettingsSheet(
                 target.update { it.copy(oakUsb3 = i == 0) }
             }
         }
-        row(content, "Exposure", "Auto or manual (shutter and ISO) with the panel's controls") {}
+        row(content, "Exposure", "Per camera with the panel's controls: its first button picks All, cam0, cam1 or cam2; " +
+            com.xreal.stereoview.oak.OakDevice.Exposure.summary(s.oakExposures, s.oakRgbHeight > 0)) {}
     }
 
     /** How a color rate [rgb] combines with the mono rate [mono] (see OakDevice.FpsPlan). */

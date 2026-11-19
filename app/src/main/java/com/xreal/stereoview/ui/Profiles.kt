@@ -19,9 +19,14 @@ data class Profile(val name: String, val settings: StereoSettings) {
                 return@with listOf(
                     "mono ${oakMonoHeight}p ${oakImageFormat.name}",
                     "$oakFps fps",
-                    if (oakRgbHeight > 0) "color ${oakRgbHeight}p JPEG $oakJpegQuality" + (if (oakRgbFps > 0 && oakRgbFps != oakFps) " $oakRgbFps fps" else "") else "no color",
+                    if (oakRgbHeight > 0) {
+                        "color ${oakRgbHeight}p " + (if (oakRgbFormat == com.xreal.stereoview.record.OakRgbFormat.JPEG) "JPEG $oakJpegQuality" else oakRgbFormat.name) +
+                            (if (oakRgbFps > 0 && oakRgbFps != oakFps) " $oakRgbFps fps" else "")
+                    } else {
+                        "no color"
+                    },
                     if (oakImuRateHz >= com.xreal.stereoview.oak.OakDevice.MAX_GYRO_HZ) "OAK IMU max" else if (oakImuRateHz > 0) "OAK IMU $oakImuRateHz Hz" else "no OAK IMU",
-                    if (manualExposure) "manual exposure ${exposureTimeNs / 1000} µs ISO $iso" else "auto exposure",
+                    com.xreal.stereoview.oak.OakDevice.Exposure.summary(oakExposures, oakRgbHeight > 0),
                 ).joinToString(" · ")
             }
             if (cameraSource == CameraSource.GLASSES) {
@@ -201,6 +206,9 @@ data class Profile(val name: String, val settings: StereoSettings) {
                 put("oakRgbFps", s.oakRgbFps)
                 put("previewStyle", s.previewStyle.name)
                 put("oakUsb3", s.oakUsb3)
+                put("oakRgbFormat", s.oakRgbFormat.name)
+                put("oakRgbVideoBitrateMbps", s.oakRgbVideoBitrateMbps)
+                put("oakExposures", JSONArray(com.xreal.stereoview.oak.OakDevice.Exposure.listToJson(s.oakExposures)))
                 put("glassesImageFormat", s.glassesImageFormat.name)
                 put("oakImageFormat", s.oakImageFormat.name)
                 put("grayJpegQuality", s.grayJpegQuality)
@@ -254,6 +262,14 @@ data class Profile(val name: String, val settings: StereoSettings) {
                         oakRgbFps = j.optInt("oakRgbFps", d.oakRgbFps),
                         previewStyle = enumOr(j.optString("previewStyle"), d.previewStyle),
                         oakUsb3 = j.optBoolean("oakUsb3", d.oakUsb3),
+                        oakRgbFormat = enumOr(j.optString("oakRgbFormat"), d.oakRgbFormat),
+                        oakRgbVideoBitrateMbps = j.optInt("oakRgbVideoBitrateMbps", d.oakRgbVideoBitrateMbps),
+                        // Before 0.16 the OAK took the profile's shared exposure settings.
+                        oakExposures = com.xreal.stereoview.oak.OakDevice.Exposure.listFromJson(j.optJSONArray("oakExposures")?.toString())
+                            ?: StereoSettings.legacyOakExposures(
+                                j.optBoolean("manualExposure", d.manualExposure), j.optLong("exposureTimeNs", d.exposureTimeNs),
+                                j.optInt("iso", d.iso), j.optInt("exposure", d.exposure),
+                            ),
                         glassesImageFormat = enumOr(j.optString("glassesImageFormat"), d.glassesImageFormat),
                         oakImageFormat = enumOr(j.optString("oakImageFormat"), d.oakImageFormat),
                         grayJpegQuality = j.optInt("grayJpegQuality", d.grayJpegQuality),
@@ -306,6 +322,9 @@ fun StereoSettings.withProfile(profile: StereoSettings) = copy(
     oakRgbFps = profile.oakRgbFps,
     previewStyle = profile.previewStyle,
     oakUsb3 = profile.oakUsb3,
+    oakRgbFormat = profile.oakRgbFormat,
+    oakRgbVideoBitrateMbps = profile.oakRgbVideoBitrateMbps,
+    oakExposures = profile.oakExposures,
     glassesImageFormat = profile.glassesImageFormat,
     oakImageFormat = profile.oakImageFormat,
     grayJpegQuality = profile.grayJpegQuality,

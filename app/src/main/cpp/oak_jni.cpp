@@ -1,7 +1,8 @@
 // JNI glue for Luxonis OAK cameras (com.xreal.stereoview.oak.OakNative).
 //
 // One pipeline: the left and right mono cameras as raw GRAY8, optionally the color camera
-// encoded to MJPEG on the device, and the IMU (raw accelerometer + gyroscope). Kotlin threads
+// encoded to MJPEG on the device or as raw NV12, and the IMU (raw accelerometer + gyroscope).
+// Each camera has its own control input (exposure is set per camera). Kotlin threads
 // poll each output with a timeout. Timestamps are on the device's monotonic clock (the same
 // for cameras and IMU); the host-synced timestamp (CLOCK_MONOTONIC on Android) is passed too.
 
@@ -30,8 +31,10 @@ JavaVM* gVm = nullptr;
 struct Session {
     std::unique_ptr<dai::Device> device;
     std::shared_ptr<dai::DataOutputQueue> left, right, rgb, imu;
-    std::shared_ptr<dai::DataInputQueue> monoControl, rgbControl;
+    // Control inputs: left, right, color.
+    std::shared_ptr<dai::DataInputQueue> control[3];
     int monoWidth = 0, monoHeight = 0, rgbWidth = 0, rgbHeight = 0;
+    bool rgbRaw = false;
     std::string info;
 };
 
@@ -119,15 +122,29 @@ JNIEXPORT jboolean JNICALL Java_com_xreal_stereoview_oak_OakNative_initialize(JN
  * (0 = off), auto exposure (0/1), exposure µs, iso, exposure compensation, usb3 (0/1),
  * host queue frames per camera, host queue IMU packets, rgb sensor fps (0 = mono fps), keep every
  * nth mono frame, keep every nth rgb frame, accelerometer rate (0 = the imu rate, which is then
- * the gyroscope's).
+ * the gyroscope's), raw color (0 = MJPEG on the camera, 1 = NV12), then auto exposure, exposure µs,
+ * iso, compensation for the right camera and for the color camera (the four after the imu rate
+ * are the left camera's).
  * Returns a handle; throws IllegalStateException on failure.
  */
 JNIEXPORT jlong JNICALL Java_com_xreal_stereoview_oak_OakNative_start(JNIEnv* env, jclass, jintArray configArray) {
-    jint c[17] = {};
-    env->GetIntArrayRegion(configArray, 0, std::min<jsize>(17, env->GetArrayLength(configArray)), c);
+    jint c[26] = {};
+    env->GetIntArrayRegion(configArray, 0, std::min<jsize>(26, env->GetArrayLength(configArray)), c);
     const int monoHeight = c[0], fps = c[1], withRgb = c[2], rgbHeight = c[3], quality = c[4], imuRate = c[5];
-    const bool autoExposure = c[6] != 0;
-    const int exposureUs = c[7], iso = c[8], compensation = c[9], usb3 = c[10];
+    const int usb3 = c[10];
+    const bool rgbRaw = c[17] != 0;
+    // Initial exposure per camera (left, right, color): auto, µs, iso, compensation.
+    struct Exposure { bool autoExposure; int us, iso, compensation; };
+    const Exposure exposure[3] = {
+        {c[6] != 0, c[7], c[8], c[9]},
+        {c[18] != 0, c[19], c[20], c[21]},
+        {c[22] != 0, c[23], c[24], c[25]},
+    };
+    auto initial = [&exposure](dai::CameraControl& control, int camera) {
+        auto& e = exposure[camera];
+        if(!e.autoExposure) control.setManualExposure(static_cast<uint32_t>(e.us), static_cast<uint32_t>(e.iso));
+        else if(e.compensation != 0) control.setAutoExposureCompensation(e.compensation);
+    };
     // Host-side queue sizes (Settings → Recording buffers): frames per camera, IMU packets.
     const unsigned linkFrames = static_cast<unsigned>(std::max(8, c[11])), imuPackets = static_cast<unsigned>(std::max(50, c[12]));
     const int rgbFps = c[13] > 0 ? c[13] : fps, monoEvery = std::max(1, c[14]), rgbEvery = std::max(1, c[15]);
@@ -154,16 +171,17 @@ JNIEXPORT jlong JNICALL Java_com_xreal_stereoview_oak_OakNative_start(JNIEnv* en
             return script->outputs["out"];
         };
 
-        auto monoControl = p.create<dai::node::XLinkIn>();
-        monoControl->setStreamName("monoControl");
+        int camera = 0;
         for(auto [socket, name] : {std::pair{dai::CameraBoardSocket::CAM_B, "left"}, std::pair{dai::CameraBoardSocket::CAM_C, "right"}}) {
             auto mono = p.create<dai::node::MonoCamera>();
             mono->setBoardSocket(socket);
             mono->setResolution(monoResolution(monoHeight));
             mono->setFps(static_cast<float>(fps));
-            if(!autoExposure) mono->initialControl.setManualExposure(exposureUs, iso);
-            else if(compensation != 0) mono->initialControl.setAutoExposureCompensation(compensation);
-            monoControl->out.link(mono->inputControl);
+            initial(mono->initialControl, camera);
+            auto control = p.create<dai::node::XLinkIn>();
+            control->setStreamName(std::string(name) + "Control");
+            control->out.link(mono->inputControl);
+            camera++;
             auto out = p.create<dai::node::XLinkOut>();
             out->setStreamName(name);
             decimated(mono->out, monoEvery).link(out->input);
@@ -180,18 +198,22 @@ JNIEXPORT jlong JNICALL Java_com_xreal_stereoview_oak_OakNative_start(JNIEnv* en
             s->rgbWidth = 1280;
             s->rgbHeight = rgbHeight == 720 ? 720 : 800;
             cam->setVideoSize(s->rgbWidth, s->rgbHeight);
-            if(!autoExposure) cam->initialControl.setManualExposure(exposureUs, iso);
-            else if(compensation != 0) cam->initialControl.setAutoExposureCompensation(compensation);
+            initial(cam->initialControl, 2);
             auto control = p.create<dai::node::XLinkIn>();
             control->setStreamName("rgbControl");
             control->out.link(cam->inputControl);
-            auto encoder = p.create<dai::node::VideoEncoder>();
-            encoder->setDefaultProfilePreset(static_cast<float>(rgbFps) / rgbEvery, dai::VideoEncoderProperties::Profile::MJPEG);
-            encoder->setQuality(quality);
-            decimated(cam->video, rgbEvery).link(encoder->input);
             auto out = p.create<dai::node::XLinkOut>();
             out->setStreamName("rgb");
-            encoder->bitstream.link(out->input);
+            if(rgbRaw) {
+                // NV12 frames as the ISP makes them (1.5 bytes per pixel over USB).
+                decimated(cam->video, rgbEvery).link(out->input);
+            } else {
+                auto encoder = p.create<dai::node::VideoEncoder>();
+                encoder->setDefaultProfilePreset(static_cast<float>(rgbFps) / rgbEvery, dai::VideoEncoderProperties::Profile::MJPEG);
+                encoder->setQuality(quality);
+                decimated(cam->video, rgbEvery).link(encoder->input);
+                encoder->bitstream.link(out->input);
+            }
         }
         if(imuRate > 0) {
             auto imu = p.create<dai::node::IMU>();
@@ -206,8 +228,9 @@ JNIEXPORT jlong JNICALL Java_com_xreal_stereoview_oak_OakNative_start(JNIEnv* en
             imu->out.link(out->input);
         }
 
-        LOGI("Booting OAK: mono %dp, %d fps (every %d), rgb %d at %d fps (every %d), gyro %d Hz, accel %d Hz",
-             monoHeight, fps, monoEvery, withRgb, rgbFps, rgbEvery, imuRate, accelRate);
+        LOGI("Booting OAK: mono %dp, %d fps (every %d), rgb %d (%s) at %d fps (every %d), gyro %d Hz, accel %d Hz",
+             monoHeight, fps, monoEvery, withRgb, rgbRaw ? "NV12" : "MJPEG", rgbFps, rgbEvery, imuRate, accelRate);
+        s->rgbRaw = rgbRaw;
         s->device = std::make_unique<dai::Device>(p, usb3 ? dai::UsbSpeed::SUPER : dai::UsbSpeed::HIGH);
         auto& d = *s->device;
         // Non-blocking queues: if the app falls behind, the oldest frames are dropped on the
@@ -216,8 +239,9 @@ JNIEXPORT jlong JNICALL Java_com_xreal_stereoview_oak_OakNative_start(JNIEnv* en
         s->right = d.getOutputQueue("right", linkFrames, false);
         if(withRgb) s->rgb = d.getOutputQueue("rgb", linkFrames, false);
         if(imuRate > 0) s->imu = d.getOutputQueue("imu", imuPackets, false);
-        s->monoControl = d.getInputQueue("monoControl");
-        if(withRgb) s->rgbControl = d.getInputQueue("rgbControl");
+        s->control[0] = d.getInputQueue("leftControl");
+        s->control[1] = d.getInputQueue("rightControl");
+        if(withRgb) s->control[2] = d.getInputQueue("rgbControl");
 
         nlohmann::json info;
         info["mxid"] = d.getMxId();
@@ -233,6 +257,7 @@ JNIEXPORT jlong JNICALL Java_com_xreal_stereoview_oak_OakNative_start(JNIEnv* en
         info["mono_sensor_fps"] = fps;
         info["mono_keep_every"] = monoEvery;
         if(withRgb) {
+            info["rgb_format"] = rgbRaw ? "NV12" : "MJPEG";
             info["rgb_sensor_fps"] = rgbFps;
             info["rgb_keep_every"] = rgbEvery;
         }
@@ -302,7 +327,10 @@ JNIEXPORT jint JNICALL Java_com_xreal_stereoview_oak_OakNative_pollMono(
     }
 }
 
-/** Next JPEG from the color camera; meta as [pollMono]. Returns its size (−size − 1 if [out] is too small). */
+/**
+ * Next color frame (a JPEG, or NV12 with the Y plane rows packed at the frame's width); meta as
+ * [pollMono]. Returns its size (−size − 1 if [out] is too small).
+ */
 JNIEXPORT jint JNICALL Java_com_xreal_stereoview_oak_OakNative_pollRgb(
     JNIEnv* env, jclass, jlong handle, jbyteArray out, jlongArray meta, jint timeoutMs) {
     auto* s = reinterpret_cast<Session*>(handle);
@@ -313,14 +341,32 @@ JNIEXPORT jint JNICALL Java_com_xreal_stereoview_oak_OakNative_pollRgb(
         if(timedOut || !frame) return 0;
         auto& data = frame->getData();
         jsize n = static_cast<jsize>(data.size());
-        if(n > env->GetArrayLength(out)) return -n - 1;
-        env->SetByteArrayRegion(out, 0, n, reinterpret_cast<const jbyte*>(data.data()));
+        const int w = static_cast<int>(frame->getWidth()), h = static_cast<int>(frame->getHeight());
+        if(s->rgbRaw) {
+            // NV12, packed to the frame's width: rows may come padded to a larger stride
+            // (inferred from the size; depthai doesn't expose it).
+            const jsize packed = w * h * 3 / 2;
+            if(packed > env->GetArrayLength(out)) return -packed - 1;
+            const size_t stride = h > 0 ? data.size() * 2 / (3 * static_cast<size_t>(h)) : 0;
+            if(static_cast<jsize>(data.size()) < packed) return 0;
+            if(stride > static_cast<size_t>(w) && stride * h * 3 / 2 == data.size()) {
+                for(int r = 0; r < h * 3 / 2; r++) {
+                    env->SetByteArrayRegion(out, r * w, w, reinterpret_cast<const jbyte*>(data.data() + r * stride));
+                }
+            } else {
+                env->SetByteArrayRegion(out, 0, packed, reinterpret_cast<const jbyte*>(data.data()));
+            }
+            n = packed;
+        } else {
+            if(n > env->GetArrayLength(out)) return -n - 1;
+            env->SetByteArrayRegion(out, 0, n, reinterpret_cast<const jbyte*>(data.data()));
+        }
         jlong m[8] = {
             ns(frame->getTimestampDevice(dai::CameraExposureOffset::MIDDLE)),
             ns(frame->getTimestamp(dai::CameraExposureOffset::MIDDLE)),
             frame->getSequenceNum(),
-            s->rgbWidth,
-            s->rgbHeight,
+            s->rgbRaw ? w : s->rgbWidth,
+            s->rgbRaw ? h : s->rgbHeight,
             static_cast<jlong>(std::chrono::duration_cast<std::chrono::microseconds>(frame->getExposureTime()).count()),
             frame->getSensitivity(),
             ns(frame->getTimestampDevice(dai::CameraExposureOffset::START)),
@@ -365,11 +411,11 @@ JNIEXPORT jint JNICALL Java_com_xreal_stereoview_oak_OakNative_pollImu(
     }
 }
 
-/** Auto exposure (with compensation −9..9) or manual exposure time and ISO, for all cameras. */
+/** Auto exposure (with compensation −9..9) or manual exposure time and ISO, for one camera (0 left, 1 right, 2 color). */
 JNIEXPORT void JNICALL Java_com_xreal_stereoview_oak_OakNative_setExposure(
-    JNIEnv*, jclass, jlong handle, jboolean autoExposure, jint exposureUs, jint iso, jint compensation) {
+    JNIEnv*, jclass, jlong handle, jint camera, jboolean autoExposure, jint exposureUs, jint iso, jint compensation) {
     auto* s = reinterpret_cast<Session*>(handle);
-    if(!s) return;
+    if(!s || camera < 0 || camera > 2 || !s->control[camera]) return;
     try {
         dai::CameraControl c;
         if(autoExposure) {
@@ -378,8 +424,7 @@ JNIEXPORT void JNICALL Java_com_xreal_stereoview_oak_OakNative_setExposure(
         } else {
             c.setManualExposure(static_cast<uint32_t>(exposureUs), static_cast<uint32_t>(iso));
         }
-        if(s->monoControl) s->monoControl->send(std::make_shared<dai::CameraControl>(c));
-        if(s->rgbControl) s->rgbControl->send(std::make_shared<dai::CameraControl>(c));
+        s->control[camera]->send(std::make_shared<dai::CameraControl>(c));
     } catch(const std::exception& e) {
         LOGW("setExposure: %s", e.what());
     }

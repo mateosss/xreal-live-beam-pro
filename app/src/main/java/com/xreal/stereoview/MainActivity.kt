@@ -487,12 +487,14 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         ) {
             stopRecording("Recording stopped: camera settings changed")
             startCamera()
-        } else if (s.cameraSource == CameraSource.OAK && oakConfigOf(s).copy(exposure = oakExposureOf(previous)) != oakConfigOf(previous) && playing) {
+        } else if (s.cameraSource == CameraSource.OAK && oakConfigOf(s).copy(exposures = previous.oakExposures) != oakConfigOf(previous) && playing) {
             stopRecording("Recording stopped: OAK settings changed")
             stopOak()
             startOak()
         } else if (s.cameraSource == CameraSource.OAK) {
-            if (oakExposureOf(s) != oakExposureOf(previous)) oak.setExposure(oakExposureOf(s))
+            for (i in s.oakExposures.indices) {
+                if (s.oakExposures[i] != previous.oakExposures.getOrNull(i)) oak.setExposure(i, s.oakExposures[i])
+            }
         } else if (s.cameraSource == CameraSource.GLASSES) {
             if (glassesExposureOf(s) != glassesExposureOf(previous) && glasses.isRunning) glasses.setExposure(glassesExposureOf(s))
         } else if (exposureOf(s) != exposureOf(previous)) {
@@ -966,14 +968,12 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
 
     // region OAK camera
 
-    private fun oakExposureOf(s: StereoSettings) =
-        OakDevice.Exposure(!s.manualExposure, (s.exposureTimeNs / 1000).toInt().coerceIn(20, 33_000), s.iso.coerceIn(100, 1600), s.exposure.coerceIn(-9, 9))
-
     private fun oakConfigOf(s: StereoSettings) = OakDevice.Config(
-        s.oakMonoHeight, s.oakFps, s.oakRgbHeight, s.oakJpegQuality, s.oakImuRateHz, s.oakUsb3, oakExposureOf(s),
+        s.oakMonoHeight, s.oakFps, s.oakRgbHeight, s.oakJpegQuality, s.oakImuRateHz, s.oakUsb3, s.oakExposures,
         linkFrames = (s.buffers.oakLinkS * maxOf(s.oakFps, s.oakRgbFps)).coerceAtLeast(OakDevice.MIN_LINK_FRAMES),
         imuPackets = (s.buffers.oakImuS * (s.oakImuRateHz + OakDevice.accelRateFor(s.oakImuRateHz))).coerceAtLeast(OakDevice.MIN_IMU_PACKETS),
         rgbFps = s.oakRgbFps,
+        rgbRaw = s.oakRgbFormat != com.xreal.stereoview.record.OakRgbFormat.JPEG,
     )
 
     private fun startOak() {
@@ -1021,7 +1021,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
 
         override fun onRgb(frame: OakDevice.Rgb) {
             (recording as? OakRecording)?.onRgb(frame)
-            capture?.jpeg(2, frame.jpeg)
+            if (frame.raw) capture?.nv12(2, frame.data, frame.width, frame.height) else capture?.jpeg(2, frame.data)
         }
 
         override fun onImu(samples: List<OakDevice.ImuSample>) {

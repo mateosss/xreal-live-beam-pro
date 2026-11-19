@@ -59,4 +59,42 @@ class VideoRoundTripTest {
             }
         }
     }
+
+    /** NV12 color frames (the OAK color camera's raw frames) → H.264 MKV: colors and their place survive. */
+    @Test
+    fun nv12H264RecordingKeepsColors() {
+        val dir = InstrumentationRegistry.getInstrumentation().targetContext.cacheDir
+        val file = File(dir, "nv12.mkv").apply { delete() }
+        val w = 1280
+        val h = 720
+        val written = AtomicInteger()
+        val enc = VideoEncoder(file, "video/avc", w, h, 30, EncoderOptions(20_000_000), grayInput = true) { written.incrementAndGet() }
+        // Left half red (Y 76, U 85, V 255), right half blue (Y 29, U 255, V 107), full range.
+        val frame = ByteArray(w * h * 3 / 2)
+        for (y in 0 until h) for (x in 0 until w) frame[y * w + x] = (if (x < w / 2) 76 else 29).toByte()
+        for (y in 0 until h / 2) for (x in 0 until w / 2) {
+            val o = w * h + y * w + 2 * x
+            val red = x < w / 4
+            frame[o] = (if (red) 85 else 255).toByte()
+            frame[o + 1] = (if (red) 255 else 107).toByte()
+        }
+        for (i in 0 until 30) {
+            while (!enc.submitNv12(1_000_000_000L + i * 33_333_333L, frame)) Thread.sleep(5)
+            Thread.sleep(20)
+        }
+        enc.finish()
+        val frames = MkvReader.open(file).use { it.frames.size }
+        assertTrue("no frames written", written.get() > 0)
+        assertEquals(written.get(), frames)
+        VideoFrameDecoder(file).use { d ->
+            val b = d.frame(frames - 1, 640)!!
+            val left = b.getPixel(b.width / 4, b.height / 2)
+            val right = b.getPixel(b.width * 3 / 4, b.height / 2)
+            val corner = b.getPixel(b.width - 2, b.height - 2)
+            android.util.Log.i("VideoRoundTripTest", "nv12 left=${Integer.toHexString(left)} right=${Integer.toHexString(right)} corner=${Integer.toHexString(corner)} applied=${enc.applied}")
+            assertTrue("left not red: ${Integer.toHexString(left)}", Color.red(left) > 150 && Color.blue(left) < 100)
+            assertTrue("right not blue: ${Integer.toHexString(right)}", Color.blue(right) > 150 && Color.red(right) < 100)
+            assertTrue("corner not blue: ${Integer.toHexString(corner)}", Color.blue(corner) > 150 && Color.red(corner) < 100)
+        }
+    }
 }

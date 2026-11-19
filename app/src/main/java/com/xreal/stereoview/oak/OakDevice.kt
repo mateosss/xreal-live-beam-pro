@@ -14,8 +14,8 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * A Luxonis OAK camera (e.g. OAK-D Pro W) over USB through depthai-core: the left and right
- * mono cameras (raw 8-bit), optionally the color camera as JPEG (encoded on the camera), and
- * its IMU. Timestamps ([Mono.timestampNs] etc.) are on the camera's own clock, shared by
+ * mono cameras (raw 8-bit), optionally the color camera as JPEG (encoded on the camera) or as
+ * raw NV12 frames, and its IMU. Each camera has its own exposure control. Timestamps ([Mono.timestampNs] etc.) are on the camera's own clock, shared by
  * cameras and IMU; [Mono.hostNs] is the same instant on the phone's CLOCK_MONOTONIC as
  * estimated by depthai, [Mono.arrivalNs] when it reached the app on CLOCK_BOOTTIME.
  *
@@ -42,13 +42,16 @@ class OakDevice(private val context: Context, private val listener: Listener) {
         /** Gyroscope rate in Hz, or 0 for no IMU; the accelerometer runs at [accelRateFor] it. */
         val imuRateHz: Int,
         val usb3: Boolean,
-        val exposure: Exposure,
+        /** Per camera: cam0 (left), cam1 (right), cam2 (color). */
+        val exposures: List<Exposure>,
         /** Frames per camera that may wait on the phone's side of the USB link (native memory). */
         val linkFrames: Int = MIN_LINK_FRAMES,
         /** IMU packets (one sample or more each) that may wait there. */
         val imuPackets: Int = MIN_IMU_PACKETS,
         /** Color frame rate, or 0 for [fps]. */
         val rgbFps: Int = 0,
+        /** Color frames as raw NV12 (for PNG or the phone's encoder) instead of the camera's JPEGs. */
+        val rgbRaw: Boolean = false,
     ) {
         val fpsPlan: FpsPlan get() = FpsPlan.of(fps, if (rgbHeight > 0 && rgbFps > 0) rgbFps else fps)
     }
@@ -78,7 +81,47 @@ class OakDevice(private val context: Context, private val listener: Listener) {
         }
     }
 
-    data class Exposure(val auto: Boolean, val exposureUs: Int, val iso: Int, val compensation: Int)
+    /** One camera's exposure: auto (with compensation −9..9) or manual exposure time and ISO. */
+    data class Exposure(val auto: Boolean = true, val exposureUs: Int = 4000, val iso: Int = 400, val compensation: Int = 0) {
+        /** Within what the OAK sensors accept (the frame time limits the exposure further). */
+        fun clamped() = copy(exposureUs = exposureUs.coerceIn(MIN_EXPOSURE_US, MAX_EXPOSURE_US), iso = iso.coerceIn(MIN_ISO, MAX_ISO),
+            compensation = compensation.coerceIn(-9, 9))
+
+        fun toJson(): JSONObject = JSONObject().put("auto", auto).put("exposure_us", exposureUs).put("iso", iso).put("compensation", compensation)
+
+        val label: String get() = if (auto) "auto" + (if (compensation != 0) " %+d".format(compensation) else "") else "${exposureUs} µs ISO $iso"
+
+        companion object {
+            const val MIN_EXPOSURE_US = 20
+            const val MAX_EXPOSURE_US = 33_000
+            const val MIN_ISO = 100
+            const val MAX_ISO = 1600
+            val CAMERAS = listOf("cam0 (left)", "cam1 (right)", "cam2 (color)")
+
+            fun fromJson(o: JSONObject, d: Exposure = Exposure()) = Exposure(
+                o.optBoolean("auto", d.auto), o.optInt("exposure_us", d.exposureUs), o.optInt("iso", d.iso), o.optInt("compensation", d.compensation),
+            ).clamped()
+
+            fun listToJson(list: List<Exposure>): String = org.json.JSONArray(list.map { it.toJson() }).toString()
+
+            /** Three exposures from [listToJson]'s output, or null if [text] is missing or malformed. */
+            fun listFromJson(text: String?): List<Exposure>? {
+                val a = runCatching { org.json.JSONArray(text ?: return null) }.getOrNull() ?: return null
+                if (a.length() == 0) return null
+                return List(3) { i -> a.optJSONObject(i.coerceAtMost(a.length() - 1))?.let { fromJson(it) } ?: Exposure() }
+            }
+
+            /** For profile summaries: "auto exposure", or each camera's when they differ. */
+            fun summary(list: List<Exposure>, withColor: Boolean): String {
+                val used = if (withColor) list else list.take(2)
+                return if (used.distinct().size == 1) {
+                    used[0].let { if (it.auto) "auto exposure" + (if (it.compensation != 0) " %+d".format(it.compensation) else "") else "manual exposure ${it.exposureUs} µs ISO ${it.iso}" }
+                } else {
+                    "exposure " + used.mapIndexed { i, e -> "cam$i ${e.label}" }.joinToString(", ")
+                }
+            }
+        }
+    }
 
     class Mono(
         val image: ByteArray,
@@ -95,8 +138,9 @@ class OakDevice(private val context: Context, private val listener: Listener) {
 
     class StereoFrame(val left: Mono, val right: Mono)
 
-    class Rgb(val jpeg: ByteArray, val width: Int, val height: Int, val timestampNs: Long, val hostNs: Long,
-              val sequence: Long, val exposureUs: Long, val iso: Int, val arrivalNs: Long)
+    /** A color frame: a JPEG from the camera, or (if [raw]) NV12 at [width]×[height] (Y plane, then interleaved U/V). */
+    class Rgb(val data: ByteArray, val raw: Boolean, val width: Int, val height: Int, val timestampNs: Long, val hostNs: Long,
+              val sequence: Long, val exposureUs: Long, val iso: Int, val arrivalNs: Long, val startOfExposureNs: Long)
 
     /** Raw accelerometer (m/s²) and gyroscope (rad/s) with their own device timestamps. */
     class ImuSample(
@@ -161,13 +205,16 @@ class OakDevice(private val context: Context, private val listener: Listener) {
             if (!wanted) return@execute
             listener.onStatus("Booting the OAK camera (uploading its firmware)…")
             try {
-                val e = config.exposure
+                val e = List(3) { (config.exposures.getOrNull(it) ?: Exposure()).clamped() }
                 val plan = config.fpsPlan
                 val h = OakNative.start(intArrayOf(
                     config.monoHeight, plan.monoSensorFps, if (config.rgbHeight > 0) 1 else 0, config.rgbHeight,
-                    config.jpegQuality, config.imuRateHz, if (e.auto) 1 else 0, e.exposureUs, e.iso, e.compensation,
+                    config.jpegQuality, config.imuRateHz, if (e[0].auto) 1 else 0, e[0].exposureUs, e[0].iso, e[0].compensation,
                     if (config.usb3) 1 else 0, config.linkFrames, config.imuPackets,
                     plan.rgbSensorFps, plan.monoEvery, plan.rgbEvery, accelRateFor(config.imuRateHz),
+                    if (config.rgbRaw) 1 else 0,
+                    if (e[1].auto) 1 else 0, e[1].exposureUs, e[1].iso, e[1].compensation,
+                    if (e[2].auto) 1 else 0, e[2].exposureUs, e[2].iso, e[2].compensation,
                 ))
                 if (!wanted) {
                     OakNative.stop(h)
@@ -176,6 +223,7 @@ class OakDevice(private val context: Context, private val listener: Listener) {
                 val json = runCatching { JSONObject(OakNative.info(h)) }.getOrElse { JSONObject() }
                 info = json
                 monoStep = plan.monoEvery.toLong()
+                rgbRaw = config.rgbRaw
                 handle = h
                 running = true
                 threads = listOfNotNull(
@@ -198,9 +246,11 @@ class OakDevice(private val context: Context, private val listener: Listener) {
         }
     }
 
-    fun setExposure(e: Exposure) {
+    /** Changes the exposure of [camera] (0 left, 1 right, 2 color) while streaming. */
+    fun setExposure(camera: Int, exposure: Exposure) {
         val h = handle
-        if (h != 0L && running) OakNative.setExposure(h, e.auto, e.exposureUs, e.iso, e.compensation)
+        val e = exposure.clamped()
+        if (h != 0L && running) OakNative.setExposure(h, camera, e.auto, e.exposureUs, e.iso, e.compensation)
     }
 
     /**
@@ -226,6 +276,7 @@ class OakDevice(private val context: Context, private val listener: Listener) {
 
     /** Sequence numbers between consecutive kept mono frames (see [FpsPlan.monoEvery]). */
     @Volatile private var monoStep = 1L
+    @Volatile private var rgbRaw = false
     @Volatile private var pendingLeft: Mono? = null
     @Volatile private var pendingRight: Mono? = null
     private val pairLock = Any()
@@ -281,8 +332,8 @@ class OakDevice(private val context: Context, private val listener: Listener) {
             if (n < 0) break
             if (n == 0) continue
             rgbFrames.incrementAndGet()
-            listener.onRgb(Rgb(buffer.copyOf(n), meta[3].toInt(), meta[4].toInt(), meta[0], meta[1], meta[2], meta[5], meta[6].toInt(),
-                SystemClock.elapsedRealtimeNanos()))
+            listener.onRgb(Rgb(buffer.copyOf(n), rgbRaw, meta[3].toInt(), meta[4].toInt(), meta[0], meta[1], meta[2], meta[5], meta[6].toInt(),
+                SystemClock.elapsedRealtimeNanos(), meta[7]))
         }
     }
 

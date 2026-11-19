@@ -42,3 +42,14 @@ enum class GrayImageFormat(val label: String, val extension: String) {
     JPEG("JPEG (several times smaller; quality below)", "jpg"),
     H264("H.264 video in MKV (crash-safe, smallest; settings below)", "mkv"),
 }
+
+/**
+ * How the OAK color camera's images are stored. JPEG is encoded on the camera; the others take
+ * raw NV12 frames over USB (1.5 bytes per pixel: about 46 MB/s at 1280×800 and 30 fps, too much
+ * for USB2) and store them on the phone.
+ */
+enum class OakRgbFormat(val label: String, val extension: String) {
+    JPEG("JPEG, encoded on the camera (least USB load; quality below)", "jpg"),
+    PNG("PNG RGB (lossless; raw frames over USB3, converted on the phone; may drop frames)", "png"),
+    H264("H.264 video in MKV (raw frames over USB3, encoded on the phone; settings below)", "mkv"),
+}

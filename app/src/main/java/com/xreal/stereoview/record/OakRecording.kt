@@ -22,8 +22,9 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * A dataset from an OAK camera, in the EuRoC layout (see [Euroc]): the left and right mono
- * cameras as lossless grayscale PNGs in mav0/cam0 and mav0/cam1, the color camera's JPEGs (as
- * encoded on the camera) in mav0/cam2, and the OAK's IMU as mav0/imu0, all on the camera's
+ * cameras in mav0/cam0 and mav0/cam1 (PNG by default, or JPEG or H.264 video), the color camera
+ * in mav0/cam2 (by default its JPEGs as encoded on the camera; or RGB PNGs or H.264 video from
+ * its raw frames), and the OAK's IMU as mav0/imu0, all on the camera's
  * clock (mid-exposure for images). sensor.yaml files come from the camera's factory
  * calibration. Extras: frames.csv per camera, the raw IMU streams and metadata.json with
  * depthai's device description and full calibration. The phone's IMU is not recorded: it does
@@ -41,8 +42,10 @@ class OakRecording private constructor(
     private val metadata: JSONObject,
     private val monoFormat: GrayImageFormat,
     private val jpegQuality: Int,
+    private val rgbFormat: OakRgbFormat,
     /** Images that may wait for the writers (Settings → Recording buffers). */
     private val queueFrames: Int,
+    writerThreads: Int,
 ) : ActiveRecording {
     private class Cam(val name: String, val dir: File, val extension: String, val data: LineWriter, val frames: LineWriter) {
         /** H.264 mono recordings: the camera's encoder; data.csv rows are written as frames reach the file. */
@@ -59,7 +62,10 @@ class OakRecording private constructor(
     @Volatile
     override var error: String? = null
 
-    private val writer = ThreadPoolExecutor(3, 3, 1, TimeUnit.SECONDS, ArrayBlockingQueue(queueFrames)) { r -> Thread(r, "OakWriter") }
+    private val writer = ThreadPoolExecutor(writerThreads, writerThreads, 1, TimeUnit.SECONDS, ArrayBlockingQueue(queueFrames)) { r -> Thread(r, "OakWriter") }
+    /** Color frames that came in another form than [rgbFormat] needs (only while the stream restarts). */
+    private val rgbMismatched = AtomicInteger()
+    private val rgbBuffer = ThreadLocal<ByteArray>()
     @Volatile private var peakQueue = 0
     private val dropped = AtomicInteger()
     private val failed = AtomicInteger()
@@ -93,9 +99,29 @@ class OakRecording private constructor(
 
     fun onRgb(frame: OakDevice.Rgb) {
         val cam = cams.getOrNull(2) ?: return
+        val t = frame.timestampNs
+        offset(frame.arrivalNs, t, frame.hostNs)
+        val row = "$t,$t,${frame.sequence},${frame.hostNs},${frame.arrivalNs},${frame.exposureUs},${frame.iso},${frame.startOfExposureNs}"
+        if (frame.raw != (rgbFormat != OakRgbFormat.JPEG) || (frame.raw && frame.data.size < frame.width * frame.height * 3 / 2)) {
+            rgbMismatched.incrementAndGet()
+            return
+        }
+        val video = cam.video
+        if (video != null) {
+            cam.pts.put(t, t)
+            if (video.submitNv12(t, frame.data)) cam.frames.line(row) else dropped.incrementAndGet()
+            return
+        }
         submit {
-            File(cam.dir, "data/${frame.timestampNs}.jpg").writeBytes(frame.jpeg)
-            stored(cam, frame.timestampNs, "${frame.timestampNs},${frame.timestampNs},${frame.sequence},${frame.hostNs},${frame.arrivalNs},${frame.exposureUs},${frame.iso},")
+            val file = File(cam.dir, "data/$t.${cam.extension}")
+            if (frame.raw) {
+                val rgb = com.xreal.stereoview.util.Nv12.toRgb(frame.data, frame.width, frame.height, rgbBuffer.get())
+                rgbBuffer.set(rgb)
+                PngGray.writeRgb(file, rgb, frame.width, frame.height)
+            } else {
+                file.writeBytes(frame.data)
+            }
+            stored(cam, t, row)
         }
     }
 
@@ -233,6 +259,7 @@ class OakRecording private constructor(
         metadata.put("stats", JSONObject().apply {
             put("frames_dropped_by_writer", dropped.get())
             put("frames_failed", failed.get())
+            if (rgbMismatched.get() > 0) put("color_frames_skipped_wrong_format", rgbMismatched.get())
             put("write_queue_capacity_frames", queueFrames)
             put("write_queue_peak_frames", peakQueue)
             put("oak_imu_gyro_samples", imuSamples)
@@ -255,6 +282,8 @@ class OakRecording private constructor(
 
     companion object {
         private const val TAG = "OakRecording"
+        /** Width of the color images (1280×800 or 1280×720). */
+        const val RGB_WIDTH = 1280
         private const val FRAMES_HEADER = "timestamp_ns,sensor_timestamp_ns,sequence,host_monotonic_ns,arrival_ns,exposure_us,iso,start_of_exposure_ns"
         private const val IMU_HEADER = "timestamp_ns,arrival_ns,x,y,z,host_monotonic_ns"
 
@@ -276,25 +305,30 @@ class OakRecording private constructor(
             val calibration = info.optJSONObject("calibration")
             val rgbFps = if (s.oakRgbFps > 0) s.oakRgbFps else s.oakFps
             val plan = OakDevice.FpsPlan.of(s.oakFps, rgbFps)
+            val monoW = if (s.oakMonoHeight == 400) 640 else 1280
+            val rgbRaw = s.oakRgbHeight > 0 && s.oakRgbFormat != OakRgbFormat.JPEG
+            // Raw color frames (1.5 bytes per pixel) share the memory cap with the mono pair;
+            // the camera's JPEGs are small next to the mono frames.
+            val streams = if (rgbRaw) 3 else 2
+            val monoBacklog = RecordingBuffers.frames(s.buffers.oakCameraS, s.oakFps, monoW.toLong() * s.oakMonoHeight, streams, min = VideoEncoder.MIN_PENDING)
+            val rgbBacklog = if (rgbRaw) RecordingBuffers.frames(s.buffers.oakCameraS, rgbFps, RGB_WIDTH.toLong() * s.oakRgbHeight * 3 / 2, streams, min = VideoEncoder.MIN_PENDING) else monoBacklog
+            class Spec(val name: String, val key: String, val ext: String, val width: Int, val height: Int, val fps: Int, val bitrateMbps: Int, val backlog: Int)
             val specs = listOfNotNull(
-                Triple("cam0", "left", s.oakImageFormat.extension),
-                Triple("cam1", "right", s.oakImageFormat.extension),
-                if (s.oakRgbHeight > 0) Triple("cam2", "rgb", "jpg") else null,
+                Spec("cam0", "left", s.oakImageFormat.extension, monoW, s.oakMonoHeight, s.oakFps, s.oakVideoBitrateMbps, monoBacklog),
+                Spec("cam1", "right", s.oakImageFormat.extension, monoW, s.oakMonoHeight, s.oakFps, s.oakVideoBitrateMbps, monoBacklog),
+                if (s.oakRgbHeight > 0) Spec("cam2", "rgb", s.oakRgbFormat.extension, RGB_WIDTH, s.oakRgbHeight, rgbFps, s.oakRgbVideoBitrateMbps, rgbBacklog) else null,
             )
             lateinit var recording: OakRecording
-            val monoW = if (s.oakMonoHeight == 400) 640 else 1280
-            // Per mono camera; both share the memory cap (color JPEGs are small next to them).
-            val backlog = RecordingBuffers.frames(s.buffers.oakCameraS, s.oakFps, monoW.toLong() * s.oakMonoHeight, streams = 2, min = VideoEncoder.MIN_PENDING)
-            val cams = specs.map { (camName, key, ext) ->
-                val video = ext == GrayImageFormat.H264.extension
-                val camDir = File(mav, camName).apply { mkdirs() }
+            val cams = specs.map { spec ->
+                val video = spec.ext == GrayImageFormat.H264.extension
+                val camDir = File(mav, spec.name).apply { mkdirs() }
                 if (!video) File(camDir, "data").mkdirs()
-                calibration?.optJSONObject(key)?.let { c -> runCatching { File(camDir, "sensor.yaml").writeText(cameraYaml(camName, key, c, if (key == "rgb") rgbFps else s.oakFps)) } }
-                Cam(camName, camDir, ext, LineWriter(File(camDir, "data.csv"), Euroc.CAMERA_HEADER), LineWriter(File(camDir, "frames.csv"), FRAMES_HEADER)).also { cam ->
+                calibration?.optJSONObject(spec.key)?.let { c -> runCatching { File(camDir, "sensor.yaml").writeText(cameraYaml(spec.name, spec.key, c, spec.fps)) } }
+                Cam(spec.name, camDir, spec.ext, LineWriter(File(camDir, "data.csv"), Euroc.CAMERA_HEADER), LineWriter(File(camDir, "frames.csv"), FRAMES_HEADER)).also { cam ->
                     if (video) {
                         cam.video = VideoEncoder(
-                            File(camDir, "data.mkv"), "video/avc", monoW, s.oakMonoHeight, s.oakFps, s.encoderOptions(s.oakVideoBitrateMbps),
-                            grayInput = true, onWritten = { p -> recording.onVideoFrame(cam, p) }, grayBacklogFrames = backlog,
+                            File(camDir, "data.mkv"), "video/avc", spec.width, spec.height, spec.fps, s.encoderOptions(spec.bitrateMbps),
+                            grayInput = true, onWritten = { p -> recording.onVideoFrame(cam, p) }, grayBacklogFrames = spec.backlog,
                         )
                     }
                 }
@@ -338,7 +372,14 @@ class OakRecording private constructor(
                         GrayImageFormat.H264 -> "H.264 in Matroska (data.mkv, crash-safe), ${s.oakVideoBitrateMbps} Mbit/s per camera"
                         GrayImageFormat.PNG -> "PNG 8-bit grayscale"
                     } + ", ${if (s.oakMonoHeight == 400) "640×400" else "1280×${s.oakMonoHeight}"}")
-                    put("color", if (s.oakRgbHeight > 0) "JPEG 1280×${s.oakRgbHeight}, quality ${s.oakJpegQuality}, encoded on the camera" else "off")
+                    put("color", if (s.oakRgbHeight > 0) {
+                        when (s.oakRgbFormat) {
+                            OakRgbFormat.JPEG -> "JPEG quality ${s.oakJpegQuality}, encoded on the camera"
+                            OakRgbFormat.PNG -> "PNG 8-bit RGB, from the camera's raw NV12 frames (full-range BT.601)"
+                            OakRgbFormat.H264 -> "H.264 in Matroska (data.mkv, crash-safe), ${s.oakRgbVideoBitrateMbps} Mbit/s, encoded on the phone from the camera's raw NV12 frames"
+                        } + ", $RGB_WIDTH×${s.oakRgbHeight}"
+                    } else "off")
+                    put("exposure", JSONArray(s.oakExposures.take(cams.size).mapIndexed { i, e -> e.toJson().put("camera", "cam$i") }))
                     put("fps", s.oakFps)
                     if (s.oakRgbHeight > 0) {
                         put("color_fps", rgbFps)
@@ -361,7 +402,11 @@ class OakRecording private constructor(
                 put("extra", extraInfo)
                 put("files", JSONObject().apply {
                     put("mav0/cam0, cam1", "left and right mono cameras: data/<timestamp_ns>.${s.oakImageFormat.extension}, data.csv, sensor.yaml, frames.csv")
-                    put("mav0/cam2", "color camera (if on): data/<timestamp_ns>.jpg as encoded on the camera")
+                    put("mav0/cam2", "color camera (if on): " + when (s.oakRgbFormat) {
+                        OakRgbFormat.JPEG -> "data/<timestamp_ns>.jpg as encoded on the camera"
+                        OakRgbFormat.PNG -> "data/<timestamp_ns>.png, RGB"
+                        OakRgbFormat.H264 -> "data.mkv (frame i = row i of data.csv)"
+                    })
                     put("mav0/camN/frames.csv", FRAMES_HEADER)
                     put("mav0/imu0", "EuRoC IMU from the OAK IMU: gyroscope timestamps, accelerometer interpolated (built at the end)")
                     put("mav0/imu0/oak_accelerometer.csv, oak_gyroscope.csv", IMU_HEADER + " (raw sensor values, m/s² and rad/s)")
@@ -370,7 +415,13 @@ class OakRecording private constructor(
                 })
             }
             File(dir, "metadata.json").writeText(metadata.toString(2))
-            recording = OakRecording(dir, cams, accel, gyro, imu0, LineWriter(File(dir, "settings.jsonl")), metadata, s.oakImageFormat, s.grayJpegQuality, specs.size * backlog)
+            val queue = specs.filter { it.ext != GrayImageFormat.H264.extension }.sumOf { it.backlog }.coerceAtLeast(8)
+            // RGB PNGs take several times longer than the mono ones: more writers.
+            val threads = if (rgbRaw && s.oakRgbFormat == OakRgbFormat.PNG) 6 else 3
+            recording = OakRecording(
+                dir, cams, accel, gyro, imu0, LineWriter(File(dir, "settings.jsonl")), metadata, s.oakImageFormat, s.grayJpegQuality,
+                s.oakRgbFormat, queue, threads,
+            )
             recording.onSettingsChanged(s)
             return recording
         }

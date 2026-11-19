@@ -7,7 +7,7 @@ import java.io.OutputStream
 import java.util.zip.CRC32
 import java.util.zip.Deflater
 
-/** Writes 8-bit grayscale PNGs (lossless, as EuRoC-style datasets expect). */
+/** Writes 8-bit grayscale PNGs (lossless, as EuRoC-style datasets expect), and 8-bit RGB ones ([writeRgb]). */
 object PngGray {
     private val SIGNATURE = byteArrayOf(0x89.toByte(), 'P'.code.toByte(), 'N'.code.toByte(), 'G'.code.toByte(), 13, 10, 26, 10)
 
@@ -15,16 +15,26 @@ object PngGray {
         file.outputStream().buffered(1 shl 16).use { write(it, pixels, width, height, level) }
     }
 
-    fun write(out: OutputStream, pixels: ByteArray, width: Int, height: Int, level: Int = Deflater.BEST_SPEED) {
-        // Each row is prefixed with its filter type; "Sub" (1) stores differences to the left
-        // neighbour, which compresses camera images much better than storing them as they are.
-        val raw = ByteArray(height * (width + 1))
+    fun write(out: OutputStream, pixels: ByteArray, width: Int, height: Int, level: Int = Deflater.BEST_SPEED) =
+        encode(out, pixels, width, height, 1, level)
+
+    /** [rgb]: [width]×[height] pixels of 3 bytes (R, G, B). */
+    fun writeRgb(file: File, rgb: ByteArray, width: Int, height: Int, level: Int = Deflater.BEST_SPEED) {
+        file.outputStream().buffered(1 shl 16).use { encode(it, rgb, width, height, 3, level) }
+    }
+
+    private fun encode(out: OutputStream, pixels: ByteArray, width: Int, height: Int, channels: Int, level: Int) {
+        // Each row is prefixed with its filter type; "Sub" (1) stores differences to the same
+        // channel of the left neighbour, which compresses camera images much better than
+        // storing them as they are.
+        val rowBytes = width * channels
+        val raw = ByteArray(height * (rowBytes + 1))
         for (y in 0 until height) {
-            val src = y * width
-            val dst = y * (width + 1)
+            val src = y * rowBytes
+            val dst = y * (rowBytes + 1)
             raw[dst] = 1
-            raw[dst + 1] = pixels[src]
-            for (x in 1 until width) raw[dst + 1 + x] = (pixels[src + x] - pixels[src + x - 1]).toByte()
+            for (x in 0 until channels) raw[dst + 1 + x] = pixels[src + x]
+            for (x in channels until rowBytes) raw[dst + 1 + x] = (pixels[src + x] - pixels[src + x - channels]).toByte()
         }
         val deflater = Deflater(level)
         val compressed = ByteArrayOutputStream(raw.size / 2)
@@ -41,7 +51,7 @@ object PngGray {
                 writeInt(width)
                 writeInt(height)
                 writeByte(8) // bit depth
-                writeByte(0) // grayscale
+                writeByte(if (channels == 3) 2 else 0) // truecolor or grayscale
                 writeByte(0) // deflate
                 writeByte(0) // adaptive filtering
                 writeByte(0) // no interlace

@@ -200,6 +200,20 @@
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/oakCameraButton"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="4dp"
+                android:minWidth="0dp"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:text="All"
+                android:textAllCaps="false"
+                android:tooltipText="Which OAK camera the exposure controls set: all, cam0 (left), cam1 (right) or cam2 (color)"
+                android:visibility="gone" />
+
             <com.google.android.material.button.MaterialButtonToggleGroup
                 android:id="@+id/exposureModeGroup"
                 android:layout_width="wrap_content"
