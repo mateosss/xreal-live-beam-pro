@@ -2,6 +2,7 @@ package com.xreal.stereoview.glasses
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import com.xreal.stereoview.util.appendFixed
 import org.junit.Test
 
 class GlassesImuCalibrationTest {
@@ -18,8 +19,8 @@ class GlassesImuCalibrationTest {
         // A still sample as this app recorded it before (sensor axes, m/s²) and one Monado
         // recorded in about the same pose: (0.25..0.41, 7.0, −6.9).
         val before = doubleArrayOf(-0.4345, -6.7301, 7.4531)
-        val s = sample(DoubleArray(3), DoubleArray(3) { before[it] / GlassesImuCalibration.GRAVITY })
-        val a = GlassesImuCalibration().accel(s)
+        val s = sample(DoubleArray(3), DoubleArray(3) { before[it] / GlassesImuCalibration.GRAVITY.toDouble() })
+        val a = GlassesImuCalibration().accel(s).map { it.toDouble() }.toDoubleArray()
         assertArrayEquals(doubleArrayOf(0.4345, 7.4531, -6.7301), a, 1e-3) // (−x, z, y)
         assertEquals(0.33, a[0], 0.2)
         assertEquals(7.04, a[1], 0.5)
@@ -33,11 +34,20 @@ class GlassesImuCalibrationTest {
         val cal = GlassesImuCalibration.parse(json)
         val s = sample(doubleArrayOf(10.0, 0.0, 0.0), doubleArrayOf(0.0, 0.0, 1.0))
         // Accelerometer: (0, 0, g) → pre (0, −g, 0) → minus bias, times scale → post (x, −y, −z).
-        val g = GlassesImuCalibration.GRAVITY
-        assertArrayEquals(doubleArrayOf(-0.1 * 1.1, (g + 0.2) * 1.0, 0.3 * 0.9), cal.accel(s), 1e-9)
+        val g = GlassesImuCalibration.GRAVITY.toDouble()
+        assertArrayEquals(doubleArrayOf(-0.1 * 1.1, (g + 0.2) * 1.0, 0.3 * 0.9), cal.accel(s).map { it.toDouble() }.toDoubleArray(), 1e-5)
         // Gyroscope: 10 °/s on x, turned 90° about z → y; rad/s; pre (0, 0, −w); bias, scale; post.
         val w = Math.toRadians(10.0)
-        assertArrayEquals(doubleArrayOf(-0.01 * 2.0, 0.02, -(-w - 0.03)), cal.gyro(s), 1e-9)
+        assertArrayEquals(doubleArrayOf(-0.01 * 2.0, 0.02, -(-w - 0.03)), cal.gyro(s).map { it.toDouble() }.toDoubleArray(), 1e-5)
+    }
+
+    @Test
+    fun fixedDecimalsLikeMonadosCsv() {
+        fun f(v: Double) = StringBuilder().appendFixed(v).toString()
+        assertEquals("0.0175048932", f(0.01750489321))
+        assertEquals("-6.8912243843", f(-6.89122438429))
+        assertEquals("0.0000000000", f(-1e-12))
+        assertEquals("12.0000000000", f(12.0))
     }
 
     @Test
@@ -46,6 +56,6 @@ class GlassesImuCalibrationTest {
         assertEquals(false, cal.factory)
         val s = sample(doubleArrayOf(1.0, 2.0, 3.0), doubleArrayOf(0.0, 0.0, 0.0))
         val r = Math.toRadians(1.0)
-        assertArrayEquals(doubleArrayOf(-r, 3 * r, 2 * r), cal.gyro(s), 1e-9)
+        assertArrayEquals(doubleArrayOf(-r, 3 * r, 2 * r), cal.gyro(s).map { it.toDouble() }.toDoubleArray(), 1e-5)
     }
 }

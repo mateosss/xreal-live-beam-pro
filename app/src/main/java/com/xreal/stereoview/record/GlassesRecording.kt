@@ -9,6 +9,7 @@ import com.xreal.stereoview.glasses.GlassesDevice
 import com.xreal.stereoview.glasses.GlassesImuCalibration
 import com.xreal.stereoview.glasses.GlassesProtocol
 import com.xreal.stereoview.glasses.Kb4Camera
+import com.xreal.stereoview.util.appendFixed
 import com.xreal.stereoview.ui.StereoSettings
 import com.xreal.stereoview.util.PngGray
 import org.json.JSONArray
@@ -158,15 +159,15 @@ class GlassesRecording private constructor(
             val a = cal.accel(s)
             out.line(buildString(120) {
                 append(s.timestampNs)
-                for (v in g) append(',').append(v)
-                for (v in a) append(',').append(v)
+                for (v in g) append(',').appendFixed(v)
+                for (v in a) append(',').appendFixed(v)
             })
         }
         w.line(buildString(220) {
             append(s.timestampNs).append(',').append(arrivalNs)
-            for (i in 0..2) append(',').append(s.gyroRadPerSec(i))
-            for (i in 0..2) append(',').append(s.accelMps2(i))
-            for (i in 0..2) append(',').append(s.magScaled(i))
+            for (i in 0..2) append(',').appendFixed(s.gyroRadPerSec(i))
+            for (i in 0..2) append(',').appendFixed(s.accelMps2(i))
+            for (i in 0..2) append(',').appendFixed(s.magScaled(i))
             append(',').append("%.2f".format(Locale.US, s.temperatureC))
             for (v in s.gyro) append(',').append(v)
             for (v in s.accel) append(',').append(v)
@@ -246,7 +247,7 @@ class GlassesRecording private constructor(
         })
         if (imu0 != null) metadata.put("imu0_conversion", imuCalibration.toJson().apply {
             put("as", "Monado xreal_air driver (read_sample_and_apply_calibration): gyroscope rotated by accel_q_gyro, " +
-                "SI units (g = ${GlassesImuCalibration.GRAVITY}), pre-biased axes (x,y,z)→(−x,−z,−y), minus bias, times scale, " +
+                "SI units (g = ${GlassesImuCalibration.GRAVITY}), 32-bit floats, 10 decimals, pre-biased axes (x,y,z)→(−x,−z,−y), minus bias, times scale, " +
                 "post-biased axes (x,y,z)→(x,−y,−z). Net axes: sensor (x,y,z) → (−x,z,y).")
             put("rows_without_factory_calibration", imuWithoutFactory)
         })
