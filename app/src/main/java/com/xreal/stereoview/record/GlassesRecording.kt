@@ -25,19 +25,21 @@ import java.util.concurrent.atomic.AtomicInteger
  * A dataset from the glasses, in the EuRoC layout (see [Euroc]): the left and right tracking
  * cameras as lossless grayscale PNGs in mav0/cam0 and mav0/cam1 (480×640 upright), the
  * glasses' IMU as mav0/imu0 when it was taken over, plus frames.csv with each frame's sequence
- * number, arrival time and metadata bytes, the full glasses IMU reports, the Beam Pro's IMU
- * streams, the glasses' factory calibration and metadata.json.
+ * number, own timestamp, arrival time and metadata bytes, the full glasses IMU reports, the
+ * glasses' factory calibration and metadata.json. The phone's IMU is not recorded: it does not
+ * move with the glasses.
  *
  * Camera and glasses-IMU timestamps are on the glasses' clock (ns since the glasses booted);
  * every row also has its arrival time on the Beam Pro's CLOCK_BOOTTIME, from which
- * metadata.json estimates the offset between the two clocks.
+ * metadata.json estimates the offset between the two clocks. Both images of a stereo pair are
+ * stored under the left image's timestamp, as EuRoC expects; each image's own timestamp is in
+ * frames.csv (sensor_timestamp_ns), and metadata.json sums up how far apart they are.
  */
 class GlassesRecording private constructor(
     override val dir: File,
     private val cams: List<Cam>,
     private val glassesImu: LineWriter?,
     private val imu0: LineWriter?,
-    private val imu: ImuRecorder,
     private val settingsLog: LineWriter,
     private val metadata: JSONObject,
     private val format: GrayImageFormat,
@@ -76,6 +78,7 @@ class GlassesRecording private constructor(
     private var imuLastNs = 0L
     private val cameraOffset = OffsetEstimate()
     private val imuOffset = OffsetEstimate()
+    private val pairSpread = PairSpread()
     @Volatile
     private var calibration: String? = null
 
@@ -91,22 +94,24 @@ class GlassesRecording private constructor(
         }
     }
 
-    /** Decode thread: queues both images of a pair. */
+    /** Decode thread: queues both images of a pair, under the left image's timestamp. */
     fun onStereoFrame(frame: GlassesDevice.StereoFrame) {
+        val t = frame.left.timestampNs
+        pairSpread.add(frame.right.timestampNs - frame.left.timestampNs)
         for ((cam, eye) in cams.zip(listOf(frame.left, frame.right))) {
             cameraOffset.add(eye.arrivalNs, eye.timestampNs)
             val video = cam.video
             if (video != null) {
-                cam.pts.put(eye.timestampNs, eye.timestampNs)
-                if (video.submitGray(eye.timestampNs, eye.image)) {
-                    cam.frames.line("${eye.timestampNs},${eye.sequence},${eye.arrivalNs},${eye.meta.joinToString("") { "%02x".format(it) }}")
+                cam.pts.put(t, t)
+                if (video.submitGray(t, eye.image)) {
+                    cam.frames.line(framesRow(t, eye))
                 } else {
                     dropped.incrementAndGet()
                 }
                 continue
             }
             try {
-                encoder.execute { store(cam, eye) }
+                encoder.execute { store(cam, t, eye) }
                 encoder.queue.size.let { if (it > peakQueue) peakQueue = it }
             } catch (e: java.util.concurrent.RejectedExecutionException) {
                 dropped.incrementAndGet()
@@ -114,20 +119,23 @@ class GlassesRecording private constructor(
         }
     }
 
-    private fun store(cam: Cam, eye: GlassesDevice.Eye) {
+    private fun framesRow(t: Long, eye: GlassesDevice.Eye) =
+        "$t,${eye.timestampNs},${eye.sequence},${eye.arrivalNs},${eye.meta.joinToString("") { "%02x".format(it) }}"
+
+    private fun store(cam: Cam, t: Long, eye: GlassesDevice.Eye) {
         try {
-            GrayImages.write(File(cam.dir, "data/${eye.timestampNs}.${format.extension}"), eye.image, IMAGE_W, IMAGE_H, format, jpegQuality)
+            GrayImages.write(File(cam.dir, "data/$t.${format.extension}"), eye.image, IMAGE_W, IMAGE_H, format, jpegQuality)
         } catch (e: Exception) {
             Log.w(TAG, "Writing a frame failed", e)
             failed.incrementAndGet()
             return
         }
         synchronized(cam) {
-            if (cam.stored == 0L) cam.firstNs = eye.timestampNs else cam.maxGapNs = maxOf(cam.maxGapNs, eye.timestampNs - cam.lastNs)
-            cam.lastNs = maxOf(cam.lastNs, eye.timestampNs)
+            if (cam.stored == 0L) cam.firstNs = t else cam.maxGapNs = maxOf(cam.maxGapNs, t - cam.lastNs)
+            cam.lastNs = maxOf(cam.lastNs, t)
             cam.stored++
-            cam.data.line("${eye.timestampNs},${eye.timestampNs}.${format.extension}")
-            cam.frames.line("${eye.timestampNs},${eye.sequence},${eye.arrivalNs},${eye.meta.joinToString("") { "%02x".format(it) }}")
+            cam.data.line("$t,$t.${format.extension}")
+            cam.frames.line(framesRow(t, eye))
         }
     }
 
@@ -198,7 +206,6 @@ class GlassesRecording private constructor(
                 it.error?.let { e -> error = error ?: "${cam.name} encoder: $e" }
             }
         }
-        val imuSummary = imu.stop()
         cams.forEach {
             it.data.close()
             it.frames.close()
@@ -217,7 +224,7 @@ class GlassesRecording private constructor(
         metadata.put("status", if (error == null) "complete" else "stopped with error: $error")
         metadata.put("clocks_at_end", end)
         metadata.put("duration_s", (end.getLong("boottime_ns") - startBoottimeNs) / 1e9)
-        metadata.put("imu", imuSummary)
+        metadata.put("stereo_pair_timestamps", pairSpread.json())
         metadata.put("glasses_clock", JSONObject().apply {
             put("unit", "ns since the glasses booted (camera metadata row and IMU reports)")
             put("note", "boottime ≈ glasses_timestamp + offset; the estimates below are min(arrival − timestamp), " +
@@ -265,6 +272,7 @@ class GlassesRecording private constructor(
         private const val TAG = "GlassesRecording"
         private const val IMAGE_W = 480
         private const val IMAGE_H = 640
+        private const val FRAMES_HEADER = "timestamp_ns,sensor_timestamp_ns,sequence,arrival_ns,meta_hex"
 
         /** imu0/sensor.yaml; written at the start (rate 0 = not measured yet) and again at the end. */
         private fun writeImu0Yaml(dir: File, rateHz: Double) {
@@ -293,7 +301,7 @@ class GlassesRecording private constructor(
                 Cam(
                     camName, camDir,
                     LineWriter(File(camDir, "data.csv"), Euroc.CAMERA_HEADER),
-                    LineWriter(File(camDir, "frames.csv"), "timestamp_ns,sequence,arrival_ns,meta_hex"),
+                    LineWriter(File(camDir, "frames.csv"), FRAMES_HEADER),
                 ).also { cam ->
                     if (video) {
                         cam.video = VideoEncoder(
@@ -322,7 +330,6 @@ class GlassesRecording private constructor(
                 null
             }
             val sensorManager = context.getSystemService(SensorManager::class.java)
-            val imu = ImuRecorder(sensorManager, File(dir, "imu"), ImuStream.parse(s.imuStreams), s.imuRate)
 
             val metadata = JSONObject().apply {
                 put("format_version", 2)
@@ -342,9 +349,10 @@ class GlassesRecording private constructor(
                 put("timestamps", JSONObject().apply {
                     put("camera_clock", "glasses clock, ns")
                     put("glasses_imu_clock", "glasses clock, ns (same as the cameras)")
-                    put("beam_pro_imu_clock", "CLOCK_BOOTTIME (imu/<stream>.csv)")
                     put("notes", "Each camera image is timestamped by the glasses (metadata row of its USB frame). " +
-                        "Left and right images with the same sequence number form a stereo pair.")
+                        "Left and right images with the same sequence number form a stereo pair; both are stored under the " +
+                        "left image's timestamp (data.csv, file names), each image's own is frames.csv sensor_timestamp_ns " +
+                        "(see stereo_pair_timestamps).")
                 })
                 put("recording", JSONObject().apply {
                     put("view", "RAW")
@@ -369,18 +377,17 @@ class GlassesRecording private constructor(
                     put("mav0/camN/data/<timestamp_ns>.${s.glassesImageFormat.extension}", "camera images (8-bit grayscale), glasses clock")
                     put("mav0/camN/data.csv", "EuRoC: timestamp, file name")
                     put("mav0/camN/sensor.yaml", "EuRoC camera description from Monado's reference calibration (another unit; recalibrate)")
-                    put("mav0/camN/frames.csv", "timestamp_ns (glasses), sequence, arrival_ns (BOOTTIME), first 64 bytes of the frame's metadata row")
+                    put("mav0/camN/frames.csv", "timestamp_ns (the pair's, as data.csv), sensor_timestamp_ns (this image's own, glasses clock), " +
+                        "sequence, arrival_ns (BOOTTIME), first 64 bytes of the frame's metadata row")
                     put("mav0/imu0/data.csv", "EuRoC IMU: the glasses IMU (if taken over), SI units in its own axes, uncalibrated, glasses clock")
                     put("imu/glasses_imu.csv", "glasses IMU (if taken over): SI units, magnetometer, temperature and raw values")
-                    put("imu/<stream>.csv", "Beam Pro IMU streams, CLOCK_BOOTTIME")
                     put("glasses_calibration.json", "the glasses' factory calibration (if the IMU was taken over)")
                     put("settings.jsonl", "settings at start and after every change")
                 })
             }
             File(dir, "metadata.json").writeText(metadata.toString(2))
-            recording = GlassesRecording(dir, cams, glassesImu, imu0, imu, LineWriter(File(dir, "settings.jsonl")), metadata, s.glassesImageFormat, s.grayJpegQuality, 2 * backlog)
+            recording = GlassesRecording(dir, cams, glassesImu, imu0, LineWriter(File(dir, "settings.jsonl")), metadata, s.glassesImageFormat, s.grayJpegQuality, 2 * backlog)
             recording.onSettingsChanged(s)
-            imu.start()
             return recording
         }
 

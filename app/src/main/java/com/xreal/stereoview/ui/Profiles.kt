@@ -19,8 +19,8 @@ data class Profile(val name: String, val settings: StereoSettings) {
                 return@with listOf(
                     "mono ${oakMonoHeight}p ${oakImageFormat.name}",
                     "$oakFps fps",
-                    if (oakRgbHeight > 0) "color ${oakRgbHeight}p JPEG $oakJpegQuality" else "no color",
-                    if (oakImuRateHz > 0) "OAK IMU $oakImuRateHz Hz" else "no OAK IMU",
+                    if (oakRgbHeight > 0) "color ${oakRgbHeight}p JPEG $oakJpegQuality" + (if (oakRgbFps > 0 && oakRgbFps != oakFps) " $oakRgbFps fps" else "") else "no color",
+                    if (oakImuRateHz >= com.xreal.stereoview.oak.OakDevice.MAX_GYRO_HZ) "OAK IMU max" else if (oakImuRateHz > 0) "OAK IMU $oakImuRateHz Hz" else "no OAK IMU",
                     if (manualExposure) "manual exposure ${exposureTimeNs / 1000} µs ISO $iso" else "auto exposure",
                 ).joinToString(" · ")
             }
@@ -30,7 +30,6 @@ data class Profile(val name: String, val settings: StereoSettings) {
                     if (glassesManualExposure) "exposure %.1f ms".format(glassesExposure100us / 10.0) else "auto exposure",
                     if (glassesRectify) "rectified preview" else "raw preview",
                     if (glassesImu) "glasses IMU taken over" else "glasses IMU left to the system",
-                    "IMU ${imuRate.label.substringBefore(" (").replaceFirstChar { it.lowercase() }}",
                 ).joinToString(" · ")
             }
             listOf(
@@ -74,7 +73,7 @@ data class Profile(val name: String, val settings: StereoSettings) {
                             cameraSource = CameraSource.OAK,
                             convergencePx = 0f,
                             scaleMode = ScaleMode.FIT,
-                            oakMonoHeight = 720,
+                            oakMonoHeight = 400,
                             oakRgbHeight = 0,
                             oakImuRateHz = 0,
                         ),
@@ -86,14 +85,11 @@ data class Profile(val name: String, val settings: StereoSettings) {
                             convergencePx = 0f,
                             scaleMode = ScaleMode.FIT,
                             stabilization = Stabilization.OFF,
-                            oakMonoHeight = 800,
+                            oakMonoHeight = 400,
                             oakFps = 30,
                             oakRgbHeight = 800,
                             oakJpegQuality = 95,
-                            oakImuRateHz = 200,
-                            imuRate = ImuRate.DIRECT_VERY_FAST,
-                            imuStreams = listOf("ACCELEROMETER", "GYROSCOPE", "ACCELEROMETER_UNCALIBRATED", "GYROSCOPE_UNCALIBRATED")
-                                .joinToString(","),
+                            oakImuRateHz = com.xreal.stereoview.oak.OakDevice.MAX_GYRO_HZ,
                         ),
                     ),
                     Profile(
@@ -113,9 +109,6 @@ data class Profile(val name: String, val settings: StereoSettings) {
                             convergencePx = 0f,
                             scaleMode = ScaleMode.FILL,
                             stabilization = Stabilization.OFF,
-                            imuRate = ImuRate.DIRECT_VERY_FAST,
-                            imuStreams = listOf("ACCELEROMETER", "GYROSCOPE", "ACCELEROMETER_UNCALIBRATED", "GYROSCOPE_UNCALIBRATED")
-                                .joinToString(","),
                         ),
                     ),
                 )
@@ -124,13 +117,24 @@ data class Profile(val name: String, val settings: StereoSettings) {
         /**
          * Updates stored copies of built-in profiles whose defaults changed, if they still hold
          * one of their old defaults (never touched by the user): the glasses profiles now use
-         * Fill (0.13), Passthrough has no stabilization (0.14).
+         * Fill (0.13), Passthrough has no stabilization (0.14); the OAK profiles stream the mono
+         * pair at 640×400 and the dataset one the IMU at its maximum, without the phone's IMU (0.15).
          */
         fun migrate(profiles: List<Profile>): List<Profile> {
             val old: Map<String, List<(StereoSettings) -> StereoSettings>> = mapOf(
                 GLASSES_PASSTHROUGH to listOf({ s -> s.copy(scaleMode = ScaleMode.REAL) }),
-                GLASSES_EUROC to listOf({ s -> s.copy(scaleMode = ScaleMode.FIT) }),
                 PASSTHROUGH to listOf({ s -> s.copy(stabilization = Stabilization.MEDIUM) }),
+                OAK_PASSTHROUGH to listOf({ s -> s.copy(oakMonoHeight = 720, oakImuRateHz = 0, previewStyle = PreviewStyle.CAPTURE) }),
+                OAK_EUROC to listOf({ s ->
+                    s.copy(
+                        oakMonoHeight = 800, oakImuRateHz = 200, imuRate = ImuRate.DIRECT_VERY_FAST,
+                        imuStreams = PHONE_IMU_FOUR,
+                    )
+                }),
+                GLASSES_EUROC to listOf(
+                    { s -> s.copy(scaleMode = ScaleMode.FIT, imuRate = ImuRate.DIRECT_VERY_FAST, imuStreams = PHONE_IMU_FOUR) },
+                    { s -> s.copy(imuRate = ImuRate.DIRECT_VERY_FAST, imuStreams = PHONE_IMU_FOUR) },
+                ),
             )
             val base = StereoSettings()
             return profiles.map { p ->
@@ -140,6 +144,9 @@ data class Profile(val name: String, val settings: StereoSettings) {
                 if (olds.any { stored == base.withProfile(it(current.settings)) }) current else p
             }
         }
+
+        /** The phone IMU streams the dataset profiles of the other devices had before 0.15. */
+        private const val PHONE_IMU_FOUR = "ACCELEROMETER,GYROSCOPE,ACCELEROMETER_UNCALIBRATED,GYROSCOPE_UNCALIBRATED"
 
         const val PASSTHROUGH = "Passthrough"
         const val EUROC = "EuRoC dataset"
@@ -179,6 +186,8 @@ data class Profile(val name: String, val settings: StereoSettings) {
                 put("oakRgbHeight", s.oakRgbHeight)
                 put("oakJpegQuality", s.oakJpegQuality)
                 put("oakImuRateHz", s.oakImuRateHz)
+                put("oakRgbFps", s.oakRgbFps)
+                put("previewStyle", s.previewStyle.name)
                 put("oakUsb3", s.oakUsb3)
                 put("glassesImageFormat", s.glassesImageFormat.name)
                 put("oakImageFormat", s.oakImageFormat.name)
@@ -230,6 +239,8 @@ data class Profile(val name: String, val settings: StereoSettings) {
                         oakRgbHeight = j.optInt("oakRgbHeight", d.oakRgbHeight),
                         oakJpegQuality = j.optInt("oakJpegQuality", d.oakJpegQuality),
                         oakImuRateHz = j.optInt("oakImuRateHz", d.oakImuRateHz),
+                        oakRgbFps = j.optInt("oakRgbFps", d.oakRgbFps),
+                        previewStyle = enumOr(j.optString("previewStyle"), d.previewStyle),
                         oakUsb3 = j.optBoolean("oakUsb3", d.oakUsb3),
                         glassesImageFormat = enumOr(j.optString("glassesImageFormat"), d.glassesImageFormat),
                         oakImageFormat = enumOr(j.optString("oakImageFormat"), d.oakImageFormat),
@@ -280,6 +291,8 @@ fun StereoSettings.withProfile(profile: StereoSettings) = copy(
     oakRgbHeight = profile.oakRgbHeight,
     oakJpegQuality = profile.oakJpegQuality,
     oakImuRateHz = profile.oakImuRateHz,
+    oakRgbFps = profile.oakRgbFps,
+    previewStyle = profile.previewStyle,
     oakUsb3 = profile.oakUsb3,
     glassesImageFormat = profile.glassesImageFormat,
     oakImageFormat = profile.oakImageFormat,

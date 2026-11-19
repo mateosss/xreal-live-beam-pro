@@ -36,6 +36,15 @@ val PORTRAIT_SCALE_MODES = listOf(ScaleMode.RAW, ScaleMode.FIT, ScaleMode.FILL, 
 /** The mode the portrait preview uses for [m] (1:1, stored by v0.14.4 for Raw, means Raw). */
 fun portraitMode(m: ScaleMode) = if (m == ScaleMode.REAL) ScaleMode.RAW else m
 
+/**
+ * What the phone shows in portrait: every camera as streamed in tiles with the live IMU (as a
+ * recording's preview), or the stereo view the glasses get.
+ */
+enum class PreviewStyle(val label: String, val description: String) {
+    CAPTURE("Capture", "Every camera as streamed (including the OAK's color camera), with live IMU curves"),
+    PASSTHROUGH("Passthrough", "The stereo view, as in the glasses"),
+}
+
 /** How the glasses split the frame into eyes. */
 enum class SbsLayout(val label: String) {
     AUTO("Auto (from output size)"),
@@ -141,6 +150,8 @@ data class StereoSettings(
      * preference, not in profiles.
      */
     val portraitScaleMode: ScaleMode = ScaleMode.RAW,
+    /** What the phone shows in portrait (in profiles). */
+    val previewStyle: PreviewStyle = PreviewStyle.CAPTURE,
     val showHud: Boolean = false,
     /** Image rotation in degrees, or -1 to derive it from sensor and display orientation. */
     val rotationOverride: Int = 270,
@@ -206,15 +217,20 @@ data class StereoSettings(
     val glassesVideoBitrateMbps: Int = 4,
     val oakVideoBitrateMbps: Int = 12,
     /** OAK: mono camera height (400, 720 or 800 rows; 1280 wide except 400p, 640). */
-    val oakMonoHeight: Int = 800,
-    /** OAK: frame rate of every camera. */
+    val oakMonoHeight: Int = 400,
+    /** OAK: frame rate of the mono cameras (and of the color camera unless [oakRgbFps] is set). */
     val oakFps: Int = 30,
+    /** OAK: frame rate of the color camera, or 0 for [oakFps]; see [com.xreal.stereoview.oak.OakDevice.FpsPlan]. */
+    val oakRgbFps: Int = 0,
     /** OAK: color camera height (800 or 720), or 0 to leave it off. */
     val oakRgbHeight: Int = 800,
     /** OAK: JPEG quality of the color images (encoded on the camera). */
     val oakJpegQuality: Int = 95,
-    /** OAK: IMU rate in Hz, or 0 to leave it off. */
-    val oakImuRateHz: Int = 200,
+    /**
+     * OAK: gyroscope rate in Hz, or 0 to leave the IMU off; [com.xreal.stereoview.oak.OakDevice.MAX_GYRO_HZ]
+     * also runs the accelerometer at its maximum (see OakDevice.accelRateFor).
+     */
+    val oakImuRateHz: Int = com.xreal.stereoview.oak.OakDevice.MAX_GYRO_HZ,
     /** OAK: allow USB3 (off forces USB2, for flaky cables or hubs). */
     val oakUsb3: Boolean = true,
     /** Recording buffers (this phone's memory: kept across profiles). */
@@ -261,6 +277,8 @@ class SettingsRepository(private val context: Context) {
         val EXPOSURE = intPreferencesKey("exposure")
         val SCALE_MODE = stringPreferencesKey("scale_mode")
         val PORTRAIT_SCALE_MODE = stringPreferencesKey("portrait_scale_mode")
+        val PREVIEW_STYLE = stringPreferencesKey("preview_style")
+        val OAK_RGB_FPS = intPreferencesKey("oak_rgb_fps")
         val HUD = booleanPreferencesKey("show_hud")
         val ROTATION = intPreferencesKey("rotation_override")
         val SYNC_THRESHOLD = intPreferencesKey("sync_threshold_ms")
@@ -346,6 +364,8 @@ class SettingsRepository(private val context: Context) {
             exposure = p[Keys.EXPOSURE] ?: defaults.exposure,
             scaleMode = enumOrDefault(p[Keys.SCALE_MODE], defaults.scaleMode),
             portraitScaleMode = enumOrDefault(p[Keys.PORTRAIT_SCALE_MODE], defaults.portraitScaleMode),
+            previewStyle = enumOrDefault(p[Keys.PREVIEW_STYLE], defaults.previewStyle),
+            oakRgbFps = p[Keys.OAK_RGB_FPS] ?: defaults.oakRgbFps,
             showHud = p[Keys.HUD] ?: defaults.showHud,
             rotationOverride = p[Keys.ROTATION] ?: defaults.rotationOverride,
             syncThresholdMs = p[Keys.SYNC_THRESHOLD] ?: defaults.syncThresholdMs,
@@ -414,6 +434,8 @@ class SettingsRepository(private val context: Context) {
             p[Keys.EXPOSURE] = s.exposure
             p[Keys.SCALE_MODE] = s.scaleMode.name
             p[Keys.PORTRAIT_SCALE_MODE] = s.portraitScaleMode.name
+            p[Keys.PREVIEW_STYLE] = s.previewStyle.name
+            p[Keys.OAK_RGB_FPS] = s.oakRgbFps
             p[Keys.HUD] = s.showHud
             p[Keys.ROTATION] = s.rotationOverride
             p[Keys.SYNC_THRESHOLD] = s.syncThresholdMs

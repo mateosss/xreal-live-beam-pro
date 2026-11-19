@@ -167,6 +167,11 @@ class SettingsSheet(
         subsection(content, "Recording")
         recordingRows(content, s, recording)
         subsection(content, "View")
+        row(content, "Phone preview (portrait)", "${s.previewStyle.label}: ${s.previewStyle.description}") {
+            choose("Phone preview in portrait", PreviewStyle.entries.map { "${it.label}: ${it.description}" }, s.previewStyle.ordinal) { i ->
+                target.update { it.copy(previewStyle = PreviewStyle.entries[i]) }
+            }
+        }
         row(content, "Scale", s.scaleMode.label) {
             choose("Scale", ScaleMode.entries.map { it.label }, s.scaleMode.ordinal) { i ->
                 target.update { it.copy(scaleMode = ScaleMode.entries[i]) }
@@ -226,8 +231,9 @@ class SettingsSheet(
                 }
             }
         }
-        // With other devices the phone's IMU is an extra: it doesn't move with the cameras.
-        val imuPrefix = if (s.cameraSource != CameraSource.BEAM_PRO) "Phone IMU (extra)" else "IMU"
+        // Only recordings of the phone's own cameras include its IMU (it doesn't move with other devices).
+        if (s.cameraSource != CameraSource.BEAM_PRO) return
+        val imuPrefix = "IMU"
         val sensors = context.getSystemService(SensorManager::class.java)
         row(content, "$imuPrefix rate", "${s.imuRate.label}\n${imuRateNote(sensors, s.imuRate)}", locked = recording) {
             val labels = ImuRate.entries.map { "${it.label}\n${imuRateNote(sensors, it)}" }
@@ -359,12 +365,12 @@ class SettingsSheet(
     private fun oakCaptureRows(content: LinearLayout, s: StereoSettings, recording: Boolean) {
         row(content, "Mono cameras", "${if (s.oakMonoHeight == 400) "640×400" else "1280×${s.oakMonoHeight}"} grayscale, global shutter", locked = recording) {
             val values = listOf(800, 720, 400)
-            val labels = listOf("1280×800 (full sensor)", "1280×720", "640×400 (binned, least bandwidth)")
+            val labels = listOf("1280×800 (full sensor)", "1280×720", "640×400 (binned: least bandwidth, the default)")
             choose("Mono resolution", labels, values.indexOf(s.oakMonoHeight)) { i -> target.update { it.copy(oakMonoHeight = values[i]) } }
         }
-        row(content, "Frame rate", "${s.oakFps} fps (all cameras, synchronized)", locked = recording) {
-            val values = listOf(15, 20, 30, 45, 60)
-            choose("Frame rate (USB2 limits high rates at full resolution)", values.map { "$it fps" }, values.indexOf(s.oakFps)) { i ->
+        row(content, "Frame rate", "${s.oakFps} fps (mono pair, synchronized)", locked = recording) {
+            val values = listOf(10, 15, 20, 30, 45, 60)
+            choose("Mono frame rate (USB2 limits high rates at full resolution)", values.map { "$it fps" }, values.indexOf(s.oakFps)) { i ->
                 target.update { it.copy(oakFps = values[i]) }
             }
         }
@@ -375,9 +381,30 @@ class SettingsSheet(
                 target.update { it.copy(oakRgbHeight = options[i].first, oakJpegQuality = options[i].second) }
             }
         }
-        row(content, "OAK IMU", if (s.oakImuRateHz > 0) "${s.oakImuRateHz} Hz raw accelerometer + gyroscope" else "Off", locked = recording) {
-            val values = listOf(100, 200, 250, 0)
-            choose("OAK IMU rate", values.map { if (it == 0) "Off" else "$it Hz" }, values.indexOf(s.oakImuRateHz)) { i ->
+        if (s.oakRgbHeight > 0) {
+            val rgb = if (s.oakRgbFps > 0) s.oakRgbFps else s.oakFps
+            row(content, "Color frame rate", "$rgb fps · ${rgbFpsNote(s.oakFps, rgb)}", locked = recording) {
+                val values = listOf(5, 10, 15, 20, 30, 45, 60).filter { it == s.oakFps || maxOf(it, s.oakFps) <= 60 }
+                choose(
+                    "Color frame rate (mono at ${s.oakFps} fps)",
+                    values.map { "$it fps · ${rgbFpsNote(s.oakFps, it)}" }, values.indexOf(rgb),
+                ) { i -> target.update { it.copy(oakRgbFps = if (values[i] == it.oakFps) 0 else values[i]) } }
+            }
+        }
+        val maxGyro = com.xreal.stereoview.oak.OakDevice.MAX_GYRO_HZ
+        val maxAccel = com.xreal.stereoview.oak.OakDevice.MAX_ACCEL_HZ
+        val imuLabel = when {
+            s.oakImuRateHz <= 0 -> "Off"
+            s.oakImuRateHz >= maxGyro -> "Maximum: gyroscope $maxGyro Hz, accelerometer $maxAccel Hz (raw)"
+            else -> "${s.oakImuRateHz} Hz raw accelerometer + gyroscope"
+        }
+        row(content, "OAK IMU", imuLabel, locked = recording) {
+            val values = listOf(maxGyro, 200, 100, 0)
+            val labels = listOf(
+                "Maximum (default): gyroscope $maxGyro Hz, accelerometer $maxAccel Hz on the BNO086; a BMI270 runs at its fastest supported rates",
+                "200 Hz both", "100 Hz both", "Off",
+            )
+            choose("OAK IMU rate", labels, values.indexOf(s.oakImuRateHz)) { i ->
                 target.update { it.copy(oakImuRateHz = values[i]) }
             }
         }
@@ -387,6 +414,17 @@ class SettingsSheet(
             }
         }
         row(content, "Exposure", "Auto or manual (shutter and ISO) with the panel's controls") {}
+    }
+
+    /** How a color rate [rgb] combines with the mono rate [mono] (see OakDevice.FpsPlan). */
+    private fun rgbFpsNote(mono: Int, rgb: Int): String {
+        val plan = com.xreal.stereoview.oak.OakDevice.FpsPlan.of(mono, rgb)
+        return when {
+            mono == rgb -> "same as mono, synchronized"
+            !plan.synchronized -> "not a multiple of $mono: free-running, not synchronized"
+            rgb < mono -> "synchronized: 1 in ${plan.rgbEvery} frames, aligned with a mono pair"
+            else -> "synchronized: sensors run at $rgb fps, 1 in ${plan.monoEvery} mono pairs kept (max mono exposure 1/$rgb s)"
+        }
     }
 
     private fun glassesCaptureRows(content: LinearLayout, s: StereoSettings, recording: Boolean) {
@@ -616,7 +654,7 @@ class SettingsSheet(
             BufferSpec("OAK", "USB link (frames not yet picked up)", 10, { it.oakLinkS }, { b, v -> b.copy(oakLinkS = v) },
                 s.oakFps, oakMono, 2, false), // color JPEGs are small next to the mono frames
             BufferSpec("OAK", "IMU (packets not yet picked up)", 30, { it.oakImuS }, { b, v -> b.copy(oakImuS = v) },
-                s.oakImuRateHz.coerceAtLeast(1), 200, 1, false),
+                (s.oakImuRateHz + com.xreal.stereoview.oak.OakDevice.accelRateFor(s.oakImuRateHz)).coerceAtLeast(1), 200, 1, false),
             BufferSpec("Phone cameras", "JPEG/PNG writers (video needs none)", 30, { it.phoneCameraS }, { b, v -> b.copy(phoneCameraS = v) },
                 s.targetFps, phoneFrame, 2, true),
         )

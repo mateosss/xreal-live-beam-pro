@@ -316,7 +316,12 @@ class ControlsOverlay(
     private fun shutterRange(s: StereoSettings): Pair<Long, Long> {
         val range = rig?.exposureTimeRange
         val min = maxOf(range?.lower ?: 50_000L, 50_000L)
-        val fps = if (s.cameraSource == CameraSource.OAK) s.oakFps else s.targetFps
+        // OAK: the sensors' own rate (higher than the mono rate when the color camera runs faster).
+        val fps = if (s.cameraSource == CameraSource.OAK) {
+            com.xreal.stereoview.oak.OakDevice.FpsPlan.of(s.oakFps, if (s.oakRgbHeight > 0 && s.oakRgbFps > 0) s.oakRgbFps else s.oakFps).monoSensorFps
+        } else {
+            s.targetFps
+        }
         val max = minOf(range?.upper ?: 33_333_333L, 1_000_000_000L / fps)
         return min to maxOf(max, min + 1)
     }

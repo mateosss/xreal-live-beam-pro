@@ -24,8 +24,10 @@ import java.util.concurrent.atomic.AtomicInteger
  * cameras as lossless grayscale PNGs in mav0/cam0 and mav0/cam1, the color camera's JPEGs (as
  * encoded on the camera) in mav0/cam2, and the OAK's IMU as mav0/imu0, all on the camera's
  * clock (mid-exposure for images). sensor.yaml files come from the camera's factory
- * calibration. Extras: frames.csv per camera, the raw IMU streams, the phone's IMU streams and
- * metadata.json with depthai's device description and full calibration.
+ * calibration. Extras: frames.csv per camera, the raw IMU streams and metadata.json with
+ * depthai's device description and full calibration. The phone's IMU is not recorded: it does
+ * not move with the OAK. Both mono images of a pair are stored under the left one's timestamp,
+ * as EuRoC expects; each image's own is in frames.csv (sensor_timestamp_ns).
  */
 class OakRecording private constructor(
     override val dir: File,
@@ -34,7 +36,6 @@ class OakRecording private constructor(
     private val gyro: LineWriter?,
     /** mav0/imu0/data.csv, written live from the OAK IMU. */
     private val imu0: LiveImu0?,
-    private val imu: ImuRecorder,
     private val settingsLog: LineWriter,
     private val metadata: JSONObject,
     private val monoFormat: GrayImageFormat,
@@ -67,23 +68,24 @@ class OakRecording private constructor(
     /** min(arrival on BOOTTIME − device timestamp): the clock offset plus the smallest delivery delay. */
     @Volatile private var boottimeMinusDevice = Long.MAX_VALUE
     @Volatile private var monotonicMinusDevice = 0L
+    private val pairSpread = PairSpread()
 
+    /** Both images under the left one's timestamp [t] (EuRoC pairs share timestamps). */
     fun onStereoFrame(frame: OakDevice.StereoFrame) {
+        val t = frame.left.timestampNs
+        pairSpread.add(frame.right.timestampNs - frame.left.timestampNs)
         for ((cam, mono) in cams.zip(listOf(frame.left, frame.right))) {
             offset(mono.arrivalNs, mono.timestampNs, mono.hostNs)
+            val row = "$t,${mono.timestampNs},${mono.sequence},${mono.hostNs},${mono.arrivalNs},${mono.exposureUs},${mono.iso},${mono.startOfExposureNs}"
             val video = cam.video
             if (video != null) {
-                cam.pts.put(mono.timestampNs, mono.timestampNs)
-                if (video.submitGray(mono.timestampNs, mono.image)) {
-                    cam.frames.line("${mono.timestampNs},${mono.sequence},${mono.hostNs},${mono.arrivalNs},${mono.exposureUs},${mono.iso},${mono.startOfExposureNs}")
-                } else {
-                    dropped.incrementAndGet()
-                }
+                cam.pts.put(t, t)
+                if (video.submitGray(t, mono.image)) cam.frames.line(row) else dropped.incrementAndGet()
                 continue
             }
             submit {
-                GrayImages.write(File(cam.dir, "data/${mono.timestampNs}.${cam.extension}"), mono.image, mono.width, mono.height, monoFormat, jpegQuality)
-                stored(cam, mono.timestampNs, "${mono.timestampNs},${mono.sequence},${mono.hostNs},${mono.arrivalNs},${mono.exposureUs},${mono.iso},${mono.startOfExposureNs}")
+                GrayImages.write(File(cam.dir, "data/$t.${cam.extension}"), mono.image, mono.width, mono.height, monoFormat, jpegQuality)
+                stored(cam, t, row)
             }
         }
     }
@@ -92,7 +94,7 @@ class OakRecording private constructor(
         val cam = cams.getOrNull(2) ?: return
         submit {
             File(cam.dir, "data/${frame.timestampNs}.jpg").writeBytes(frame.jpeg)
-            stored(cam, frame.timestampNs, "${frame.timestampNs},${frame.sequence},${frame.hostNs},${frame.arrivalNs},${frame.exposureUs},${frame.iso},")
+            stored(cam, frame.timestampNs, "${frame.timestampNs},${frame.timestampNs},${frame.sequence},${frame.hostNs},${frame.arrivalNs},${frame.exposureUs},${frame.iso},")
         }
     }
 
@@ -184,7 +186,6 @@ class OakRecording private constructor(
                 it.error?.let { e -> error = error ?: "${cam.name} encoder: $e" }
             }
         }
-        val phoneImu = imu.stop()
         cams.forEach {
             it.data.close()
             it.frames.close()
@@ -202,7 +203,7 @@ class OakRecording private constructor(
         metadata.put("status", if (error == null) "complete" else "stopped with error: $error")
         metadata.put("clocks_at_end", end)
         metadata.put("duration_s", (end.getLong("boottime_ns") - startBoottimeNs) / 1e9)
-        metadata.put("imu", phoneImu)
+        metadata.put("stereo_pair_timestamps", pairSpread.json())
         metadata.put("imu0", imu0)
         metadata.put("oak_clock", JSONObject().apply {
             put("unit", "ns on the OAK's monotonic clock (cameras and IMU)")
@@ -251,7 +252,7 @@ class OakRecording private constructor(
 
     companion object {
         private const val TAG = "OakRecording"
-        private const val FRAMES_HEADER = "timestamp_ns,sequence,host_monotonic_ns,arrival_ns,exposure_us,iso,start_of_exposure_ns"
+        private const val FRAMES_HEADER = "timestamp_ns,sensor_timestamp_ns,sequence,host_monotonic_ns,arrival_ns,exposure_us,iso,start_of_exposure_ns"
         private const val IMU_HEADER = "timestamp_ns,arrival_ns,x,y,z,host_monotonic_ns"
 
         /** imu0/sensor.yaml; written at the start (rate 0 = not measured yet) and again at the end. */
@@ -270,6 +271,8 @@ class OakRecording private constructor(
             check(dir.mkdirs()) { "Cannot create $dir" }
             val mav = Euroc.mav(dir)
             val calibration = info.optJSONObject("calibration")
+            val rgbFps = if (s.oakRgbFps > 0) s.oakRgbFps else s.oakFps
+            val plan = OakDevice.FpsPlan.of(s.oakFps, rgbFps)
             val specs = listOfNotNull(
                 Triple("cam0", "left", s.oakImageFormat.extension),
                 Triple("cam1", "right", s.oakImageFormat.extension),
@@ -283,7 +286,7 @@ class OakRecording private constructor(
                 val video = ext == GrayImageFormat.H264.extension
                 val camDir = File(mav, camName).apply { mkdirs() }
                 if (!video) File(camDir, "data").mkdirs()
-                calibration?.optJSONObject(key)?.let { c -> runCatching { File(camDir, "sensor.yaml").writeText(cameraYaml(camName, key, c, s.oakFps)) } }
+                calibration?.optJSONObject(key)?.let { c -> runCatching { File(camDir, "sensor.yaml").writeText(cameraYaml(camName, key, c, if (key == "rgb") rgbFps else s.oakFps)) } }
                 Cam(camName, camDir, ext, LineWriter(File(camDir, "data.csv"), Euroc.CAMERA_HEADER), LineWriter(File(camDir, "frames.csv"), FRAMES_HEADER)).also { cam ->
                     if (video) {
                         cam.video = VideoEncoder(
@@ -307,7 +310,6 @@ class OakRecording private constructor(
             calibration?.optJSONObject("eeprom")?.let { File(dir, "oak_calibration.json").writeText(it.toString(2)) }
 
             val sensorManager = context.getSystemService(SensorManager::class.java)
-            val imu = ImuRecorder(sensorManager, File(dir, "imu"), ImuStream.parse(s.imuStreams), s.imuRate)
             val metadata = JSONObject().apply {
                 put("format_version", 2)
                 put("layout", "EuRoC MAV (mav0/) plus extras")
@@ -323,8 +325,9 @@ class OakRecording private constructor(
                 put("timestamps", JSONObject().apply {
                     put("camera_clock", "OAK device clock, ns, middle of exposure")
                     put("oak_imu_clock", "OAK device clock, ns (same as the cameras)")
-                    put("phone_imu_clock", "CLOCK_BOOTTIME (imu/<stream>.csv)")
-                    put("notes", "Left and right images with the same sequence number are a synchronized pair (same timestamp).")
+                    put("notes", "Left and right images with the same sequence number are a hardware-synchronized pair. Both are " +
+                        "stored under the left image's timestamp (data.csv, file names); each image's own timestamp is frames.csv " +
+                        "sensor_timestamp_ns (see stereo_pair_timestamps).")
                 })
                 put("recording", JSONObject().apply {
                     put("mono", when (s.oakImageFormat) {
@@ -334,7 +337,20 @@ class OakRecording private constructor(
                     } + ", ${if (s.oakMonoHeight == 400) "640×400" else "1280×${s.oakMonoHeight}"}")
                     put("color", if (s.oakRgbHeight > 0) "JPEG 1280×${s.oakRgbHeight}, quality ${s.oakJpegQuality}, encoded on the camera" else "off")
                     put("fps", s.oakFps)
-                    put("oak_imu_rate_hz", s.oakImuRateHz)
+                    if (s.oakRgbHeight > 0) {
+                        put("color_fps", rgbFps)
+                        put("color_synchronized", plan.synchronized)
+                        put("frame_rates", when {
+                            !plan.synchronized -> "color at its own rate (not a multiple of the mono rate): not synchronized with the mono pair"
+                            plan.monoEvery == 1 && plan.rgbEvery == 1 -> "all cameras at the same rate, synchronized"
+                            else -> "all sensors at ${plan.monoSensorFps} fps, synchronized; the camera keeps 1 in ${plan.monoEvery} mono frames " +
+                                "and 1 in ${plan.rgbEvery} color frames (by sequence number), so the kept frames stay synchronized"
+                        })
+                    }
+                    put("oak_imu_gyroscope_hz_requested", s.oakImuRateHz)
+                    put("oak_imu_accelerometer_hz_requested", OakDevice.accelRateFor(s.oakImuRateHz))
+                    put("oak_imu_note", "Accelerometer and gyroscope have their own rates and timestamps: imu/oak_*.csv hold each sensor's " +
+                        "own samples; imu0 uses the gyroscope's timestamps with the accelerometer linearly interpolated to them.")
                     put("settings", Metadata.settings(s))
                 })
                 put("cameras", JSONArray(cams.map { JSONObject().put("name", it.name).put("format", it.extension) }))
@@ -346,15 +362,13 @@ class OakRecording private constructor(
                     put("mav0/camN/frames.csv", FRAMES_HEADER)
                     put("mav0/imu0", "EuRoC IMU from the OAK IMU: gyroscope timestamps, accelerometer interpolated (built at the end)")
                     put("imu/oak_accelerometer.csv, oak_gyroscope.csv", IMU_HEADER + " (raw sensor values, m/s² and rad/s)")
-                    put("imu/<stream>.csv", "phone IMU streams, CLOCK_BOOTTIME")
                     put("oak_calibration.json", "the camera's full factory calibration (depthai EEPROM data)")
                     put("settings.jsonl", "settings at start and after every change")
                 })
             }
             File(dir, "metadata.json").writeText(metadata.toString(2))
-            recording = OakRecording(dir, cams, accel, gyro, imu0, imu, LineWriter(File(dir, "settings.jsonl")), metadata, s.oakImageFormat, s.grayJpegQuality, specs.size * backlog)
+            recording = OakRecording(dir, cams, accel, gyro, imu0, LineWriter(File(dir, "settings.jsonl")), metadata, s.oakImageFormat, s.grayJpegQuality, specs.size * backlog)
             recording.onSettingsChanged(s)
-            imu.start()
             return recording
         }
 

@@ -34,11 +34,12 @@ class OakDevice(private val context: Context, private val listener: Listener) {
 
     data class Config(
         val monoHeight: Int,
+        /** Mono frame rate. */
         val fps: Int,
         /** Color camera height (800 or 720), or 0 for none. */
         val rgbHeight: Int,
         val jpegQuality: Int,
-        /** IMU rate in Hz, or 0 for none. */
+        /** Gyroscope rate in Hz, or 0 for no IMU; the accelerometer runs at [accelRateFor] it. */
         val imuRateHz: Int,
         val usb3: Boolean,
         val exposure: Exposure,
@@ -46,7 +47,36 @@ class OakDevice(private val context: Context, private val listener: Listener) {
         val linkFrames: Int = MIN_LINK_FRAMES,
         /** IMU packets (one sample or more each) that may wait there. */
         val imuPackets: Int = MIN_IMU_PACKETS,
-    )
+        /** Color frame rate, or 0 for [fps]. */
+        val rgbFps: Int = 0,
+    ) {
+        val fpsPlan: FpsPlan get() = FpsPlan.of(fps, if (rgbHeight > 0 && rgbFps > 0) rgbFps else fps)
+    }
+
+    /**
+     * How the mono and color frame rates are produced. The cameras' capture times are kept
+     * aligned by the OAK's firmware only while all sensors run at the same rate, so when one
+     * rate is a multiple of the other, every sensor runs at the faster rate ([sensorFps]) and
+     * the slower stream keeps every [monoEvery]th / [rgbEvery]th frame, on the camera (by
+     * sequence number, so left and right stay paired): the kept frames remain synchronized.
+     * Otherwise ([synchronized] false) the color sensor runs freely at its own rate.
+     */
+    data class FpsPlan(
+        val monoFps: Int, val rgbFps: Int, val monoSensorFps: Int, val rgbSensorFps: Int,
+        val monoEvery: Int, val rgbEvery: Int, val synchronized: Boolean,
+    ) {
+        companion object {
+            fun of(mono: Int, rgb: Int): FpsPlan {
+                val hi = maxOf(mono, rgb)
+                val lo = minOf(mono, rgb).coerceAtLeast(1)
+                return if (hi % lo == 0) {
+                    FpsPlan(mono, rgb, hi, hi, hi / mono.coerceAtLeast(1), hi / rgb.coerceAtLeast(1), true)
+                } else {
+                    FpsPlan(mono, rgb, mono, rgb, 1, 1, false)
+                }
+            }
+        }
+    }
 
     data class Exposure(val auto: Boolean, val exposureUs: Int, val iso: Int, val compensation: Int)
 
@@ -132,10 +162,12 @@ class OakDevice(private val context: Context, private val listener: Listener) {
             listener.onStatus("Booting the OAK camera (uploading its firmware)…")
             try {
                 val e = config.exposure
+                val plan = config.fpsPlan
                 val h = OakNative.start(intArrayOf(
-                    config.monoHeight, config.fps, if (config.rgbHeight > 0) 1 else 0, config.rgbHeight,
+                    config.monoHeight, plan.monoSensorFps, if (config.rgbHeight > 0) 1 else 0, config.rgbHeight,
                     config.jpegQuality, config.imuRateHz, if (e.auto) 1 else 0, e.exposureUs, e.iso, e.compensation,
                     if (config.usb3) 1 else 0, config.linkFrames, config.imuPackets,
+                    plan.rgbSensorFps, plan.monoEvery, plan.rgbEvery, accelRateFor(config.imuRateHz),
                 ))
                 if (!wanted) {
                     OakNative.stop(h)
@@ -143,6 +175,7 @@ class OakDevice(private val context: Context, private val listener: Listener) {
                 }
                 val json = runCatching { JSONObject(OakNative.info(h)) }.getOrElse { JSONObject() }
                 info = json
+                monoStep = plan.monoEvery.toLong()
                 handle = h
                 running = true
                 threads = listOfNotNull(
@@ -191,6 +224,8 @@ class OakDevice(private val context: Context, private val listener: Listener) {
 
     // region Polling
 
+    /** Sequence numbers between consecutive kept mono frames (see [FpsPlan.monoEvery]). */
+    @Volatile private var monoStep = 1L
     @Volatile private var pendingLeft: Mono? = null
     @Volatile private var pendingRight: Mono? = null
     private val pairLock = Any()
@@ -211,7 +246,8 @@ class OakDevice(private val context: Context, private val listener: Listener) {
                 image, meta[3].toInt(), meta[4].toInt(), meta[0], meta[1], meta[2], meta[5], meta[6].toInt(), meta[7],
                 SystemClock.elapsedRealtimeNanos(),
             )
-            if (lastSequence >= 0 && mono.sequence > lastSequence + 1) sequenceGaps.addAndGet(mono.sequence - lastSequence - 1)
+            val step = monoStep
+            if (lastSequence >= 0 && mono.sequence > lastSequence + step) sequenceGaps.addAndGet((mono.sequence - lastSequence) / step - 1)
             lastSequence = mono.sequence
             monoFrames.incrementAndGet()
             pair(which, mono)
@@ -317,6 +353,21 @@ class OakDevice(private val context: Context, private val listener: Listener) {
         /** Least [Config.linkFrames] and [Config.imuPackets] (what depthai queues held before). */
         const val MIN_LINK_FRAMES = 8
         const val MIN_IMU_PACKETS = 50
+
+        /**
+         * The fastest gyroscope rate that stays regular: the BNO086 (most OAK-D Pro models)
+         * offers 400 Hz (higher jitters); the BMI270 rounds requests down to what it supports.
+         */
+        const val MAX_GYRO_HZ = 400
+        /** The BNO086's fastest raw accelerometer rate (it rounds 500 to its 500 Hz step). */
+        const val MAX_ACCEL_HZ = 500
+
+        /** Accelerometer rate for a gyroscope rate: its maximum when the gyroscope's is, else the same. */
+        fun accelRateFor(gyroHz: Int): Int = when {
+            gyroHz <= 0 -> 0
+            gyroHz >= MAX_GYRO_HZ -> MAX_ACCEL_HZ
+            else -> gyroHz
+        }
         private const val ACTION_PERMISSION = "com.xreal.stereoview.OAK_USB_PERMISSION"
     }
 }

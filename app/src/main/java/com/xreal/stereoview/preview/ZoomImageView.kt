@@ -53,7 +53,8 @@ class ZoomImageView(context: Context, private val zoom: ZoomState) : View(contex
             invalidate()
         }
 
-    private val paint = Paint().apply { isFilterBitmap = false; isAntiAlias = false; isDither = false }
+    // White: ALPHA_8 bitmaps (grayscale camera frames, drawn over black) take their color from the paint.
+    private val paint = Paint().apply { color = Color.WHITE; isFilterBitmap = false; isAntiAlias = false; isDither = false }
     private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         textSize = 11f * resources.displayMetrics.density

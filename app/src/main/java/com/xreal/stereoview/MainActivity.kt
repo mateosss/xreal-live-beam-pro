@@ -40,6 +40,7 @@ import com.xreal.stereoview.record.ActiveRecording
 import com.xreal.stereoview.record.GlassesRecording
 import com.xreal.stereoview.record.OakRecording
 import com.xreal.stereoview.oak.OakDevice
+import com.xreal.stereoview.preview.CapturePreview
 import com.xreal.stereoview.record.Recording
 import com.xreal.stereoview.record.RecordingService
 import com.xreal.stereoview.render.RenderThread
@@ -50,6 +51,7 @@ import com.xreal.stereoview.ui.CameraSource
 import com.xreal.stereoview.ui.ControlsOverlay
 import com.xreal.stereoview.ui.FocusMode
 import com.xreal.stereoview.ui.OutputMode
+import com.xreal.stereoview.ui.PreviewStyle
 import com.xreal.stereoview.ui.SettingsViewModel
 import com.xreal.stereoview.ui.StereoSettings
 import com.xreal.stereoview.util.CrashReporter
@@ -83,6 +85,10 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     private var renderThread: RenderThread? = null
     private var renderer: StereoRenderer? = null
     private var presentation: StereoPresentation? = null
+    /** Portrait capture view (Settings → Phone preview), while shown; camera threads feed it. */
+    @Volatile private var capture: CapturePreview? = null
+    /** Phone IMU feeding [capture] with the phone's own cameras. */
+    private var captureSensors: android.hardware.SensorEventListener? = null
     private var outputDisplay: Display? = null
     private var surfaces: Pair<SurfaceTexture, SurfaceTexture>? = null
 
@@ -175,6 +181,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
         controls.setPortrait(isPortrait())
+        updateCapture()
         hideSystemBars()
         // The Beam Pro's stereo pair and rectification depend on how the screen is turned:
         // reopen the cameras for the new orientation, or after the recording if one runs.
@@ -269,6 +276,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         glView = view
         outputDisplay = display
         stabilizer.start()
+        updateCapture()
         updateStatus()
     }
 
@@ -280,6 +288,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         stopOak()
         camera.stopBlocking()
         stabilizer.stop()
+        removeCapture()
         presentation?.dismiss()
         binding.glContainer.removeAllViews()
         renderThread?.quit()
@@ -456,6 +465,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         renderer?.settings = s
         controls.render(s)
         binding.hudText.visibility = if (s.showHud) View.VISIBLE else View.GONE
+        if (previous == null || captureKey(s) != captureKey(previous)) updateCapture()
         if (cameraStartPending && viewModel.loaded) {
             cameraStartPending = false
             startCamera()
@@ -868,10 +878,18 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         override fun onStereoFrame(frame: GlassesDevice.StereoFrame) {
             renderer?.glassesFrame = frame
             (recording as? GlassesRecording)?.onStereoFrame(frame)
+            capture?.let {
+                it.gray(0, frame.left.image, 480, 640)
+                it.gray(1, frame.right.image, 480, 640)
+            }
         }
 
         override fun onImu(sample: GlassesProtocol.ImuSample, arrivalNs: Long) {
             (recording as? GlassesRecording)?.onImu(sample, arrivalNs)
+            capture?.let {
+                it.gyro.add(sample.timestampNs, sample.gyroRadPerSec(0).toFloat(), sample.gyroRadPerSec(1).toFloat(), sample.gyroRadPerSec(2).toFloat())
+                it.accel.add(sample.timestampNs, sample.accelMps2(0).toFloat(), sample.accelMps2(1).toFloat(), sample.accelMps2(2).toFloat())
+            }
         }
 
         override fun onCalibration(json: String) {
@@ -948,8 +966,9 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
 
     private fun oakConfigOf(s: StereoSettings) = OakDevice.Config(
         s.oakMonoHeight, s.oakFps, s.oakRgbHeight, s.oakJpegQuality, s.oakImuRateHz, s.oakUsb3, oakExposureOf(s),
-        linkFrames = (s.buffers.oakLinkS * s.oakFps).coerceAtLeast(OakDevice.MIN_LINK_FRAMES),
-        imuPackets = (s.buffers.oakImuS * s.oakImuRateHz).coerceAtLeast(OakDevice.MIN_IMU_PACKETS),
+        linkFrames = (s.buffers.oakLinkS * maxOf(s.oakFps, s.oakRgbFps)).coerceAtLeast(OakDevice.MIN_LINK_FRAMES),
+        imuPackets = (s.buffers.oakImuS * (s.oakImuRateHz + OakDevice.accelRateFor(s.oakImuRateHz))).coerceAtLeast(OakDevice.MIN_IMU_PACKETS),
+        rgbFps = s.oakRgbFps,
     )
 
     private fun startOak() {
@@ -989,14 +1008,26 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         override fun onStereoFrame(frame: OakDevice.StereoFrame) {
             renderer?.oakFrame = frame
             (recording as? OakRecording)?.onStereoFrame(frame)
+            capture?.let {
+                it.gray(0, frame.left.image, frame.left.width, frame.left.height)
+                it.gray(1, frame.right.image, frame.right.width, frame.right.height)
+            }
         }
 
         override fun onRgb(frame: OakDevice.Rgb) {
             (recording as? OakRecording)?.onRgb(frame)
+            capture?.jpeg(2, frame.jpeg)
         }
 
         override fun onImu(samples: List<OakDevice.ImuSample>) {
             (recording as? OakRecording)?.onImu(samples)
+            capture?.let { c ->
+                // Each sensor at its own rate: packets repeat the slower one's last sample (skipped by timestamp).
+                for (x in samples) {
+                    c.gyro.add(x.gyroNs, x.gx.toFloat(), x.gy.toFloat(), x.gz.toFloat())
+                    c.accel.add(x.accelNs, x.ax.toFloat(), x.ay.toFloat(), x.az.toFloat())
+                }
+            }
         }
     }
 
@@ -1048,6 +1079,143 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
 
     // endregion
 
+    // region Capture view (portrait)
+
+    /** What the capture view's layout depends on. */
+    private fun captureKey(s: StereoSettings) = listOf(s.previewStyle, s.cameraSource, s.oakRgbHeight, s.oakImuRateHz, s.glassesImu)
+
+    /**
+     * Shows the capture view in portrait when the profile asks for it (Settings → Phone
+     * preview): the OAK's and the glasses' frames go to its tiles; the phone's own cameras only
+     * reach the renderer, so its view is laid over the camera area instead.
+     */
+    private fun updateCapture() {
+        if (!outputActive) return
+        val s = viewModel.settings.value
+        if (!isPortrait() || s.previewStyle != PreviewStyle.CAPTURE) {
+            removeCapture()
+            return
+        }
+        val view = capture ?: CapturePreview(this).also { c ->
+            binding.root.addView(c, 1, android.widget.FrameLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            ))
+            c.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> placeRendererOverCapture() }
+            binding.controls.root.addOnLayoutChangeListener(controlsLayoutListener)
+            capture = c
+        }
+        view.clear()
+        stopCaptureSensors()
+        when (s.cameraSource) {
+            CameraSource.OAK -> {
+                view.setTiles(listOfNotNull(
+                    CapturePreview.Tile("cam0 left"), CapturePreview.Tile("cam1 right"),
+                    if (s.oakRgbHeight > 0) CapturePreview.Tile("cam2 color") else null,
+                ))
+                view.setImuTitle(if (s.oakImuRateHz > 0) "OAK IMU (imu0), raw" else "OAK IMU off (Settings → OAK IMU)")
+            }
+            CameraSource.GLASSES -> {
+                view.setTiles(listOf(CapturePreview.Tile("cam0 left"), CapturePreview.Tile("cam1 right")))
+                view.setImuTitle(if (s.glassesImu) "Glasses IMU (imu0)" else "Glasses IMU left to the system (Settings → Glasses IMU)")
+            }
+            CameraSource.BEAM_PRO -> {
+                view.setTiles(listOf(CapturePreview.Tile("phone cameras: left / right", external = true)))
+                view.setImuTitle("Phone IMU")
+                startCaptureSensors(view)
+            }
+        }
+        val imuOn = when (s.cameraSource) {
+            CameraSource.OAK -> s.oakImuRateHz > 0
+            CameraSource.GLASSES -> s.glassesImu
+            CameraSource.BEAM_PRO -> true
+        }
+        for (plot in listOf(view.gyro, view.accel)) plot.emptyText = if (imuOn) "waiting for samples…" else "IMU off"
+        if (s.cameraSource == CameraSource.BEAM_PRO && presentation != null) view.setCameraMessage("The stereo view is on the glasses")
+        if (presentation == null) binding.messageText.visibility = View.GONE
+        updateCaptureMargin()
+        placeRendererOverCapture()
+    }
+
+    private fun removeCapture() {
+        val c = capture ?: return
+        capture = null
+        stopCaptureSensors()
+        binding.controls.root.removeOnLayoutChangeListener(controlsLayoutListener)
+        binding.root.removeView(c)
+        c.release()
+        binding.glContainer.layoutParams = (binding.glContainer.layoutParams as android.widget.FrameLayout.LayoutParams).apply {
+            width = android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            height = android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            topMargin = 0
+            leftMargin = 0
+        }
+        if (presentation != null) binding.messageText.visibility = View.VISIBLE
+    }
+
+    private val controlsLayoutListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateCaptureMargin() }
+
+    /** The capture view ends where the controls panel begins. */
+    private fun updateCaptureMargin() {
+        val c = capture ?: return
+        val panel = binding.controls.root
+        val bottom = if (panel.visibility == View.VISIBLE) panel.height else 0
+        val lp = c.layoutParams as android.widget.FrameLayout.LayoutParams
+        if (lp.bottomMargin != bottom) {
+            lp.bottomMargin = bottom
+            c.layoutParams = lp
+        }
+    }
+
+    /** Phone cameras: the renderer covers the capture view's camera area; otherwise the whole screen, under it. */
+    private fun placeRendererOverCapture() {
+        val c = capture ?: return
+        val lp = binding.glContainer.layoutParams as android.widget.FrameLayout.LayoutParams
+        val overArea = viewModel.settings.value.cameraSource == CameraSource.BEAM_PRO
+        val area = c.cameraArea
+        val (w, h, top, left) = if (overArea && area.height > 0) {
+            listOf(area.width, area.height, c.top + area.top, c.left + area.left)
+        } else {
+            listOf(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT, 0, 0)
+        }
+        if (lp.width != w || lp.height != h || lp.topMargin != top || lp.leftMargin != left) {
+            lp.width = w
+            lp.height = h
+            lp.topMargin = top
+            lp.leftMargin = left
+            binding.glContainer.layoutParams = lp
+        }
+        // Over the camera area the renderer must be on top of the capture view's background.
+        if (overArea) binding.glContainer.bringToFront() else if (binding.root.indexOfChild(binding.glContainer) != 0) {
+            binding.root.removeView(binding.glContainer)
+            binding.root.addView(binding.glContainer, 0)
+        }
+        // Keep the overlays (messages, HUD, controls) above the renderer.
+        for (v in listOf(binding.messageText, binding.grantButton, binding.hudText, binding.controls.root)) v.bringToFront()
+    }
+
+    private fun startCaptureSensors(view: CapturePreview) {
+        val sm = getSystemService(android.hardware.SensorManager::class.java)
+        val listener = object : android.hardware.SensorEventListener {
+            override fun onSensorChanged(e: android.hardware.SensorEvent) {
+                val plot = if (e.sensor.type == android.hardware.Sensor.TYPE_GYROSCOPE) view.gyro else view.accel
+                plot.add(e.timestamp, e.values[0], e.values[1], e.values[2])
+            }
+
+            override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) = Unit
+        }
+        for (type in listOf(android.hardware.Sensor.TYPE_GYROSCOPE, android.hardware.Sensor.TYPE_ACCELEROMETER)) {
+            sm.getDefaultSensor(type)?.let { sm.registerListener(listener, it, android.hardware.SensorManager.SENSOR_DELAY_GAME) }
+        }
+        captureSensors = listener
+    }
+
+    private fun stopCaptureSensors() {
+        captureSensors?.let { getSystemService(android.hardware.SensorManager::class.java).unregisterListener(it) }
+        captureSensors = null
+    }
+
+    // endregion
+
     // region Touch: pinch adjusts depth, tap toggles the panel when it covers the stereo view
     // (lazy: the detectors read resources, which aren't available before onCreate)
 
@@ -1073,6 +1241,8 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     }) }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        // The capture view's tiles take pinches and taps themselves (zoom).
+        if (capture != null) return super.dispatchTouchEvent(ev)
         scaleDetector.onTouchEvent(ev)
         tapDetector.onTouchEvent(ev)
         return super.dispatchTouchEvent(ev)

@@ -47,9 +47,30 @@ class ProfileMigrationTest {
     @Test
     fun untouchedGlassesProfilesMoveToFillButEditedOnesStay() {
         val euroc = Profile.defaults.first { it.name == Profile.GLASSES_EUROC }
-        val untouched = euroc.copy(settings = euroc.settings.copy(scaleMode = ScaleMode.FIT))
-        val edited = euroc.copy(settings = euroc.settings.copy(scaleMode = ScaleMode.FIT, convergencePx = 10f))
+        // As stored by 0.12: Fit, and the phone IMU streams it recorded then.
+        val old = euroc.settings.copy(scaleMode = ScaleMode.FIT, imuRate = ImuRate.DIRECT_VERY_FAST, imuStreams = FOUR)
+        val untouched = euroc.copy(settings = old)
+        val edited = euroc.copy(settings = old.copy(convergencePx = 10f))
         assertEquals(ScaleMode.FILL, Profile.migrate(listOf(untouched))[0].settings.scaleMode)
         assertEquals(ScaleMode.FIT, Profile.migrate(listOf(edited))[0].settings.scaleMode)
+    }
+
+    @Test
+    fun untouchedOakProfilesMoveTo400pAndMaximumImu() {
+        val euroc = Profile.defaults.first { it.name == Profile.OAK_EUROC }
+        val old = euroc.settings.copy(oakMonoHeight = 800, oakImuRateHz = 200, imuRate = ImuRate.DIRECT_VERY_FAST, imuStreams = FOUR)
+        val migrated = Profile.migrate(listOf(euroc.copy(settings = old)))[0].settings
+        assertEquals(400, migrated.oakMonoHeight)
+        assertEquals(com.xreal.stereoview.oak.OakDevice.MAX_GYRO_HZ, migrated.oakImuRateHz)
+        val edited = Profile.migrate(listOf(euroc.copy(settings = old.copy(oakFps = 15))))[0].settings
+        assertEquals(800, edited.oakMonoHeight)
+
+        val pass = Profile.defaults.first { it.name == Profile.OAK_PASSTHROUGH }
+        val oldPass = pass.copy(settings = pass.settings.copy(oakMonoHeight = 720))
+        assertEquals(400, Profile.migrate(listOf(oldPass))[0].settings.oakMonoHeight)
+    }
+
+    private companion object {
+        const val FOUR = "ACCELEROMETER,GYROSCOPE,ACCELEROMETER_UNCALIBRATED,GYROSCOPE_UNCALIBRATED"
     }
 }

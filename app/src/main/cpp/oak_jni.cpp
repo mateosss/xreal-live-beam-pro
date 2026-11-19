@@ -117,20 +117,42 @@ JNIEXPORT jboolean JNICALL Java_com_xreal_stereoview_oak_OakNative_initialize(JN
  * Builds the pipeline and boots the first OAK found. Blocking (seconds: firmware upload,
  * re-enumeration). config: mono height, fps, rgb (0/1), rgb height, jpeg quality, imu rate
  * (0 = off), auto exposure (0/1), exposure µs, iso, exposure compensation, usb3 (0/1),
- * host queue frames per camera, host queue IMU packets.
+ * host queue frames per camera, host queue IMU packets, rgb sensor fps (0 = mono fps), keep every
+ * nth mono frame, keep every nth rgb frame, accelerometer rate (0 = the imu rate, which is then
+ * the gyroscope's).
  * Returns a handle; throws IllegalStateException on failure.
  */
 JNIEXPORT jlong JNICALL Java_com_xreal_stereoview_oak_OakNative_start(JNIEnv* env, jclass, jintArray configArray) {
-    jint c[13] = {};
-    env->GetIntArrayRegion(configArray, 0, std::min<jsize>(13, env->GetArrayLength(configArray)), c);
+    jint c[17] = {};
+    env->GetIntArrayRegion(configArray, 0, std::min<jsize>(17, env->GetArrayLength(configArray)), c);
     const int monoHeight = c[0], fps = c[1], withRgb = c[2], rgbHeight = c[3], quality = c[4], imuRate = c[5];
     const bool autoExposure = c[6] != 0;
     const int exposureUs = c[7], iso = c[8], compensation = c[9], usb3 = c[10];
     // Host-side queue sizes (Settings → Recording buffers): frames per camera, IMU packets.
     const unsigned linkFrames = static_cast<unsigned>(std::max(8, c[11])), imuPackets = static_cast<unsigned>(std::max(50, c[12]));
+    const int rgbFps = c[13] > 0 ? c[13] : fps, monoEvery = std::max(1, c[14]), rgbEvery = std::max(1, c[15]);
+    const int accelRate = c[16] > 0 ? c[16] : imuRate;
     try {
         auto s = std::make_unique<Session>();
         dai::Pipeline p;
+
+        // Keeps every nth frame of a stream, by sequence number (left and right share them, so
+        // pairs stay whole), on the camera: the sensors keep one rate and stay synchronized.
+        auto decimated = [&p](dai::Node::Output& out, int every) -> dai::Node::Output& {
+            if(every <= 1) return out;
+            auto script = p.create<dai::node::Script>();
+            script->setProcessor(dai::ProcessorType::LEON_CSS);
+            script->setScript(
+                "every = " + std::to_string(every) + "\n"
+                "while True:\n"
+                "    f = node.io['in'].get()\n"
+                "    if f.getSequenceNum() % every == 0:\n"
+                "        node.io['out'].send(f)\n");
+            script->inputs["in"].setBlocking(false);
+            script->inputs["in"].setQueueSize(4);
+            out.link(script->inputs["in"]);
+            return script->outputs["out"];
+        };
 
         auto monoControl = p.create<dai::node::XLinkIn>();
         monoControl->setStreamName("monoControl");
@@ -144,7 +166,7 @@ JNIEXPORT jlong JNICALL Java_com_xreal_stereoview_oak_OakNative_start(JNIEnv* en
             monoControl->out.link(mono->inputControl);
             auto out = p.create<dai::node::XLinkOut>();
             out->setStreamName(name);
-            mono->out.link(out->input);
+            decimated(mono->out, monoEvery).link(out->input);
             auto [w, h] = mono->getResolutionSize();
             s->monoWidth = w;
             s->monoHeight = h;
@@ -154,7 +176,7 @@ JNIEXPORT jlong JNICALL Java_com_xreal_stereoview_oak_OakNative_start(JNIEnv* en
             cam->setBoardSocket(dai::CameraBoardSocket::CAM_A);
             cam->setResolution(rgbHeight == 720 ? dai::ColorCameraProperties::SensorResolution::THE_720_P
                                                 : dai::ColorCameraProperties::SensorResolution::THE_800_P);
-            cam->setFps(static_cast<float>(fps));
+            cam->setFps(static_cast<float>(rgbFps));
             s->rgbWidth = 1280;
             s->rgbHeight = rgbHeight == 720 ? 720 : 800;
             cam->setVideoSize(s->rgbWidth, s->rgbHeight);
@@ -164,16 +186,19 @@ JNIEXPORT jlong JNICALL Java_com_xreal_stereoview_oak_OakNative_start(JNIEnv* en
             control->setStreamName("rgbControl");
             control->out.link(cam->inputControl);
             auto encoder = p.create<dai::node::VideoEncoder>();
-            encoder->setDefaultProfilePreset(static_cast<float>(fps), dai::VideoEncoderProperties::Profile::MJPEG);
+            encoder->setDefaultProfilePreset(static_cast<float>(rgbFps) / rgbEvery, dai::VideoEncoderProperties::Profile::MJPEG);
             encoder->setQuality(quality);
-            cam->video.link(encoder->input);
+            decimated(cam->video, rgbEvery).link(encoder->input);
             auto out = p.create<dai::node::XLinkOut>();
             out->setStreamName("rgb");
             encoder->bitstream.link(out->input);
         }
         if(imuRate > 0) {
             auto imu = p.create<dai::node::IMU>();
-            imu->enableIMUSensor({dai::IMUSensor::ACCELEROMETER_RAW, dai::IMUSensor::GYROSCOPE_RAW}, imuRate);
+            // Each sensor at its own rate; every packet carries the latest sample of both (the
+            // app writes each sample once, by timestamp).
+            imu->enableIMUSensor(dai::IMUSensor::ACCELEROMETER_RAW, accelRate);
+            imu->enableIMUSensor(dai::IMUSensor::GYROSCOPE_RAW, imuRate);
             imu->setBatchReportThreshold(1);
             imu->setMaxBatchReports(20);
             auto out = p.create<dai::node::XLinkOut>();
@@ -181,7 +206,8 @@ JNIEXPORT jlong JNICALL Java_com_xreal_stereoview_oak_OakNative_start(JNIEnv* en
             imu->out.link(out->input);
         }
 
-        LOGI("Booting OAK: mono %dp, %d fps, rgb %d, imu %d Hz", monoHeight, fps, withRgb, imuRate);
+        LOGI("Booting OAK: mono %dp, %d fps (every %d), rgb %d at %d fps (every %d), gyro %d Hz, accel %d Hz",
+             monoHeight, fps, monoEvery, withRgb, rgbFps, rgbEvery, imuRate, accelRate);
         s->device = std::make_unique<dai::Device>(p, usb3 ? dai::UsbSpeed::SUPER : dai::UsbSpeed::HIGH);
         auto& d = *s->device;
         // Non-blocking queues: if the app falls behind, the oldest frames are dropped on the
@@ -204,6 +230,16 @@ JNIEXPORT jlong JNICALL Java_com_xreal_stereoview_oak_OakNative_start(JNIEnv* en
         for(auto socket : d.getConnectedCameras()) cams.push_back(socketName(socket));
         info["connected_cameras"] = cams;
         info["mono_size"] = {s->monoWidth, s->monoHeight};
+        info["mono_sensor_fps"] = fps;
+        info["mono_keep_every"] = monoEvery;
+        if(withRgb) {
+            info["rgb_sensor_fps"] = rgbFps;
+            info["rgb_keep_every"] = rgbEvery;
+        }
+        if(imuRate > 0) {
+            info["imu_gyroscope_requested_hz"] = imuRate;
+            info["imu_accelerometer_requested_hz"] = accelRate;
+        }
         if(withRgb) info["rgb_size"] = {s->rgbWidth, s->rgbHeight};
         info["depthai_version"] = dai::build::VERSION;
         try {
