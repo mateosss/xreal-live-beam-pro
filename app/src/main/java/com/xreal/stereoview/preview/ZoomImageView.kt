@@ -89,9 +89,13 @@ class ZoomGroup(linked: Boolean) {
  * double-tap to zoom in ×4 there or back out. Pixels are drawn nearest-neighbour, so zoomed
  * images show the recorded pixels rather than a blur.
  */
-class ZoomImageView(context: Context, zoom: ZoomState) : View(context) {
-    /** The zoom this tile follows; may be swapped (linking or unlinking tiles). */
-    var zoom: ZoomState = zoom
+class ZoomImageView(context: Context, initialZoom: ZoomState) : View(context) {
+    /**
+     * The zoom this tile follows; may be swapped (linking or unlinking tiles). The constructor
+     * parameter has another name so the gesture handlers below, created in initializers, use
+     * this property (the current state) rather than the state the view was created with.
+     */
+    var zoom: ZoomState = initialZoom
         set(value) {
             if (value === field) return
             if (isAttachedToWindow) {

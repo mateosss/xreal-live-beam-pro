@@ -1,5 +1,6 @@
 package com.xreal.stereoview.record
 
+import com.xreal.stereoview.util.appendFixed
 import java.io.File
 import java.util.Locale
 
@@ -162,5 +163,5 @@ object Euroc {
 
     private fun list(v: DoubleArray, decimals: Int) = v.joinToString(", ", "[", "]") { fmt(it, decimals) }
     private fun fmt(v: Double, decimals: Int) = "%.${decimals}f".format(Locale.US, v + 0.0) // + 0.0 turns -0.0 into 0.0
-    private fun g(v: Double) = "%.9g".format(Locale.US, v)
+    private fun g(v: Double) = StringBuilder(16).appendFixed(v).toString()
 }

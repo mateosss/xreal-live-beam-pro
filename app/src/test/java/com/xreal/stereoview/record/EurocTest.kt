@@ -23,8 +23,8 @@ class EurocTest {
         assertEquals(2L, rows)
         val lines = out.readLines()
         assertEquals(Euroc.IMU_HEADER, lines[0])
-        assertEquals("15,1,2,3,1.00000000,2.00000000,10.0000000", lines[1])
-        assertEquals("25,4,5,6,3.00000000,6.00000000,10.0000000", lines[2])
+        assertEquals("15,1,2,3,1.0000000000,2.0000000000,10.0000000000", lines[1])
+        assertEquals("25,4,5,6,3.0000000000,6.0000000000,10.0000000000", lines[2])
     }
 
     @Test

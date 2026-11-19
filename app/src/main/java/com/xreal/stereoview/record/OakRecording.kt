@@ -1,5 +1,6 @@
 package com.xreal.stereoview.record
 
+import com.xreal.stereoview.util.appendFixed
 import android.content.Context
 import android.hardware.SensorManager
 import android.os.SystemClock
@@ -105,12 +106,14 @@ class OakRecording private constructor(
         for (s in samples) {
             // Each packet carries the latest sample of both sensors; write each sample once.
             if (s.accelNs > lastAccelNs) {
-                a.line("${s.accelNs},${s.arrivalNs},${s.ax},${s.ay},${s.az},${s.accelHostNs}")
+                a.line(StringBuilder(96).append(s.accelNs).append(',').append(s.arrivalNs).append(',').appendFixed(s.ax)
+                    .append(',').appendFixed(s.ay).append(',').appendFixed(s.az).append(',').append(s.accelHostNs))
                 imu0?.accel(s.accelNs, s.ax, s.ay, s.az)
                 lastAccelNs = s.accelNs
             }
             if (s.gyroNs > lastGyroNs) {
-                g.line("${s.gyroNs},${s.arrivalNs},${s.gx},${s.gy},${s.gz},${s.gyroHostNs}")
+                g.line(StringBuilder(96).append(s.gyroNs).append(',').append(s.arrivalNs).append(',').appendFixed(s.gx)
+                    .append(',').appendFixed(s.gy).append(',').appendFixed(s.gz).append(',').append(s.gyroHostNs))
                 imu0?.gyro(s.gyroNs, s.gx, s.gy, s.gz)
                 lastGyroNs = s.gyroNs
                 imuSamples++

@@ -1,5 +1,6 @@
 package com.xreal.stereoview.record
 
+import com.xreal.stereoview.util.appendFixed
 import java.io.File
 import java.util.ArrayDeque
 
@@ -65,9 +66,9 @@ class LiveImu0(file: File) {
 
     private fun write(g: Sample, ax: Double, ay: Double, az: Double) {
         line.setLength(0)
-        // Sensor values are floats: print them as such (no spurious digits).
-        line.append(g.t).append(',').append(g.x.toFloat()).append(',').append(g.y.toFloat()).append(',').append(g.z.toFloat())
-            .append(',').append(ax).append(',').append(ay).append(',').append(az)
+        // Fixed 10 decimals, as Monado's IMU CSVs (sensor values are 32-bit floats anyway).
+        line.append(g.t).append(',').appendFixed(g.x).append(',').appendFixed(g.y).append(',').appendFixed(g.z)
+            .append(',').appendFixed(ax).append(',').appendFixed(ay).append(',').appendFixed(az)
         out.line(line)
         if (rows == 0L) firstNs = g.t
         lastNs = g.t

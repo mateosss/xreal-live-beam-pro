@@ -8,6 +8,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.xreal.stereoview.preview.ImuPlotView
 import com.xreal.stereoview.preview.ZoomImageView
+import com.xreal.stereoview.preview.ZoomGroup
 import com.xreal.stereoview.preview.ZoomState
 import com.xreal.stereoview.record.Dataset
 import org.junit.Assert.assertEquals
@@ -47,6 +48,28 @@ class PreviewZoomTest {
         }
         v.dispatchTouchEvent(event(down, t, MotionEvent.ACTION_POINTER_UP or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), *pts(to)))
         v.dispatchTouchEvent(event(down, t, MotionEvent.ACTION_UP, pts(to)[0]))
+    }
+
+    @Test
+    fun unlinkedImagesZoomOnTheirOwnAndLinkingFollowsCam0() = instrumentation.runOnMainSync {
+        val group = ZoomGroup(linked = true)
+        val views = List(2) { i ->
+            ZoomImageView(context, group.stateFor(i)).apply { size(800, 600); bitmap = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888) }
+        }
+        pinch(views[0], 100f, 200f, horizontal = true)
+        val linkedScale = group.shared.scale
+        assertTrue("linked pinch zooms: $linkedScale", linkedScale > 1.5f)
+        group.setLinked(false, 2)
+        views.forEachIndexed { i, v -> v.zoom = group.stateFor(i) }
+        // Unlinking keeps the zoom; a pinch on cam1 now zooms cam1 alone.
+        assertEquals(linkedScale, views[1].zoom.scale, 1e-4f)
+        pinch(views[1], 100f, 300f, horizontal = true)
+        assertTrue("cam1 zooms on its own: ${views[1].zoom.scale}", views[1].zoom.scale > linkedScale * 2)
+        assertEquals(linkedScale, views[0].zoom.scale, 1e-4f)
+        // Linking moves both to cam0's zoom.
+        group.setLinked(true, 2)
+        views.forEachIndexed { i, v -> v.zoom = group.stateFor(i) }
+        assertEquals(linkedScale, views[1].zoom.scale, 1e-4f)
     }
 
     @Test

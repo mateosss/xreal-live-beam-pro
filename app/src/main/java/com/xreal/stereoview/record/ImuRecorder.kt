@@ -1,5 +1,6 @@
 package com.xreal.stereoview.record
 
+import com.xreal.stereoview.util.appendFixed
 import android.hardware.Sensor
 import android.hardware.SensorDirectChannel
 import android.hardware.SensorEvent
@@ -98,7 +99,7 @@ class ImuRecorder(
             line.append(timestampNs).append(',').append(arrivalNs)
             for (i in stream.columns.indices) {
                 line.append(',')
-                if (i < valueCount) line.append(values[i])
+                if (i < valueCount) line.appendFixed(values[i])
             }
             line.append(',')
             if (accuracy != null) line.append(accuracy)
