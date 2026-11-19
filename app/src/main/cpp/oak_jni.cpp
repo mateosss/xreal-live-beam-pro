@@ -8,6 +8,7 @@
 #include <jni.h>
 #include <android/log.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -115,15 +116,18 @@ JNIEXPORT jboolean JNICALL Java_com_xreal_stereoview_oak_OakNative_initialize(JN
 /**
  * Builds the pipeline and boots the first OAK found. Blocking (seconds: firmware upload,
  * re-enumeration). config: mono height, fps, rgb (0/1), rgb height, jpeg quality, imu rate
- * (0 = off), auto exposure (0/1), exposure µs, iso, exposure compensation, usb3 (0/1).
+ * (0 = off), auto exposure (0/1), exposure µs, iso, exposure compensation, usb3 (0/1),
+ * host queue frames per camera, host queue IMU packets.
  * Returns a handle; throws IllegalStateException on failure.
  */
 JNIEXPORT jlong JNICALL Java_com_xreal_stereoview_oak_OakNative_start(JNIEnv* env, jclass, jintArray configArray) {
-    jint c[11] = {};
-    env->GetIntArrayRegion(configArray, 0, std::min<jsize>(11, env->GetArrayLength(configArray)), c);
+    jint c[13] = {};
+    env->GetIntArrayRegion(configArray, 0, std::min<jsize>(13, env->GetArrayLength(configArray)), c);
     const int monoHeight = c[0], fps = c[1], withRgb = c[2], rgbHeight = c[3], quality = c[4], imuRate = c[5];
     const bool autoExposure = c[6] != 0;
     const int exposureUs = c[7], iso = c[8], compensation = c[9], usb3 = c[10];
+    // Host-side queue sizes (Settings → Recording buffers): frames per camera, IMU packets.
+    const unsigned linkFrames = static_cast<unsigned>(std::max(8, c[11])), imuPackets = static_cast<unsigned>(std::max(50, c[12]));
     try {
         auto s = std::make_unique<Session>();
         dai::Pipeline p;
@@ -182,10 +186,10 @@ JNIEXPORT jlong JNICALL Java_com_xreal_stereoview_oak_OakNative_start(JNIEnv* en
         auto& d = *s->device;
         // Non-blocking queues: if the app falls behind, the oldest frames are dropped on the
         // host side, never stalling the device (the drops show as sequence gaps).
-        s->left = d.getOutputQueue("left", 8, false);
-        s->right = d.getOutputQueue("right", 8, false);
-        if(withRgb) s->rgb = d.getOutputQueue("rgb", 8, false);
-        if(imuRate > 0) s->imu = d.getOutputQueue("imu", 50, false);
+        s->left = d.getOutputQueue("left", linkFrames, false);
+        s->right = d.getOutputQueue("right", linkFrames, false);
+        if(withRgb) s->rgb = d.getOutputQueue("rgb", linkFrames, false);
+        if(imuRate > 0) s->imu = d.getOutputQueue("imu", imuPackets, false);
         s->monoControl = d.getInputQueue("monoControl");
         if(withRgb) s->rgbControl = d.getInputQueue("rgbControl");
 

@@ -106,6 +106,26 @@ enum class OutputMode(val label: String) {
     MAIN_SCREEN("This screen (mirrored)"),
 }
 
+/**
+ * How much data each recording buffer holds, in seconds. They absorb short stalls (CPU spikes,
+ * thermal throttling, slow storage, a late USB thread) without losing data; see
+ * [com.xreal.stereoview.record.RecordingBuffers] for how they become frames.
+ */
+data class BufferSettings(
+    /** Glasses frames waiting for the video encoder or the PNG/JPEG writers. */
+    val glassesCameraS: Int = 8,
+    /** Glasses IMU reads queued on USB (1 kHz, 512 B each). */
+    val glassesImuS: Int = 5,
+    /** OAK frames waiting for the video encoder or the image writers. */
+    val oakCameraS: Int = 3,
+    /** OAK frames waiting on the phone's side of the USB link to be picked up (native memory). */
+    val oakLinkS: Int = 1,
+    /** OAK IMU packets waiting on the phone's side of the USB link. */
+    val oakImuS: Int = 5,
+    /** Phone camera frames waiting for the JPEG/PNG writers (H.264/H.265 needs none). */
+    val phoneCameraS: Int = 2,
+)
+
 data class StereoSettings(
     /** Horizontal image shift per eye in render pixels, ±[CONVERGENCE_RANGE]. */
     val convergencePx: Float = -50f,
@@ -197,6 +217,8 @@ data class StereoSettings(
     val oakImuRateHz: Int = 200,
     /** OAK: allow USB3 (off forces USB2, for flaky cables or hubs). */
     val oakUsb3: Boolean = true,
+    /** Recording buffers (this phone's memory: kept across profiles). */
+    val buffers: BufferSettings = BufferSettings(),
 ) {
     /** H.264/H.265 options for a stream at [bitrateMbps]. */
     fun encoderOptions(bitrateMbps: Int) =
@@ -268,6 +290,12 @@ class SettingsRepository(private val context: Context) {
         val VIDEO_KEYFRAME_INTERVAL = floatPreferencesKey("video_keyframe_interval_s")
         val VIDEO_PROFILE = stringPreferencesKey("video_profile")
         val VIDEO_SOFTWARE_ENCODER = booleanPreferencesKey("video_software_encoder")
+        val BUFFER_GLASSES_CAMERA = intPreferencesKey("buffer_glasses_camera_s")
+        val BUFFER_GLASSES_IMU = intPreferencesKey("buffer_glasses_imu_s")
+        val BUFFER_OAK_CAMERA = intPreferencesKey("buffer_oak_camera_s")
+        val BUFFER_OAK_LINK = intPreferencesKey("buffer_oak_link_s")
+        val BUFFER_OAK_IMU = intPreferencesKey("buffer_oak_imu_s")
+        val BUFFER_PHONE_CAMERA = intPreferencesKey("buffer_phone_camera_s")
         val GLASSES_VIDEO_BITRATE = intPreferencesKey("glasses_video_bitrate_mbps")
         val OAK_VIDEO_BITRATE = intPreferencesKey("oak_video_bitrate_mbps")
         val TARGET_FPS = intPreferencesKey("target_fps")
@@ -347,6 +375,16 @@ class SettingsRepository(private val context: Context) {
             videoKeyframeIntervalS = p[Keys.VIDEO_KEYFRAME_INTERVAL] ?: defaults.videoKeyframeIntervalS,
             videoProfile = enumOrDefault(p[Keys.VIDEO_PROFILE], defaults.videoProfile),
             videoSoftwareEncoder = p[Keys.VIDEO_SOFTWARE_ENCODER] ?: defaults.videoSoftwareEncoder,
+            buffers = defaults.buffers.let { b ->
+                BufferSettings(
+                    glassesCameraS = p[Keys.BUFFER_GLASSES_CAMERA] ?: b.glassesCameraS,
+                    glassesImuS = p[Keys.BUFFER_GLASSES_IMU] ?: b.glassesImuS,
+                    oakCameraS = p[Keys.BUFFER_OAK_CAMERA] ?: b.oakCameraS,
+                    oakLinkS = p[Keys.BUFFER_OAK_LINK] ?: b.oakLinkS,
+                    oakImuS = p[Keys.BUFFER_OAK_IMU] ?: b.oakImuS,
+                    phoneCameraS = p[Keys.BUFFER_PHONE_CAMERA] ?: b.phoneCameraS,
+                )
+            },
             glassesVideoBitrateMbps = p[Keys.GLASSES_VIDEO_BITRATE] ?: defaults.glassesVideoBitrateMbps,
             oakVideoBitrateMbps = p[Keys.OAK_VIDEO_BITRATE] ?: defaults.oakVideoBitrateMbps,
             targetFps = p[Keys.TARGET_FPS] ?: defaults.targetFps,
@@ -405,6 +443,12 @@ class SettingsRepository(private val context: Context) {
             p[Keys.VIDEO_KEYFRAME_INTERVAL] = s.videoKeyframeIntervalS
             p[Keys.VIDEO_PROFILE] = s.videoProfile.name
             p[Keys.VIDEO_SOFTWARE_ENCODER] = s.videoSoftwareEncoder
+            p[Keys.BUFFER_GLASSES_CAMERA] = s.buffers.glassesCameraS
+            p[Keys.BUFFER_GLASSES_IMU] = s.buffers.glassesImuS
+            p[Keys.BUFFER_OAK_CAMERA] = s.buffers.oakCameraS
+            p[Keys.BUFFER_OAK_LINK] = s.buffers.oakLinkS
+            p[Keys.BUFFER_OAK_IMU] = s.buffers.oakImuS
+            p[Keys.BUFFER_PHONE_CAMERA] = s.buffers.phoneCameraS
             p[Keys.GLASSES_VIDEO_BITRATE] = s.glassesVideoBitrateMbps
             p[Keys.OAK_VIDEO_BITRATE] = s.oakVideoBitrateMbps
             p[Keys.TARGET_FPS] = s.targetFps

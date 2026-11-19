@@ -465,7 +465,9 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         if (s != previous) recording?.onSettingsChanged(s)
         if (s.outputMode != previous.outputMode) {
             rebuildOutput()
-        } else if ((s.cameraSource != previous.cameraSource || s.glassesImu != previous.glassesImu) && playing) {
+        } else if ((s.cameraSource != previous.cameraSource || s.glassesImu != previous.glassesImu ||
+                (s.cameraSource == CameraSource.GLASSES && s.glassesImu && s.buffers.glassesImuS != previous.buffers.glassesImuS)) && playing
+        ) {
             stopRecording("Recording stopped: camera source changed")
             binding.hudText.text = ""
             startCamera()
@@ -575,7 +577,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             appendLine("Stream size: ${streamSize ?: "-"}, sensor orientation ${rig?.sensorOrientation ?: "-"}°")
             appendLine("Rectification: ${renderer?.geometrySummary ?: "-"}")
             appendLine("Glasses rectification: ${renderer?.glassesGeometrySummary ?: "-"}")
-            if (glasses.imuReadsQueued > 0) appendLine("Glasses IMU: ${glasses.imuReadsQueued} reads queued (of ${GlassesDevice.IMU_REQUESTS} wanted)")
+            if (glasses.imuReadsQueued > 0) appendLine("Glasses IMU: ${glasses.imuReadsQueued} reads queued (of ${glasses.imuReadsWanted} wanted)")
             appendLine("Glasses camera controls: ${glasses.controls?.report ?: "glasses cameras not started"}")
             renderer?.cameras?.let { cams ->
                 appendLine("  " + cams.left.describe())
@@ -902,7 +904,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             if (!playing || viewModel.settings.value.cameraSource != CameraSource.GLASSES) return@requestPermission
             glassesImuActive = withImu
             glassesStatsTime = android.os.SystemClock.elapsedRealtime()
-            glasses.start(device, withImu, glassesExposureOf(viewModel.settings.value))
+            glasses.start(device, withImu, glassesExposureOf(viewModel.settings.value), viewModel.settings.value.buffers.glassesImuS * GlassesDevice.IMU_RATE_HZ)
             controls.setStatus("Starting the glasses cameras…")
             updateStatus()
         }
@@ -946,6 +948,8 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
 
     private fun oakConfigOf(s: StereoSettings) = OakDevice.Config(
         s.oakMonoHeight, s.oakFps, s.oakRgbHeight, s.oakJpegQuality, s.oakImuRateHz, s.oakUsb3, oakExposureOf(s),
+        linkFrames = (s.buffers.oakLinkS * s.oakFps).coerceAtLeast(OakDevice.MIN_LINK_FRAMES),
+        imuPackets = (s.buffers.oakImuS * s.oakImuRateHz).coerceAtLeast(OakDevice.MIN_IMU_PACKETS),
     )
 
     private fun startOak() {

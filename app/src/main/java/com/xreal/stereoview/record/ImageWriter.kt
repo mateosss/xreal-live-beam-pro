@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * Compresses RGBA frames to `<dir>/<timestamp_ns>.jpg`, or with [png] to 8-bit grayscale
  * `<dir>/<timestamp_ns>.png` (as EuRoC stores images), on a small thread pool. Frames are copied
- * into a pool of buffers that grows up to [memoryBudget] bytes, so a few seconds of slow
+ * into a pool of buffers that grows up to [capacity] frames, so a few seconds of slow
  * storage or compression are absorbed; only when that backlog is full is a frame dropped
  * (and counted) instead of stalling the camera.
  */
@@ -24,13 +24,14 @@ class ImageWriter(
     val width: Int,
     val height: Int,
     val png: Boolean,
-    memoryBudget: Long = 160L shl 20,
+    /** Frames that can wait at once (Settings → Recording buffers); at least 8. */
+    capacityFrames: Int = 20,
     private val quality: Int = 95,
 ) {
     val extension: String get() = if (png) "png" else "jpg"
     private val frameBytes = width * height * 4
-    /** Frames that can wait at once: at least 8, about [memoryBudget] bytes in all. */
-    val capacity = (memoryBudget / frameBytes).toInt().coerceIn(8, 240)
+    /** Frames that can wait at once; buffers are allocated as the backlog grows. */
+    val capacity = capacityFrames.coerceAtLeast(8)
     private val free = ArrayBlockingQueue<ByteBuffer>(capacity)
     private var allocated = 0
     private val executor = Executors.newFixedThreadPool(THREADS) { r ->

@@ -352,7 +352,10 @@ class Recording private constructor(
                             )
                         },
                         images = if (s.recordFormat.mime == null) {
-                            ImageWriter(File(camDir, "data"), size.width, size.height, png = s.recordFormat == RecordFormat.PNG)
+                            ImageWriter(
+                                File(camDir, "data"), size.width, size.height, png = s.recordFormat == RecordFormat.PNG,
+                                capacityFrames = RecordingBuffers.frames(s.buffers.phoneCameraS, rig.targetFps, size.width.toLong() * size.height * 4, streams = order.size),
+                            )
                         } else {
                             null
                         },

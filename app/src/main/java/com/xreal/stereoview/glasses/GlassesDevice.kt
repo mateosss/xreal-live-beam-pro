@@ -110,8 +110,15 @@ class GlassesDevice(private val context: Context, private val listener: Listener
     private var sentMode: Int? = null
     private var sentExposure: Int? = null
     private var sentGain: Int? = null
-    /** IMU reads the USB driver accepted (see [IMU_REQUESTS]); 0 before the IMU starts. */
+    /** IMU reads the USB driver accepted (of [imuReadsWanted]); 0 before the IMU starts. */
     @Volatile var imuReadsQueued = 0
+        private set
+    /**
+     * IMU reads to keep queued: reports keep arriving while any is pending, so the USB thread
+     * may be late by about this many report periods (1 ms each) without losing samples.
+     * 512 B each. Fewer if the USB driver refuses more.
+     */
+    @Volatile var imuReadsWanted = IMU_REQUESTS
         private set
 
     /** The first attached Air 2 Ultra, if any. */
@@ -141,9 +148,10 @@ class GlassesDevice(private val context: Context, private val listener: Listener
     val isRunning: Boolean get() = running
 
     /** Starts streaming; [device] must already have USB permission. [exposure] is applied once the camera runs. */
-    fun start(device: UsbDevice, withImu: Boolean, exposure: Exposure) {
+    fun start(device: UsbDevice, withImu: Boolean, exposure: Exposure, imuReads: Int = IMU_REQUESTS) {
         if (running) return
         running = true
+        imuReadsWanted = imuReads.coerceAtLeast(IMU_INITIAL_REQUESTS)
         requestedExposure = exposure
         controls = null
         val decode = HandlerThread("GlassesDecode", Process.THREAD_PRIORITY_DISPLAY).apply { start() }
@@ -312,8 +320,8 @@ class GlassesDevice(private val context: Context, private val listener: Listener
             readControls(connection, connection.rawDescriptors ?: ByteArray(0))
             repeat(CAMERA_REQUESTS) { requests += queue(connection, cameraIn, negotiation.payloadBytes) }
             imuIn?.let { inEp ->
-                // Top up the IMU reads, as many as the driver accepts up to IMU_REQUESTS.
-                while (imuReadsQueued < IMU_REQUESTS) {
+                // Top up the IMU reads, as many as the driver accepts up to imuReadsWanted.
+                while (imuReadsQueued < imuReadsWanted) {
                     requests += runCatching { queue(connection, inEp, GlassesProtocol.SENSOR_REPORT_SIZE) }.getOrNull() ?: break
                     imuReadsQueued++
                 }
@@ -553,12 +561,10 @@ class GlassesDevice(private val context: Context, private val listener: Listener
         /** Read back the camera state this long after the last update. */
         const val READ_BACK_DELAY_MS = 600L
         const val CAMERA_REQUESTS = 12
-        /**
-         * IMU reads kept queued: reports keep arriving while any is pending, so the USB thread
-         * may be late by about this many report periods without losing samples (5 s at
-         * 1 kHz; 512 B each, 2.5 MB). Fewer if the USB driver refuses more.
-         */
+        /** Default [imuReadsWanted]: 5 s at 1 kHz (2.5 MB). */
         const val IMU_REQUESTS = 5000
+        /** IMU reports per second. */
+        const val IMU_RATE_HZ = 1000
         const val IMU_INITIAL_REQUESTS = 16
         /** Frames being assembled or waiting for the decode thread. */
         const val POOL = 8

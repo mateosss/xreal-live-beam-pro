@@ -121,7 +121,17 @@ object Metadata {
             if (Modifier.isStatic(field.modifiers)) continue
             field.isAccessible = true
             val v = field.get(s)
-            put(field.name, if (v is Enum<*>) v.name else value(v))
+            put(field.name, when (v) {
+                is Enum<*> -> v.name
+                is com.xreal.stereoview.ui.BufferSettings -> JSONObject().apply {
+                    for (f in v.javaClass.declaredFields) {
+                        if (Modifier.isStatic(f.modifiers)) continue
+                        f.isAccessible = true
+                        put(f.name, value(f.get(v)))
+                    }
+                }
+                else -> value(v)
+            })
         }
     }
 

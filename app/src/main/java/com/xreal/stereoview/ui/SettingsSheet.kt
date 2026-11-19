@@ -185,6 +185,7 @@ class SettingsSheet(
         row(content, "Eye alignment", "pitch %+.2f°, roll %+.2f° (Align measures it)".format(s.alignPitchDeg, s.alignRollDeg)) {
             showAlignmentDialog()
         }
+        row(content, "Recording buffers", buffersSummary(s, device), locked = recording) { showBuffersDialog() }
         if (device == CameraSource.GLASSES) {
             row(content, "Glasses USB probe", "Check whether the app can reach the glasses' cameras and IMU") { host.probeUsb() }
         }
@@ -584,6 +585,137 @@ class SettingsSheet(
     private fun recordingsSummary(): String {
         val count = recordingDirs().size
         return "%d saved · %.1f GB free".format(count, Recording.root(context).let { if (it.exists()) it.usableSpace else context.getExternalFilesDir(null)?.usableSpace ?: 0L } / 1e9)
+    }
+
+    /** One recording buffer: its slider range and what a second of it costs in memory. */
+    private class BufferSpec(
+        val group: String,
+        val label: String,
+        val max: Int,
+        val get: (BufferSettings) -> Int,
+        val set: (BufferSettings, Int) -> BufferSettings,
+        /** Frames (or reads) per second per stream, bytes each, number of streams. */
+        val rate: Int,
+        val bytes: Long,
+        val streams: Int,
+        /** Shares the camera memory cap ([com.xreal.stereoview.record.RecordingBuffers.memoryCapBytes]). */
+        val capped: Boolean,
+    )
+
+    private fun bufferSpecs(s: StereoSettings): List<BufferSpec> {
+        val oakMono = (if (s.oakMonoHeight == 400) 640L else 1280L) * s.oakMonoHeight
+        val phoneH = s.maxResolution.toLong()
+        val phoneFrame = phoneH * 16 / 9 * phoneH * 4
+        return listOf(
+            BufferSpec("Glasses", "Cameras (encoder or image writers)", 60, { it.glassesCameraS }, { b, v -> b.copy(glassesCameraS = v) },
+                30, 480L * 640, 2, true),
+            BufferSpec("Glasses", "IMU (USB reads queued)", 30, { it.glassesImuS }, { b, v -> b.copy(glassesImuS = v) },
+                GlassesDevice.IMU_RATE_HZ, 512, 1, false),
+            BufferSpec("OAK", "Mono cameras (encoder or image writers)", 60, { it.oakCameraS }, { b, v -> b.copy(oakCameraS = v) },
+                s.oakFps, oakMono, 2, true),
+            BufferSpec("OAK", "USB link (frames not yet picked up)", 10, { it.oakLinkS }, { b, v -> b.copy(oakLinkS = v) },
+                s.oakFps, oakMono, 2, false), // color JPEGs are small next to the mono frames
+            BufferSpec("OAK", "IMU (packets not yet picked up)", 30, { it.oakImuS }, { b, v -> b.copy(oakImuS = v) },
+                s.oakImuRateHz.coerceAtLeast(1), 200, 1, false),
+            BufferSpec("Phone cameras", "JPEG/PNG writers (video needs none)", 30, { it.phoneCameraS }, { b, v -> b.copy(phoneCameraS = v) },
+                s.targetFps, phoneFrame, 2, true),
+        )
+    }
+
+    /** "8 s · ≈147 MB" for [spec] at [seconds]; notes when the memory cap shortens it. */
+    private fun bufferText(spec: BufferSpec, seconds: Int): String {
+        if (!spec.capped) return "$seconds s · ≈%s".format(formatMb(seconds.toLong() * spec.rate * spec.bytes * spec.streams / 1e6))
+        val frames = com.xreal.stereoview.record.RecordingBuffers.frames(seconds, spec.rate, spec.bytes, spec.streams, min = 1)
+        val mb = formatMb(frames * spec.bytes * spec.streams / 1e6)
+        return if (frames < seconds.toLong() * spec.rate) {
+            "$seconds s · capped to %.1f s (≈%s)".format(com.xreal.stereoview.record.RecordingBuffers.seconds(frames, spec.rate), mb)
+        } else {
+            "$seconds s · ≈$mb"
+        }
+    }
+
+    private fun formatMb(mb: Double) = if (mb < 10) "%.1f MB".format(mb) else "%.0f MB".format(mb)
+
+    private fun buffersSummary(s: StereoSettings, device: CameraSource): String {
+        val b = s.buffers
+        return when (device) {
+            CameraSource.GLASSES -> "cameras ${b.glassesCameraS} s, IMU ${b.glassesImuS} s"
+            CameraSource.OAK -> "cameras ${b.oakCameraS} s, USB ${b.oakLinkS} s, IMU ${b.oakImuS} s"
+            CameraSource.BEAM_PRO -> "image writers ${b.phoneCameraS} s"
+        } + " (all devices: tap)"
+    }
+
+    /** Sliders for every recording buffer, a Defaults button and a short guide. */
+    private fun showBuffersDialog() {
+        val s = target.value
+        var buffers = s.buffers
+        val specs = bufferSpecs(s)
+        val scroll = NestedScrollView(context)
+        val layout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(4), dp(24), dp(8))
+        }
+        scroll.addView(layout)
+        fun small(text: String, top: Int = 0) = TextView(context).apply {
+            this.text = text
+            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodySmall)
+            setTextColor(ContextCompat.getColor(context, R.color.panel_text_secondary))
+            setPadding(0, dp(top), 0, 0)
+        }
+        val capMb = com.xreal.stereoview.record.RecordingBuffers.memoryCapBytes() / 1e6
+        val sliders = ArrayList<Pair<BufferSpec, Slider>>()
+        var group = ""
+        for (spec in specs) {
+            if (spec.group != group) {
+                group = spec.group
+                layout.addView(TextView(context).apply {
+                    text = group
+                    setTextColor(ContextCompat.getColor(context, R.color.accent))
+                    typeface = Typeface.DEFAULT_BOLD
+                    setPadding(0, dp(14), 0, 0)
+                })
+            }
+            val label = TextView(context).apply { setPadding(0, dp(6), 0, 0) }
+            fun show(v: Int) { label.text = "${spec.label}: ${bufferText(spec, v)}" }
+            val slider = Slider(context).apply {
+                valueFrom = 1f
+                valueTo = spec.max.toFloat()
+                stepSize = 1f
+                value = spec.get(buffers).coerceIn(1, spec.max).toFloat()
+                labelBehavior = com.google.android.material.slider.LabelFormatter.LABEL_GONE
+                isTickVisible = false
+                addOnChangeListener { _, v, _ ->
+                    buffers = spec.set(buffers, v.toInt())
+                    show(v.toInt())
+                }
+            }
+            show(spec.get(buffers))
+            layout.addView(label)
+            layout.addView(slider)
+            sliders += spec to slider
+        }
+        val d = BufferSettings()
+        layout.addView(small(
+            "Buffers absorb short stalls (CPU spikes, throttling, slow storage); data is dropped only when one is full.\n" +
+                "• Recommended: 5–10 s for cameras, 5 s for IMUs.\n" +
+                "• No buffer saves an encoder that is slower on average: if encoder_backlog_peak_frames reaches the capacity, " +
+                "use the hardware encoder or a lower bitrate.\n" +
+                "• Camera buffers share %.0f MB (60%% of the app's memory limit), so Android won't kill the recording.\n"
+                    .format(capMb) +
+                "• Defaults: glasses ${d.glassesCameraS} s / IMU ${d.glassesImuS} s, OAK ${d.oakCameraS} s / USB ${d.oakLinkS} s / IMU ${d.oakImuS} s, phone ${d.phoneCameraS} s.",
+            top = 16,
+        ))
+        val dialog = MaterialAlertDialogBuilder(context)
+            .setTitle("Recording buffers")
+            .setView(scroll)
+            .setPositiveButton(android.R.string.ok) { _, _ -> target.update { it.copy(buffers = buffers) } }
+            .setNegativeButton(android.R.string.cancel, null)
+            .setNeutralButton("Defaults", null)
+            .show()
+        // Defaults resets the sliders without closing; OK saves.
+        dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener {
+            for ((spec, slider) in sliders) slider.value = spec.get(d).coerceIn(1, spec.max).toFloat()
+        }
     }
 
     /** Sliders for the vertical and rotational alignment between the eyes. */

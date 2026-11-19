@@ -11,8 +11,8 @@ android {
         applicationId = "com.xreal.stereoview"
         minSdk = 31
         targetSdk = 34
-        versionCode = 38
-        versionName = "0.14.15"
+        versionCode = 39
+        versionName = "0.14.16"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // OAK (DepthAI) support: JNI glue over the prebuilt depthai-core, arm64 only.

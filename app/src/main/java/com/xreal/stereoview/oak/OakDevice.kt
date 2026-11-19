@@ -42,6 +42,10 @@ class OakDevice(private val context: Context, private val listener: Listener) {
         val imuRateHz: Int,
         val usb3: Boolean,
         val exposure: Exposure,
+        /** Frames per camera that may wait on the phone's side of the USB link (native memory). */
+        val linkFrames: Int = MIN_LINK_FRAMES,
+        /** IMU packets (one sample or more each) that may wait there. */
+        val imuPackets: Int = MIN_IMU_PACKETS,
     )
 
     data class Exposure(val auto: Boolean, val exposureUs: Int, val iso: Int, val compensation: Int)
@@ -131,7 +135,7 @@ class OakDevice(private val context: Context, private val listener: Listener) {
                 val h = OakNative.start(intArrayOf(
                     config.monoHeight, config.fps, if (config.rgbHeight > 0) 1 else 0, config.rgbHeight,
                     config.jpegQuality, config.imuRateHz, if (e.auto) 1 else 0, e.exposureUs, e.iso, e.compensation,
-                    if (config.usb3) 1 else 0,
+                    if (config.usb3) 1 else 0, config.linkFrames, config.imuPackets,
                 ))
                 if (!wanted) {
                     OakNative.stop(h)
@@ -310,6 +314,9 @@ class OakDevice(private val context: Context, private val listener: Listener) {
         private const val TAG = "OakDevice"
         /** Intel Movidius: OAK cameras before (0x2485) and after (0xf63b) booting. */
         const val VENDOR_ID = 0x03E7
+        /** Least [Config.linkFrames] and [Config.imuPackets] (what depthai queues held before). */
+        const val MIN_LINK_FRAMES = 8
+        const val MIN_IMU_PACKETS = 50
         private const val ACTION_PERMISSION = "com.xreal.stereoview.OAK_USB_PERMISSION"
     }
 }

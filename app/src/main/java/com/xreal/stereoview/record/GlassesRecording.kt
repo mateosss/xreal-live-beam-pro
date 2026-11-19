@@ -42,6 +42,8 @@ class GlassesRecording private constructor(
     private val metadata: JSONObject,
     private val format: GrayImageFormat,
     private val jpegQuality: Int,
+    /** Images that may wait for the writers (Settings → Recording buffers). */
+    private val queueFrames: Int,
 ) : ActiveRecording {
     private class Cam(val name: String, val dir: File, val data: LineWriter, val frames: LineWriter) {
         /** H.264 recordings: the camera's encoder; data.csv rows are written as frames reach the file. */
@@ -62,7 +64,7 @@ class GlassesRecording private constructor(
      * PNG encoding and writing off the decode thread, with room for several seconds of frames
      * (300 kB each) when storage stalls; only beyond that are frames dropped (and counted).
      */
-    private val encoder = ThreadPoolExecutor(3, 3, 1, TimeUnit.SECONDS, ArrayBlockingQueue(QUEUE_FRAMES)) { r ->
+    private val encoder = ThreadPoolExecutor(3, 3, 1, TimeUnit.SECONDS, ArrayBlockingQueue(queueFrames)) { r ->
         Thread(r, "GlassesPng")
     }
     @Volatile
@@ -168,7 +170,7 @@ class GlassesRecording private constructor(
     }
 
     override val backlog: String
-        get() = "write queue ${encoder.queue.size}/$QUEUE_FRAMES images (peak $peakQueue), dropped ${dropped.get()}"
+        get() = "write queue ${encoder.queue.size}/$queueFrames images (peak $peakQueue), dropped ${dropped.get()}"
 
     override fun writeErrors(): String? = (cams.flatMap { listOf(it.data, it.frames) } + listOfNotNull(imu0, glassesImu))
         .firstNotNullOfOrNull { it.error }?.toString()
@@ -241,7 +243,7 @@ class GlassesRecording private constructor(
         }
         metadata.put("stats", JSONObject().apply {
             put("frames_dropped_by_encoder", dropped.get())
-            put("write_queue_capacity_frames", QUEUE_FRAMES)
+            put("write_queue_capacity_frames", queueFrames)
             put("write_queue_peak_frames", peakQueue)
             put("frames_failed", failed.get())
             put("glasses_imu_samples", imuSamples)
@@ -274,8 +276,6 @@ class GlassesRecording private constructor(
                 "glasses IMU", Euroc.transform(com.xreal.stereoview.util.Mat3.identity(), null), rateHz,
             ))
         }
-        /** About 4 s of both cameras. */
-        private const val QUEUE_FRAMES = 240
 
         fun start(context: Context, s: StereoSettings, device: UsbDevice, withImu: Boolean, extraInfo: JSONObject): GlassesRecording {
             val name = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
@@ -283,6 +283,8 @@ class GlassesRecording private constructor(
             check(dir.mkdirs()) { "Cannot create $dir" }
             val mav = Euroc.mav(dir)
             val video = s.glassesImageFormat == GrayImageFormat.H264
+            // Per camera; both cameras share the memory cap.
+            val backlog = RecordingBuffers.frames(s.buffers.glassesCameraS, 30, IMAGE_W.toLong() * IMAGE_H, streams = 2, min = VideoEncoder.MIN_PENDING)
             lateinit var recording: GlassesRecording
             val cams = listOf("cam0", "cam1").mapIndexed { i, camName ->
                 val camDir = File(mav, camName).apply { mkdirs() }
@@ -296,7 +298,7 @@ class GlassesRecording private constructor(
                     if (video) {
                         cam.video = VideoEncoder(
                             File(camDir, "data.mkv"), "video/avc", IMAGE_W, IMAGE_H, 30, s.encoderOptions(s.glassesVideoBitrateMbps),
-                            grayInput = true, onWritten = { p -> recording.onVideoFrame(cam, p) },
+                            grayInput = true, onWritten = { p -> recording.onVideoFrame(cam, p) }, grayBacklogFrames = backlog,
                         )
                     }
                 }
@@ -376,7 +378,7 @@ class GlassesRecording private constructor(
                 })
             }
             File(dir, "metadata.json").writeText(metadata.toString(2))
-            recording = GlassesRecording(dir, cams, glassesImu, imu0, imu, LineWriter(File(dir, "settings.jsonl")), metadata, s.glassesImageFormat, s.grayJpegQuality)
+            recording = GlassesRecording(dir, cams, glassesImu, imu0, imu, LineWriter(File(dir, "settings.jsonl")), metadata, s.glassesImageFormat, s.grayJpegQuality, 2 * backlog)
             recording.onSettingsChanged(s)
             imu.start()
             return recording

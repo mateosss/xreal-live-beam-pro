@@ -62,6 +62,8 @@ class VideoEncoder(
     fps: Int,
     options: EncoderOptions,
     private val grayInput: Boolean = false,
+    /** Gray input: frames that may wait for the encoder ([RecordingBuffers.frames]), at least [MIN_PENDING]. */
+    grayBacklogFrames: Int = MIN_PENDING,
     private val onWritten: (ptsUs: Long) -> Unit = {},
 ) {
     /** The input surface (surface input only). */
@@ -271,12 +273,12 @@ class VideoEncoder(
     // region Gray input
 
     /**
-     * Gray frames that may wait for the encoder: [grayBacklogBytes] worth, at least
-     * [MIN_PENDING]. It absorbs slow stretches (CPU spikes, thermal throttling) before frames
-     * are dropped. Bounded on purpose: an encoder slower than the camera on average fills any
-     * buffer during a long recording, and running out of memory would kill the recording.
+     * Gray frames that may wait for the encoder (the recording buffer setting). It absorbs slow
+     * stretches (CPU spikes, thermal throttling) before frames are dropped. Bounded on purpose:
+     * an encoder slower than the camera on average fills any buffer during a long recording,
+     * and running out of memory would kill the recording.
      */
-    val maxPending: Int = (grayBacklogBytes() / (width.toLong() * height).coerceAtLeast(1)).toInt().coerceAtLeast(MIN_PENDING)
+    val maxPending: Int = grayBacklogFrames.coerceAtLeast(MIN_PENDING)
 
     /** Most gray frames waiting for the encoder at once ([maxPending]: frames are dropped). */
     @Volatile var peakPending = 0
@@ -554,13 +556,6 @@ class VideoEncoder(
         const val MAX_BACKLOG = 128 shl 20
         /** Least [maxPending], gray frames waiting for an encoder input buffer. */
         const val MIN_PENDING = 30
-
-        /**
-         * Memory for gray frames waiting for one encoder: a sixth of the app's heap limit
-         * (two encoders: a third), 32–256 MB. With a 512 MB heap: 85 MB, ≈9 s of 480×640 or
-         * ≈2.8 s of 1280×800 at 30 fps.
-         */
-        fun grayBacklogBytes(): Long = (Runtime.getRuntime().maxMemory() / 6).coerceIn(32L shl 20, 256L shl 20)
 
         /**
          * Android's own software encoder for [mime] at this size, if present ([EncoderOptions.software]).

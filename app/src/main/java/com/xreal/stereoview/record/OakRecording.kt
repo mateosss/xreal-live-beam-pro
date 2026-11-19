@@ -39,6 +39,8 @@ class OakRecording private constructor(
     private val metadata: JSONObject,
     private val monoFormat: GrayImageFormat,
     private val jpegQuality: Int,
+    /** Images that may wait for the writers (Settings → Recording buffers). */
+    private val queueFrames: Int,
 ) : ActiveRecording {
     private class Cam(val name: String, val dir: File, val extension: String, val data: LineWriter, val frames: LineWriter) {
         /** H.264 mono recordings: the camera's encoder; data.csv rows are written as frames reach the file. */
@@ -55,7 +57,7 @@ class OakRecording private constructor(
     @Volatile
     override var error: String? = null
 
-    private val writer = ThreadPoolExecutor(3, 3, 1, TimeUnit.SECONDS, ArrayBlockingQueue(QUEUE_FRAMES)) { r -> Thread(r, "OakWriter") }
+    private val writer = ThreadPoolExecutor(3, 3, 1, TimeUnit.SECONDS, ArrayBlockingQueue(queueFrames)) { r -> Thread(r, "OakWriter") }
     @Volatile private var peakQueue = 0
     private val dropped = AtomicInteger()
     private val failed = AtomicInteger()
@@ -154,7 +156,7 @@ class OakRecording private constructor(
     }
 
     override val backlog: String
-        get() = "write queue ${writer.queue.size}/$QUEUE_FRAMES images (peak $peakQueue), dropped ${dropped.get()}"
+        get() = "write queue ${writer.queue.size}/$queueFrames images (peak $peakQueue), dropped ${dropped.get()}"
 
     override fun writeErrors(): String? = (cams.flatMap { listOf(it.data, it.frames) } + listOfNotNull(accel, gyro))
         .firstNotNullOfOrNull { it.error }?.toString()
@@ -227,7 +229,7 @@ class OakRecording private constructor(
         metadata.put("stats", JSONObject().apply {
             put("frames_dropped_by_writer", dropped.get())
             put("frames_failed", failed.get())
-            put("write_queue_capacity_frames", QUEUE_FRAMES)
+            put("write_queue_capacity_frames", queueFrames)
             put("write_queue_peak_frames", peakQueue)
             put("oak_imu_gyro_samples", imuSamples)
         })
@@ -249,8 +251,6 @@ class OakRecording private constructor(
 
     companion object {
         private const val TAG = "OakRecording"
-        /** About 4 s of 800p mono pairs plus color. */
-        private const val QUEUE_FRAMES = 360
         private const val FRAMES_HEADER = "timestamp_ns,sequence,host_monotonic_ns,arrival_ns,exposure_us,iso,start_of_exposure_ns"
         private const val IMU_HEADER = "timestamp_ns,arrival_ns,x,y,z,host_monotonic_ns"
 
@@ -277,6 +277,8 @@ class OakRecording private constructor(
             )
             lateinit var recording: OakRecording
             val monoW = if (s.oakMonoHeight == 400) 640 else 1280
+            // Per mono camera; both share the memory cap (color JPEGs are small next to them).
+            val backlog = RecordingBuffers.frames(s.buffers.oakCameraS, s.oakFps, monoW.toLong() * s.oakMonoHeight, streams = 2, min = VideoEncoder.MIN_PENDING)
             val cams = specs.map { (camName, key, ext) ->
                 val video = ext == GrayImageFormat.H264.extension
                 val camDir = File(mav, camName).apply { mkdirs() }
@@ -286,7 +288,7 @@ class OakRecording private constructor(
                     if (video) {
                         cam.video = VideoEncoder(
                             File(camDir, "data.mkv"), "video/avc", monoW, s.oakMonoHeight, s.oakFps, s.encoderOptions(s.oakVideoBitrateMbps),
-                            grayInput = true, onWritten = { p -> recording.onVideoFrame(cam, p) },
+                            grayInput = true, onWritten = { p -> recording.onVideoFrame(cam, p) }, grayBacklogFrames = backlog,
                         )
                     }
                 }
@@ -350,7 +352,7 @@ class OakRecording private constructor(
                 })
             }
             File(dir, "metadata.json").writeText(metadata.toString(2))
-            recording = OakRecording(dir, cams, accel, gyro, imu0, imu, LineWriter(File(dir, "settings.jsonl")), metadata, s.oakImageFormat, s.grayJpegQuality)
+            recording = OakRecording(dir, cams, accel, gyro, imu0, imu, LineWriter(File(dir, "settings.jsonl")), metadata, s.oakImageFormat, s.grayJpegQuality, specs.size * backlog)
             recording.onSettingsChanged(s)
             imu.start()
             return recording
