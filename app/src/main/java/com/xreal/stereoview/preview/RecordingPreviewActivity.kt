@@ -618,7 +618,7 @@ class RecordingPreviewActivity : AppCompatActivity() {
         build()
         if (first == null) {
             toast("${s.name}: no gaps")
-        } else if (s.name.startsWith("imu/")) {
+        } else if (s.name.startsWith(Dataset.RAW_PREFIX)) {
             toast("${s.name} is on its own clock; its gaps aren't on this timeline")
         } else {
             seek(first - d.startNs)

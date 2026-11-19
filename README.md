@@ -249,8 +249,8 @@ mav0/
     data.csv              EuRoC IMU: gyroscope timestamps, accelerometer interpolated
                           (merged live while recording)
     sensor.yaml           EuRoC IMU (noise values are placeholders)
-imu/<stream>.csv          every recorded IMU stream as delivered: timestamp_ns, arrival_ns,
-                          values…, accuracy
+    <stream>.csv          every recorded IMU stream as delivered: timestamp_ns, arrival_ns,
+                          values…, accuracy (recordings before 0.15.3: imu/ beside mav0)
 metadata.json             device, every camera characteristic, every sensor, settings,
                           calibration, clocks, per-stream stats
 settings.jsonl            settings at start and after every change, with timestamps
@@ -336,10 +336,10 @@ resolution, focus, stabilization, camera pair or Beam Pro exposure).
   480×640 grayscale PNGs at 30 fps per camera, timestamped by the glasses, with `sensor.yaml`
   (pinhole + equidistant, from the reference calibration). `frames.csv` adds each frame's
   sequence number, arrival time on the Beam Pro clock and the first 64 bytes of its metadata
-  row. The Beam Pro's IMU streams go to `imu/`.
+  row.
 - **Glasses IMU** (*Settings → Glasses IMU*, on in the *Glasses EuRoC dataset* profile): the
   glasses' IMU is taken over too and recorded as `mav0/imu0` (same clock as the cameras), with
-  all report fields in `imu/glasses_imu.csv`; its factory calibration JSON is saved with the
+  all report fields in `mav0/imu0/glasses_imu.csv`; its factory calibration JSON is saved with the
   recording.
 - `metadata.json` estimates the offset between the glasses' clock and the Beam Pro's, and
   includes Monado's reference Basalt calibration (KB4). It comes from another unit, so
@@ -383,7 +383,7 @@ arm64 (see `third_party/depthai-android/` and `tools/build_depthai_android.sh`).
   timestamps, accelerometer interpolated), `sensor.yaml` files from the camera's factory
   calibration (body frame = OAK IMU), `oak_calibration.json` with the full calibration,
   `frames.csv` per camera (sequence, host time, arrival time, exposure, ISO), the raw IMU streams
-  in `imu/oak_*.csv` and the phone's IMU as an extra. Perspective calibrations are written as
+  in `mav0/imu0/oak_*.csv`. Perspective calibrations are written as
   radial-tangential with k1, k2, p1, p2; depthai's other coefficients (k3–k6, …) are listed in the
   yaml's comments and `metadata.json`, so recalibrate (e.g. Kalibr) for wide lenses.
 - **USB access:** Android asks to allow the camera twice per connection: before its firmware

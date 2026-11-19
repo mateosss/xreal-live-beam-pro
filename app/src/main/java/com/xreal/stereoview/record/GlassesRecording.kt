@@ -320,9 +320,9 @@ class GlassesRecording private constructor(
                 null
             }
             val glassesImu = if (withImu) {
-                File(dir, "imu").mkdirs()
+                Euroc.rawImuDir(dir).mkdirs()
                 LineWriter(
-                    File(dir, "imu/glasses_imu.csv"),
+                    File(Euroc.rawImuDir(dir), "glasses_imu.csv"),
                     "timestamp_ns,arrival_ns,wx,wy,wz,ax,ay,az,mx,my,mz,temperature_c," +
                         "raw_gx,raw_gy,raw_gz,raw_ax,raw_ay,raw_az,raw_mx,raw_my,raw_mz,gyro_mul,gyro_div,accel_mul,accel_div",
                 )
@@ -380,7 +380,7 @@ class GlassesRecording private constructor(
                     put("mav0/camN/frames.csv", "timestamp_ns (the pair's, as data.csv), sensor_timestamp_ns (this image's own, glasses clock), " +
                         "sequence, arrival_ns (BOOTTIME), first 64 bytes of the frame's metadata row")
                     put("mav0/imu0/data.csv", "EuRoC IMU: the glasses IMU (if taken over), SI units in its own axes, uncalibrated, glasses clock")
-                    put("imu/glasses_imu.csv", "glasses IMU (if taken over): SI units, magnetometer, temperature and raw values")
+                    put("mav0/imu0/glasses_imu.csv", "glasses IMU (if taken over): SI units, magnetometer, temperature and raw values")
                     put("glasses_calibration.json", "the glasses' factory calibration (if the IMU was taken over)")
                     put("settings.jsonl", "settings at start and after every change")
                 })

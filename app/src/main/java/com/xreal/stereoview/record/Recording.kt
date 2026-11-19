@@ -31,7 +31,7 @@ import java.util.Locale
  * video (data.mp4) or image sequence (data/), data.csv, sensor.yaml, plus frames.csv with
  * extra per-frame details and capture_results.csv with per-frame camera metadata; mav0/imu0
  * built from the gyroscope and accelerometer when the recording ends; every IMU stream as
- * recorded under imu/; settings changes in settings.jsonl; and metadata.json describing the
+ * recorded in mav0/imu0/ beside data.csv; settings changes in settings.jsonl; and metadata.json describing the
  * device, cameras, calibration and recording settings.
  *
  * Frames are stored by the renderer on its GL thread ([onFrameStored]); capture results arrive
@@ -267,7 +267,7 @@ class Recording private constructor(
         val pair = imu.imu0Pair!!
         writeImu0Yaml(dir, imu, live.rateHz)
         return JSONObject().put("samples", live.rows).put("rate_hz", live.rateHz)
-            .put("source", "imu/${pair.first.file}.csv + imu/${pair.second.file}.csv, written live")
+            .put("source", "${Euroc.RAW_IMU_PATH}/${pair.first.file}.csv + ${pair.second.file}.csv, written live")
     }
 
     companion object {
@@ -379,7 +379,7 @@ class Recording private constructor(
 
             val sensorManager = context.getSystemService(SensorManager::class.java)
             val imu = ImuRecorder(
-                sensorManager, File(dir, "imu"), ImuStream.parse(s.imuStreams), s.imuRate,
+                sensorManager, Euroc.rawImuDir(dir), ImuStream.parse(s.imuStreams), s.imuRate,
                 imu0File = File(Euroc.mav(dir), "imu0/data.csv"),
             )
             if (imu.imu0 != null) writeImu0Yaml(dir, imu, 0.0)
@@ -443,7 +443,7 @@ class Recording private constructor(
                     put("mav0/camN/capture_results.csv", "every capture result of the camera: exposure, readout and rolling shutter times, ISO, focus, per-frame intrinsics")
                     put("mav0/imu0/data.csv", "EuRoC IMU: gyroscope samples with the accelerometer interpolated to them (written when the recording ends)")
                     put("mav0/imu0/sensor.yaml", "EuRoC IMU description (noise values are placeholders)")
-                    put("imu/<stream>.csv", "every recorded IMU stream as delivered")
+                    put("mav0/imu0/<stream>.csv", "every recorded IMU stream as delivered (beside imu0's data.csv)")
                     put("settings.jsonl", "settings at start and after every change")
                 })
             }

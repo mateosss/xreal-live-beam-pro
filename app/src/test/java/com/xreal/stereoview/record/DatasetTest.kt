@@ -12,7 +12,8 @@ class DatasetTest {
     private val period = 33_333_333L
 
     /** A small image recording: cam0 with frames 0..9 except 4 and 5, imu0 at 100 Hz, a raw stream. */
-    private fun sample(): File {
+    /** A small recording; [legacyImu]: raw IMU streams in imu/ (before 0.15.3) instead of mav0/imu0. */
+    private fun sample(legacyImu: Boolean = false): File {
         val dir = File(Files.createTempDirectory("ds").toFile(), "2026-01-01_00-00-00")
         val cam = File(dir, "mav0/cam0/data").apply { mkdirs() }.parentFile!!
         val frames = (0 until 10).filter { it != 4 && it != 5 }.map { 1_000_000_000L + it * period }
@@ -23,8 +24,9 @@ class DatasetTest {
         File(dir, "mav0/imu0").mkdirs()
         File(dir, "mav0/imu0/data.csv").writeText(Euroc.IMU_HEADER + "\n" +
             (0 until 40).joinToString("") { "${1_000_000_000L + it * 10_000_000L},0.1,0.2,0.3,0,0,9.8\n" })
-        File(dir, "imu").mkdirs()
-        File(dir, "imu/gyroscope.csv").writeText("timestamp_ns,arrival_ns,wx,wy,wz,accuracy\n" +
+        val raw = if (legacyImu) File(dir, "imu") else File(dir, "mav0/imu0")
+        raw.mkdirs()
+        File(raw, "gyroscope.csv").writeText("timestamp_ns,arrival_ns,wx,wy,wz,accuracy\n" +
             (0 until 40).joinToString("") { "${1_000_000_000L + it * 10_000_000L},0,0,0,0,\n" })
         File(dir, "metadata.json").writeText(JSONObject().put("source", "BEAM_PRO").put("format_version", 2).toString())
         return dir
@@ -48,8 +50,21 @@ class DatasetTest {
     }
 
     @Test
+    fun rawImuStreamsAreReadFromImu0AndFromTheOldFolder() {
+        for (legacy in listOf(false, true)) {
+            val d = Dataset.load(sample(legacy))
+            assertEquals(listOf("gyroscope"), d.streams.map { it.first })
+            assertTrue(d.stats().any { it.name == Dataset.RAW_PREFIX + "gyroscope" })
+        }
+    }
+
+    @Test
     fun trimKeepsOnlyTheRangeEverywhere() {
-        val d = Dataset.load(sample())
+        for (legacy in listOf(false, true)) trim(legacy)
+    }
+
+    private fun trim(legacy: Boolean) {
+        val d = Dataset.load(sample(legacy))
         val start = 1_000_000_000L + 2 * period
         val end = 1_000_000_000L + 7 * period
         val target = File(d.dir.parentFile, "trimmed")
@@ -59,7 +74,7 @@ class DatasetTest {
         assertEquals(4, File(target, "mav0/cam0/data").list()!!.size)
         assertEquals(5, File(target, "mav0/cam0/frames.csv").readLines().size)
         assertTrue(t.imu0!!.t.all { it in start..end })
-        assertTrue(File(target, "imu/gyroscope.csv").readLines().drop(1).all { it.substringBefore(',').toLong() in start..end })
+        assertTrue(File(target, "mav0/imu0/gyroscope.csv").readLines().drop(1).all { it.substringBefore(',').toLong() in start..end })
         val meta = JSONObject(File(target, "metadata.json").readText())
         assertEquals(d.name, meta.getJSONObject("trimmed_from").getString("recording"))
         assertTrue(File(target, "mav0/cam0/sensor.yaml").exists())

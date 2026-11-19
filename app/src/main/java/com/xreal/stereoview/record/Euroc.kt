@@ -23,6 +23,19 @@ object Euroc {
 
     fun mav(dir: File) = File(dir, "mav0")
 
+    /** Where the raw IMU streams go: beside imu0's data.csv and sensor.yaml. */
+    const val RAW_IMU_PATH = "mav0/imu0"
+
+    fun rawImuDir(dir: File) = File(dir, RAW_IMU_PATH)
+
+    /**
+     * The raw IMU stream files of a recording: the CSV files in mav0/imu0 but data.csv, and those of
+     * recordings made before 0.15.3, in imu/ beside mav0.
+     */
+    fun rawImuFiles(dir: File): List<File> =
+        (rawImuDir(dir).listFiles().orEmpty().filter { it.name != "data.csv" } + File(dir, "imu").listFiles().orEmpty())
+            .filter { it.isFile && it.name.endsWith(".csv") }.sortedBy { it.name }
+
     /** Row-major 4×4 transform from a row-major 3×3 [rotation] and a [translation] (zero if null). */
     fun transform(rotation: DoubleArray, translation: DoubleArray?): DoubleArray {
         val t = translation ?: DoubleArray(3)

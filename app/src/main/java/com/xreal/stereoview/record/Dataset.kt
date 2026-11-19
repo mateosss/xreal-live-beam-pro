@@ -7,9 +7,9 @@ import kotlin.math.roundToLong
 /**
  * A saved recording read back for preview, statistics and trimming: its cameras
  * (mav0/camN/data.csv with images in data/ or a data.mp4), mav0/imu0 and every raw IMU stream
- * under imu/. Plain java.io and org.json, so it is unit-tested on the JVM.
+ * in mav0/imu0 beside its data.csv (imu/ in recordings before 0.15.3). Plain java.io and org.json, so it is unit-tested on the JVM.
  *
- * Cameras and imu0 share the dataset clock; [startNs]..[endNs] spans them. Raw streams in imu/
+ * Cameras and imu0 share the dataset clock; [startNs]..[endNs] spans them. Raw streams
  * may be on another clock (the phone's, for glasses and OAK recordings), so they only appear in
  * the statistics.
  */
@@ -18,7 +18,7 @@ class Dataset(
     val metadata: JSONObject?,
     val cameras: List<Camera>,
     val imu0: Imu?,
-    /** Raw IMU streams (imu/<name>.csv): name and timestamps. */
+    /** Raw IMU streams (mav0/imu0/<name>.csv, or imu/ before 0.15.3): name and timestamps. */
     val streams: List<Pair<String, LongArray>>,
 ) {
     val name: String get() = dir.name
@@ -85,7 +85,7 @@ class Dataset(
     fun stats(): List<Stats> = buildList {
         for (c in cameras) add(statsOf(c.name, "camera (${c.format})", c.timestamps, writerDrops(c)))
         imu0?.let { add(statsOf("imu0", "EuRoC IMU", it.t, null)) }
-        for ((name, t) in streams) add(statsOf("imu/$name", "raw IMU stream", t, null))
+        for ((name, t) in streams) add(statsOf("$RAW_PREFIX$name", "raw IMU stream", t, null))
     }
 
     /** Frames the recorder reported dropping for [camera], from metadata.json. */
@@ -107,6 +107,9 @@ class Dataset(
     }
 
     companion object {
+        /** Prefix of the raw IMU streams' names in [stats] (they are on their own clocks). */
+        const val RAW_PREFIX = "imu0/"
+
         const val MAX_GAPS = 5000
 
         fun statsOf(name: String, kind: String, t: LongArray, writerDrops: Int?): Stats {
@@ -150,7 +153,7 @@ class Dataset(
                     Camera(camDir.name, camDir, ts.toArray(), files)
                 }
             val imu0 = File(mav, "imu0/data.csv").takeIf { it.exists() }?.let(::readImu)
-            val streams = File(dir, "imu").listFiles { f -> f.name.endsWith(".csv") }.orEmpty().sortedBy { it.name }
+            val streams = Euroc.rawImuFiles(dir)
                 .map { it.name.removeSuffix(".csv") to readFirstColumn(it) }
                 .filter { it.second.isNotEmpty() }
             return Dataset(dir, metadata, cameras, imu0, streams)

@@ -76,13 +76,14 @@ object DatasetTrimmer {
                 filterCsv(File(imu0, "data.csv"), File(out, "data.csv"), 0, actualStart, endNs)
             }
             progress((total - 1f) / total)
-            File(src, "imu").listFiles { f -> f.name.endsWith(".csv") }?.let { streams ->
-                val out = File(partial, "imu").apply { mkdirs() }
+            // Raw streams go to mav0/imu0, also those of recordings made before they moved there.
+            Euroc.rawImuFiles(src).takeIf { it.isNotEmpty() }?.let { streams ->
+                val out = Euroc.rawImuDir(partial).apply { mkdirs() }
                 for (f in streams) {
                     val offset = streamOffset(dataset, f.name)
                     if (offset == null) {
                         f.copyTo(File(out, f.name))
-                        notes += "imu/${f.name}: copied whole (its clock offset is unknown)"
+                        notes += "${Euroc.RAW_IMU_PATH}/${f.name}: copied whole (its clock offset is unknown)"
                     } else {
                         filterCsv(f, File(out, f.name), 0, actualStart + offset, endNs + offset)
                     }

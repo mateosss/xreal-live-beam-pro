@@ -247,7 +247,7 @@ class OakRecording private constructor(
         val live = imu0 ?: return JSONObject().put("samples", 0).put("note", "OAK IMU off")
         writeImu0Yaml(dir, live.rateHz)
         return JSONObject().put("samples", live.rows).put("rate_hz", live.rateHz)
-            .put("source", "imu/oak_gyroscope.csv + imu/oak_accelerometer.csv, written live")
+            .put("source", "mav0/imu0/oak_gyroscope.csv + oak_accelerometer.csv, written live")
     }
 
     companion object {
@@ -297,9 +297,9 @@ class OakRecording private constructor(
                 }
             }
             File(mav, "body.yaml").writeText(Euroc.bodyYaml("The body frame is the OAK's IMU."))
-            File(dir, "imu").mkdirs()
-            val accel = if (s.oakImuRateHz > 0) LineWriter(File(dir, "imu/oak_accelerometer.csv"), IMU_HEADER) else null
-            val gyro = if (s.oakImuRateHz > 0) LineWriter(File(dir, "imu/oak_gyroscope.csv"), IMU_HEADER) else null
+            Euroc.rawImuDir(dir).mkdirs()
+            val accel = if (s.oakImuRateHz > 0) LineWriter(File(Euroc.rawImuDir(dir), "oak_accelerometer.csv"), IMU_HEADER) else null
+            val gyro = if (s.oakImuRateHz > 0) LineWriter(File(Euroc.rawImuDir(dir), "oak_gyroscope.csv"), IMU_HEADER) else null
             val imu0 = if (s.oakImuRateHz > 0) {
                 File(mav, "imu0").mkdirs()
                 writeImu0Yaml(dir, 0.0)
@@ -349,7 +349,7 @@ class OakRecording private constructor(
                     }
                     put("oak_imu_gyroscope_hz_requested", s.oakImuRateHz)
                     put("oak_imu_accelerometer_hz_requested", OakDevice.accelRateFor(s.oakImuRateHz))
-                    put("oak_imu_note", "Accelerometer and gyroscope have their own rates and timestamps: imu/oak_*.csv hold each sensor's " +
+                    put("oak_imu_note", "Accelerometer and gyroscope have their own rates and timestamps: mav0/imu0/oak_*.csv hold each sensor's " +
                         "own samples; imu0 uses the gyroscope's timestamps with the accelerometer linearly interpolated to them.")
                     put("settings", Metadata.settings(s))
                 })
@@ -361,7 +361,7 @@ class OakRecording private constructor(
                     put("mav0/cam2", "color camera (if on): data/<timestamp_ns>.jpg as encoded on the camera")
                     put("mav0/camN/frames.csv", FRAMES_HEADER)
                     put("mav0/imu0", "EuRoC IMU from the OAK IMU: gyroscope timestamps, accelerometer interpolated (built at the end)")
-                    put("imu/oak_accelerometer.csv, oak_gyroscope.csv", IMU_HEADER + " (raw sensor values, m/s² and rad/s)")
+                    put("mav0/imu0/oak_accelerometer.csv, oak_gyroscope.csv", IMU_HEADER + " (raw sensor values, m/s² and rad/s)")
                     put("oak_calibration.json", "the camera's full factory calibration (depthai EEPROM data)")
                     put("settings.jsonl", "settings at start and after every change")
                 })

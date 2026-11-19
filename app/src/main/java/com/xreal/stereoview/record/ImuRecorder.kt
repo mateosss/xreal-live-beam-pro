@@ -114,7 +114,7 @@ class ImuRecorder(
 
         fun toJson() = JSONObject().apply {
             put("stream", stream.name)
-            put("file", "imu/${stream.file}.csv")
+            put("file", "${Euroc.RAW_IMU_PATH}/${stream.file}.csv")
             put("columns", JSONArray(listOf("timestamp_ns", "arrival_ns") + stream.columns + "accuracy"))
             put("mode", mode)
             put("requested_period_us", requestedPeriodUs)
