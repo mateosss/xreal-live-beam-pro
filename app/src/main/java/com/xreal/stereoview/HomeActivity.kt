@@ -32,6 +32,7 @@ import com.xreal.stereoview.glasses.GlassesProtocol
 import com.xreal.stereoview.ui.CameraSource
 import com.xreal.stereoview.ui.Dialogs
 import com.xreal.stereoview.ui.DraftSettings
+import com.xreal.stereoview.ui.FilePicker
 import com.xreal.stereoview.ui.Profile
 import com.xreal.stereoview.ui.RecordingsActivity
 import com.xreal.stereoview.ui.SettingsSheet
@@ -345,6 +346,8 @@ class HomeActivity : AppCompatActivity() {
         }.show()
     }
 
+    private val filePicker = FilePicker(this)
+
     /** The settings sheet's host in the profile editor: no cameras are open here. */
     private val editorHost = object : SettingsSheet.Host {
         override val rig: StereoRig? by lazy {
@@ -359,6 +362,7 @@ class HomeActivity : AppCompatActivity() {
         override fun showProfiles() = Unit
         override fun probeUsb() = Unit
         override fun showRecordings() = RecordingsActivity.open(this@HomeActivity, null)
+        override fun pickFile(onPicked: (android.net.Uri, String?) -> Unit) = filePicker.pick(onPicked)
     }
 
     // endregion

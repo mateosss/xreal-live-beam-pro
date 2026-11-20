@@ -834,23 +834,9 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     private var notificationPermissionAsked = false
     private val requestNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
-    private var onFilePicked: ((android.net.Uri, String?) -> Unit)? = null
-    private val openDocument = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        val callback = onFilePicked
-        onFilePicked = null
-        if (uri == null || callback == null) return@registerForActivityResult
-        val name = runCatching {
-            contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-                if (c.moveToFirst()) c.getString(0) else null
-            }
-        }.getOrNull()
-        callback(uri, name)
-    }
+    private val filePicker = com.xreal.stereoview.ui.FilePicker(this)
 
-    override fun pickFile(onPicked: (android.net.Uri, String?) -> Unit) {
-        onFilePicked = onPicked
-        openDocument.launch(arrayOf("application/json", "text/plain", "application/octet-stream", "*/*"))
-    }
+    override fun pickFile(onPicked: (android.net.Uri, String?) -> Unit) = filePicker.pick(onPicked)
 
     private fun startGlassesRecording() {
         val device = glasses.find()
