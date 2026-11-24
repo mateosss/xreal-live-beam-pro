@@ -35,6 +35,11 @@ import com.xreal.stereoview.camera.CameraTarget
 import com.xreal.stereoview.camera.CameraUtils
 import com.xreal.stereoview.camera.StereoRig
 import com.xreal.stereoview.databinding.ActivityMainBinding
+import com.xreal.stereoview.device.DeviceSession
+import com.xreal.stereoview.device.GlassesSession
+import com.xreal.stereoview.device.OakSession
+import com.xreal.stereoview.device.PhoneSession
+import com.xreal.stereoview.device.SessionHost
 import com.xreal.stereoview.glasses.GlassesDevice
 import com.xreal.stereoview.glasses.GlassesImuCalibration
 import com.xreal.stereoview.glasses.GlassesProtocol
@@ -76,31 +81,34 @@ import kotlin.concurrent.thread
  * Output goes to the glasses' presentation display when one is detected (controls stay on the
  * phone), otherwise full-screen on the phone, which the glasses mirror.
  */
-class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRenderer.Listener, ControlsOverlay.Actions {
+class MainActivity : AppCompatActivity(), StereoRenderer.Listener, ControlsOverlay.Actions {
 
     private val viewModel: SettingsViewModel by viewModels()
     private lateinit var binding: ActivityMainBinding
     private lateinit var controls: ControlsOverlay
-    private lateinit var camera: CameraController
     private lateinit var stabilizer: Stabilizer
-    private lateinit var cameraManager: CameraManager
     private lateinit var displayManager: DisplayManager
+
+    // The camera sources; one runs at a time (the profile's).
+    private lateinit var phone: PhoneSession
+    private lateinit var glasses: GlassesSession
+    private lateinit var oak: OakSession
+    private lateinit var sessions: List<DeviceSession>
 
     private var glView: SurfaceView? = null
     private var renderThread: RenderThread? = null
-    private var renderer: StereoRenderer? = null
-    private var presentation: StereoPresentation? = null
+
+    // Read by the devices' threads.
+    @Volatile private var renderer: StereoRenderer? = null
+
+    @Volatile private var recording: ActiveRecording? = null
 
     /** Portrait capture view (Settings → Phone preview), while shown; camera threads feed it. */
     @Volatile private var capture: CapturePreview? = null
-
-    /** Phone IMU feeding [capture] with the phone's own cameras. */
-    private var captureSensors: android.hardware.SensorEventListener? = null
+    private var presentation: StereoPresentation? = null
     private var outputDisplay: Display? = null
     private var surfaces: Pair<SurfaceTexture, SurfaceTexture>? = null
 
-    private var rig: StereoRig? = null
-    private var streamSize: Size? = null
     private var playing = true
     private var outputActive = false
     private var lastSettings: StereoSettings? = null
@@ -108,22 +116,6 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
 
     /** The cameras should start as soon as the stored settings (camera source etc.) are loaded. */
     private var cameraStartPending = false
-    private var recording: ActiveRecording? = null
-
-    // Glasses cameras (and IMU) over USB, when they are the camera source.
-    private lateinit var glasses: GlassesDevice
-    private lateinit var oak: OakDevice
-    private var oakStatsTime = 0L
-
-    /** The user accepted taking the glasses' camera (and IMU) from the system this session. */
-    private var glassesTakeoverConfirmed = false
-
-    @Volatile
-    private var glassesCalibration: String? = null
-
-    @Volatile private var glassesImuCalibration = GlassesImuCalibration.parse(null)
-    private var glassesImuActive = false
-    private var glassesStatsTime = 0L
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private val requestPermission =
@@ -143,11 +135,11 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        cameraManager = getSystemService(CameraManager::class.java)
         displayManager = getSystemService(DisplayManager::class.java)
-        camera = CameraController(this, this)
-        glasses = GlassesDevice(applicationContext, glassesListener)
-        oak = OakDevice(applicationContext, oakListener)
+        phone = PhoneSession(host, { surfaces }, ::displayRotation)
+        glasses = GlassesSession(host)
+        oak = OakSession(host)
+        sessions = listOf(phone, glasses, oak)
         stabilizer = Stabilizer(this)
         controls = ControlsOverlay(binding.controls, viewModel, this)
         controls.setPlaying(playing)
@@ -250,7 +242,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     override fun onDestroy() {
         // E.g. swiped away from recents while recording in the background: save what was recorded.
         if (recording != null) teardownOutput()
-        camera.release()
+        sessions.forEach { it.release() }
         super.onDestroy()
     }
 
@@ -296,9 +288,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         if (!outputActive) return
         stopRecording("Recording stopped: app paused", waitForGl = true)
         outputActive = false
-        stopGlasses()
-        stopOak()
-        camera.stopBlocking()
+        sessions.forEach { it.shutdown() }
         stabilizer.stop()
         removeCapture()
         presentation?.dismiss()
@@ -311,7 +301,6 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         renderer = null
         outputDisplay = null
         surfaces = null
-        streamSize = null
     }
 
     private fun rebuildOutput() {
@@ -337,88 +326,23 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         if (viewModel.loaded) startCamera() else cameraStartPending = true
     }
 
+    /** Starts the profile's camera source; the others stop. */
     private fun startCamera() {
-        val (left, right) = surfaces ?: return
-        val settings = viewModel.settings.value
-        if (settings.cameraSource != CameraSource.BEAM_PRO) {
-            camera.pause()
-            rig = null
-            streamSize = null
-            renderer?.cameras = null
-            if (settings.cameraSource == CameraSource.GLASSES) {
-                stopOak()
-                startGlasses(settings.glassesImu)
-            } else {
-                stopGlasses()
-                startOak()
-            }
-            return
-        }
-        stopGlasses()
-        stopOak()
-        val rig = CameraUtils.selectRig(
-            cameraManager, displayRotation(), settings.maxResolution, settings.cameraPair, settings.targetFps,
-        )
-        if (rig == null) {
-            onCameraError("No rear camera found")
-            return
-        }
-        this.rig = rig
-        controls.setRig(rig)
-        camera.start(rig, left, right, exposureOf(settings))
+        if (surfaces == null) return
+        val session = session()
+        for (other in sessions) if (other !== session) other.onOtherSourceStarting()
+        session.start()
     }
 
-    override fun onCameraStatus(message: String) {
-        Log.i(TAG, message)
-        runOnUiThread { controls.setStatus(message) }
-    }
-
-    override fun onCameraStreaming(rig: StereoRig, size: Size) {
-        runOnUiThread {
-            Log.i(TAG, "Streaming ${rig.description} at $size")
-            this.rig = rig
-            streamSize = size
-            controls.setRig(rig)
-            renderer?.cameras = cameraModels(rig, size)
-            updateStatus()
-        }
-    }
-
-    /** Geometric models of the rig's two streams; a single camera yields the same model twice. */
-    private fun cameraModels(rig: StereoRig, size: Size): StereoRenderer.Cameras? = try {
-        fun model(target: CameraTarget) = CameraModel.from(
-            target.label,
-            cameraManager.getCameraCharacteristics(target.physicalId ?: target.deviceId),
-            size,
-            rig.undistortInShader,
-        )
-        val left = model(rig.left)
-        val right = if (rig.right == rig.left) left else model(rig.right)
-        StereoRenderer.Cameras(left, right, displayRotation())
-    } catch (e: Exception) {
-        Log.w(TAG, "Cannot build camera models", e)
-        null
-    }
+    /** The session of [source], by default the current settings' camera source. */
+    private fun session(source: CameraSource = viewModel.settings.value.cameraSource) = sessions.first { it.source == source }
 
     /** Measures and corrects the eyes' vertical offset and roll; repeats once to refine. */
     override fun onAutoAlign() {
         val renderer = renderer ?: return
         val s0 = viewModel.settings.value
-        if (s0.cameraSource == CameraSource.OAK) {
-            controls.setStatus("Auto-align works on rectified views, which the OAK preview doesn't have yet; use Settings → Eye alignment")
-            return
-        }
-        if (s0.cameraSource == CameraSource.GLASSES) {
-            if (!glasses.isRunning) {
-                controls.setStatus("Auto-align needs the glasses cameras running")
-                return
-            }
-            if (!s0.glassesRectify) {
-                controls.setStatus("Auto-align works on the rectified view: turn on Settings → Rectify glasses cameras")
-                return
-            }
-        } else if (streamSize == null) {
-            controls.setStatus("Auto-align needs the cameras running")
+        session(s0.cameraSource).alignBlocker(s0)?.let {
+            controls.setStatus(it)
             return
         }
         fun round(n: Int) {
@@ -448,11 +372,6 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         round(1)
     }
 
-    override fun onCameraError(message: String) {
-        Log.w(TAG, message)
-        runOnUiThread { controls.setStatus("⚠ $message") }
-    }
-
     override fun onPlayPause() {
         if (playing) stopRecording("Recording stopped: cameras paused")
         playing = !playing
@@ -460,9 +379,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         if (playing) {
             startCamera()
         } else {
-            camera.pause()
-            stopGlasses()
-            stopOak()
+            sessions.forEach { it.stop() }
         }
         updateStatus()
     }
@@ -487,91 +404,26 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         if (s != previous) recording?.onSettingsChanged(s)
         if (s.outputMode != previous.outputMode) {
             rebuildOutput()
-        } else if ((s.cameraSource != previous.cameraSource || s.glassesImu != previous.glassesImu ||
-                (s.cameraSource == CameraSource.GLASSES && s.glassesImu && s.buffers.glassesImuS != previous.buffers.glassesImuS)) && playing
-        ) {
+        } else if (s.cameraSource != previous.cameraSource && playing) {
             stopRecording("Recording stopped: camera source changed")
             binding.hudText.text = ""
             startCamera()
-        } else if ((s.maxResolution != previous.maxResolution || s.cameraPair != previous.cameraPair ||
-                s.targetFps != previous.targetFps) && playing && s.cameraSource == CameraSource.BEAM_PRO
-        ) {
-            stopRecording("Recording stopped: camera settings changed")
-            startCamera()
-        } else if (s.cameraSource == CameraSource.OAK && oakConfigOf(s).copy(exposures = previous.oakExposures) != oakConfigOf(previous) && playing) {
-            stopRecording("Recording stopped: OAK settings changed")
-            stopOak()
-            startOak()
-        } else if (s.cameraSource == CameraSource.OAK) {
-            for (i in s.oakExposures.indices) {
-                if (s.oakExposures[i] != previous.oakExposures.getOrNull(i)) oak.setExposure(i, s.oakExposures[i])
+        } else {
+            val session = session(s.cameraSource)
+            val reason = if (playing) session.restartReason(s, previous) else null
+            if (reason != null) {
+                stopRecording(reason)
+                session.restart()
+            } else {
+                session.applyLive(s, previous)
             }
-        } else if (s.cameraSource == CameraSource.GLASSES) {
-            if (glassesExposureOf(s) != glassesExposureOf(previous) && glasses.isRunning) glasses.setExposure(glassesExposureOf(s))
-        } else if (exposureOf(s) != exposureOf(previous)) {
-            camera.setExposure(exposureOf(s))
         }
-    }
-
-    private fun exposureOf(s: StereoSettings) =
-        CameraController.Exposure(s.exposure, s.manualExposure, s.exposureTimeNs, s.iso, s.focusMode == FocusMode.INFINITY)
-
-    private fun glassesExposureOf(s: StereoSettings) =
-        GlassesDevice.Exposure(s.glassesManualExposure, s.glassesExposure100us, s.glassesGain)
-
-    private var captureStats = ""
-
-    override fun onCaptureStats(exposureTimeNs: Long, iso: Int, frameDurationNs: Long) {
-        val text = "sensor: exposure 1/%d s, ISO %d, frame %.1f ms".format(
-            if (exposureTimeNs > 0) (1e9 / exposureTimeNs).toInt() else 0, iso, frameDurationNs / 1e6,
-        )
-        runOnUiThread { captureStats = text }
     }
 
     override fun onRenderStats(stats: StereoRenderer.RenderStats) {
         if (!viewModel.settings.value.showHud) return
-        if (viewModel.settings.value.cameraSource == CameraSource.OAK) {
-            val now = android.os.SystemClock.elapsedRealtime()
-            val seconds = ((now - oakStatsTime) / 1000.0).coerceAtLeast(1e-3)
-            oakStatsTime = now
-            val o = oak.takeStats()
-            val info = oak.info
-            binding.hudText.text = buildString {
-                appendLine("OAK: %.1f pairs/s  mono %.1f/s  color %.1f/s  IMU %.0f Hz  draw %.1f fps".format(
-                    o.pairs / seconds, o.monoFrames / seconds, o.rgbFrames / seconds, o.imuSamples / seconds, stats.drawFps,
-                ))
-                appendLine("lost mono frames ${o.droppedSequences}  ${info?.optString("usb_speed") ?: ""} ${info?.optString("product_name") ?: ""}")
-                recording?.let { appendLine(it.backlog) }
-                append(stats.view)
-            }
-            return
-        }
-        if (viewModel.settings.value.cameraSource == CameraSource.GLASSES) {
-            val now = android.os.SystemClock.elapsedRealtime()
-            val seconds = ((now - glassesStatsTime) / 1000.0).coerceAtLeast(1e-3)
-            glassesStatsTime = now
-            val g = glasses.takeStats()
-            binding.hudText.text = buildString {
-                appendLine("glasses: %.1f frames/s (%.1f pairs/s)  %.1f MB/s  draw %.1f fps".format(
-                    g.frames / seconds, g.pairs / seconds, g.megabytes / seconds, stats.drawFps,
-                ))
-                appendLine("incomplete %d  dropped payloads %d".format(g.incomplete, g.dropped))
-                appendLine(if (glassesImuActive) "glasses IMU %.0f Hz".format(g.imuSamples / seconds) else "glasses IMU: left to the system")
-                recording?.let { appendLine(it.backlog) }
-                append(stats.view)
-            }
-            return
-        }
-        val sync = stats.sync
         binding.hudText.text = buildString {
-            appendLine("L %.1f fps  R %.1f fps  draw %.1f fps (%.2f ms)".format(stats.leftFps, stats.rightFps, stats.drawFps, stats.drawMs))
-            appendLine("L/R Δ mean %.2f ms  max %.2f ms  over threshold %d/%d".format(sync.meanDeltaMs, sync.maxDeltaMs, sync.unsyncedPairs, sync.pairs))
-            appendLine(
-                "stream ${streamSize ?: "-"} (max %.0f fps)  output %d×%d".format(
-                    streamSize?.let { rig?.maxFps?.get(it) } ?: 0.0, stats.outputSize.width, stats.outputSize.height,
-                )
-            )
-            appendLine(captureStats)
+            appendLine(session().hud(stats))
             recording?.let { appendLine(it.backlog) }
             append(stats.view)
         }
@@ -579,30 +431,23 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
 
     private fun updateStatus() {
         val output = outputDisplay?.let { "Glasses: ${DisplayUtils.describe(it)}" } ?: "Output: this screen (mirrored to glasses)"
-        val rig = rig
-        val source = when {
-            !playing -> "Paused"
-            viewModel.settings.value.cameraSource == CameraSource.GLASSES ->
-                if (glasses.isRunning) "Glasses cameras${if (glassesImuActive) " + IMU" else ""}" else "Glasses cameras not running"
-            viewModel.settings.value.cameraSource == CameraSource.OAK ->
-                if (oak.isRunning) "OAK ${oak.info?.optString("product_name")?.ifEmpty { null } ?: "camera"} (${oak.info?.optString("usb_speed") ?: "?"})"
-                else "OAK camera not running"
-            rig == null || streamSize == null -> "Starting cameras…"
-            else -> "${rig.description} @ $streamSize"
-        }
-        val warning = if (rig?.baselineVertical == true) "\n⚠ The cameras are stacked vertically in this orientation: turn the device to landscape for stereo depth." else ""
+        val session = session()
+        val source = if (playing) session.status else "Paused"
+        val warning = session.statusWarning
         controls.setStatus("$output · $source$warning")
     }
 
     override fun onShowInfo() {
         val text = buildString {
             appendLine(CrashReporter.deviceInfo(this@MainActivity))
+            val rig = phone.rig
             appendLine("Active rig: ${rig?.description ?: "none"}")
-            appendLine("Stream size: ${streamSize ?: "-"}, sensor orientation ${rig?.sensorOrientation ?: "-"}°")
+            appendLine("Stream size: ${phone.streamSize ?: "-"}, sensor orientation ${rig?.sensorOrientation ?: "-"}°")
             appendLine("Rectification: ${renderer?.geometrySummary ?: "-"}")
             appendLine("Glasses rectification: ${renderer?.glassesGeometrySummary ?: "-"}")
-            if (glasses.imuReadsQueued > 0) appendLine("Glasses IMU: ${glasses.imuReadsQueued} reads queued (of ${glasses.imuReadsWanted} wanted)")
-            appendLine("Glasses camera controls: ${glasses.controls?.report ?: "glasses cameras not started"}")
+            val g = glasses.device
+            if (g.imuReadsQueued > 0) appendLine("Glasses IMU: ${g.imuReadsQueued} reads queued (of ${g.imuReadsWanted} wanted)")
+            appendLine("Glasses camera controls: ${g.controls?.report ?: "glasses cameras not started"}")
             renderer?.cameras?.let { cams ->
                 appendLine("  " + cams.left.describe())
                 if (cams.right !== cams.left) appendLine("  " + cams.right.describe())
@@ -614,7 +459,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             appendLine()
             append(
                 try {
-                    CameraUtils.describeCameras(cameraManager)
+                    CameraUtils.describeCameras(phone.cameraManager)
                 } catch (e: Exception) {
                     "Camera query failed: ${e.message}"
                 }
@@ -704,7 +549,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     }
 
     override fun cameraPairOptions(): List<Pair<String, String>> =
-        CameraUtils.stereoRigs(cameraManager, displayRotation(), viewModel.settings.value.maxResolution)
+        CameraUtils.stereoRigs(phone.cameraManager, displayRotation(), viewModel.settings.value.maxResolution)
             .map { it.key to it.description }
 
     // endregion
@@ -718,29 +563,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         if (recording != null) stopRecording(null) else startRecording()
     }
 
-    private fun startRecording() {
-        if (viewModel.settings.value.cameraSource == CameraSource.GLASSES) {
-            startGlassesRecording()
-            return
-        }
-        if (viewModel.settings.value.cameraSource == CameraSource.OAK) {
-            startOakRecording()
-            return
-        }
-        val renderer = renderer
-        val rig = rig
-        val size = streamSize
-        val cams = renderer?.cameras
-        if (renderer == null || rig == null || size == null || cams == null || !playing) {
-            controls.setStatus("Recording needs the cameras running")
-            return
-        }
-        val rec = beginRecording("Recording", usb = false) {
-            Recording.start(this, viewModel.settings.value, rig, size, cams, cameraManager, recordingInfo())
-        } ?: return
-        camera.resultListener = rec
-        renderer.startRecording(rec)
-    }
+    private fun startRecording() = session().startRecording()
 
     /**
      * Starts a recording made by [create] if there is room for it, keeps it running in the
@@ -774,8 +597,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             controls.setRecording(null)
             return
         }
-        if (rec is GlassesRecording && !glasses.isRunning) rec.error = "the glasses stream stopped"
-        if (rec is OakRecording && !oak.isRunning) rec.error = "the OAK camera stopped"
+        sessions.firstNotNullOfOrNull { it.streamLost(rec) }?.let { rec.error = it }
         rec.writeErrors()?.let { rec.error = "writing failed ($it)" }
         if (rec.dir.usableSpace < STOP_FREE_BYTES) rec.error = "storage is almost full"
         rec.error?.let {
@@ -801,7 +623,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
                 if (playing && outputActive && recording == null && viewModel.settings.value.cameraSource == CameraSource.BEAM_PRO) startCamera()
             }
         }
-        camera.resultListener = null
+        sessions.forEach { it.onRecordingStopped() }
         val glRecording = rec as? Recording
         controls.setRecording(null)
         controls.setStatus((reason?.let { "$it. " } ?: "") + "Saving ${rec.dir.name}…")
@@ -860,206 +682,25 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
 
     override fun pickFile(onPicked: (android.net.Uri, String?) -> Unit) = filePicker.pick(onPicked)
 
-    private fun startGlassesRecording() {
-        val device = glasses.find()
-        if (!playing || device == null || !glasses.isRunning) {
-            controls.setStatus("Recording needs the glasses cameras running")
-            return
-        }
-        beginRecording("Recording glasses cameras", usb = true) {
-            GlassesRecording.start(this, viewModel.settings.value, device, glassesImuActive, recordingInfo())
-                .also { rec -> glassesCalibration?.let(rec::onCalibration) }
-        }
-    }
-
     // endregion
 
-    // region Glasses cameras
-
-    private val glassesListener = object : GlassesDevice.Listener {
-        override fun onStatus(message: String) {
-            Log.i(TAG, message)
-            runOnUiThread {
-                controls.setStatus(message)
-                updateStatus()
-            }
-        }
-
-        override fun onError(message: String) {
-            Log.w(TAG, message)
-            runOnUiThread { controls.setStatus("⚠ $message") }
-        }
-
-        override fun onStereoFrame(frame: GlassesDevice.StereoFrame) {
-            renderer?.glassesFrame = frame
-            (recording as? GlassesRecording)?.onStereoFrame(frame)
-            capture?.let {
-                it.gray(0, frame.left.image, 480, 640)
-                it.gray(1, frame.right.image, 480, 640)
-            }
-        }
-
-        override fun onImu(sample: GlassesProtocol.ImuSample, arrivalNs: Long) {
-            (recording as? GlassesRecording)?.onImu(sample, arrivalNs)
-            capture?.let {
-                // As recorded in imu0: calibrated, in Monado's IMU axes.
-                val g = glassesImuCalibration.gyro(sample)
-                val a = glassesImuCalibration.accel(sample)
-                it.gyro.add(sample.timestampNs, g[0].toFloat(), g[1].toFloat(), g[2].toFloat())
-                it.accel.add(sample.timestampNs, a[0].toFloat(), a[1].toFloat(), a[2].toFloat())
-            }
-        }
-
-        override fun onCalibration(json: String) {
-            glassesCalibration = json
-            glassesImuCalibration = GlassesImuCalibration.parse(json)
-            Log.i(TAG, "Glasses calibration: ${json.length} bytes")
-            (recording as? GlassesRecording)?.onCalibration(json)
-        }
-
-        override fun onControls(controls: GlassesDevice.CameraControls) {
-            runOnUiThread { this@MainActivity.controls.setGlassesControls(controls) }
-        }
+    /** What the camera sources need from this screen. */
+    private val host = object : SessionHost {
+        override val activity: AppCompatActivity get() = this@MainActivity
+        override val controls: ControlsOverlay get() = this@MainActivity.controls
+        override val settings: StereoSettings get() = viewModel.settings.value
+        override val playing: Boolean get() = this@MainActivity.playing
+        override val renderer: StereoRenderer? get() = this@MainActivity.renderer
+        override val recording: ActiveRecording? get() = this@MainActivity.recording
+        override val capture: CapturePreview? get() = this@MainActivity.capture
+        override fun showStatus(message: String) = runOnUiThread { controls.setStatus(message) }
+        override fun showError(message: String) = runOnUiThread { controls.setStatus("⚠ $message") }
+        override fun refreshStatus() = runOnUiThread { updateStatus() }
+        override fun stopRecording(reason: String) = this@MainActivity.stopRecording(reason)
+        override fun <R : ActiveRecording> beginRecording(what: String, usb: Boolean, create: () -> R): R? =
+            this@MainActivity.beginRecording(what, usb, create)
+        override fun recordingInfo(): JSONObject = this@MainActivity.recordingInfo()
     }
-
-    /**
-     * Takes over the glasses' camera (and with [withImu] their IMU) after the user agrees once
-     * per session and grants USB access, then streams it into the renderer.
-     */
-    private fun startGlasses(withImu: Boolean) {
-        if (glasses.isRunning) stopGlasses()
-        val device = glasses.find()
-        if (device == null) {
-            controls.setStatus("⚠ No Air 2 Ultra found over USB. Connect the glasses, or switch the camera source to the Beam Pro.")
-            return
-        }
-        fun go() = glasses.requestPermission(device) { granted ->
-            if (!granted) {
-                controls.setStatus("⚠ USB access to the glasses was denied")
-                return@requestPermission
-            }
-            if (!playing || viewModel.settings.value.cameraSource != CameraSource.GLASSES) return@requestPermission
-            glassesImuActive = withImu
-            glassesStatsTime = android.os.SystemClock.elapsedRealtime()
-            glasses.start(device, withImu, glassesExposureOf(viewModel.settings.value), viewModel.settings.value.buffers.glassesImuS * GlassesDevice.IMU_RATE_HZ)
-            controls.setStatus("Starting the glasses cameras…")
-            updateStatus()
-        }
-        if (glassesTakeoverConfirmed) {
-            go()
-            return
-        }
-        MaterialAlertDialogBuilder(this)
-            .setTitle("Use the glasses' cameras")
-            .setMessage(
-                "The app will take the glasses' tracking cameras" + (if (withImu) " and IMU" else "") +
-                    " away from the system to stream them directly. Until you unplug and replug the glasses, " +
-                    "XREAL features that use them" + (if (withImu) ", including head tracking," else "") +
-                    " won't work. The display is not affected.",
-            )
-            .setPositiveButton("Take over") { _, _ ->
-                glassesTakeoverConfirmed = true
-                go()
-            }
-            .setNegativeButton(android.R.string.cancel) { _, _ ->
-                controls.setStatus("Glasses cameras not started")
-            }
-            .show()
-    }
-
-    private fun stopGlasses() {
-        if (!glasses.isRunning) return
-        (recording as? GlassesRecording)?.let { stopRecording("Recording stopped: glasses cameras stopped") }
-        glasses.stop()
-        renderer?.glassesFrame = null
-        glassesImuActive = false
-        controls.setGlassesControls(null)
-    }
-
-    // endregion
-
-    // region OAK camera
-
-    private fun oakConfigOf(s: StereoSettings) = OakDevice.Config(
-        s.oakMonoHeight, s.oakFps, s.oakRgbHeight, s.oakJpegQuality, s.oakImuRateHz, s.oakUsb3, s.oakExposures,
-        linkFrames = (s.buffers.oakLinkS * maxOf(s.oakFps, s.oakRgbFps)).coerceAtLeast(OakDevice.MIN_LINK_FRAMES),
-        imuPackets = (s.buffers.oakImuS * (s.oakImuRateHz + OakDevice.accelRateFor(s.oakImuRateHz))).coerceAtLeast(OakDevice.MIN_IMU_PACKETS),
-        rgbFps = s.oakRgbFps,
-        rgbRaw = s.oakRgbFormat != OakRgbFormat.JPEG,
-    )
-
-    private fun startOak() {
-        oakStatsTime = android.os.SystemClock.elapsedRealtime()
-        controls.setOakMode(true)
-        oak.start(oakConfigOf(viewModel.settings.value))
-        updateStatus()
-    }
-
-    private fun stopOak() {
-        (recording as? OakRecording)?.let { stopRecording("Recording stopped: OAK camera stopped") }
-        oak.stop()
-        renderer?.oakFrame = null
-    }
-
-    private val oakListener = object : OakDevice.Listener {
-        override fun onStatus(message: String) {
-            Log.i(TAG, message)
-            runOnUiThread { controls.setStatus(message) }
-        }
-
-        override fun onError(message: String) {
-            Log.w(TAG, message)
-            runOnUiThread { controls.setStatus("⚠ $message") }
-        }
-
-        override fun onStarted(info: JSONObject) {
-            Log.i(TAG, "OAK started: ${info.optString("product_name")} ${info.optString("usb_speed")}")
-            runOnUiThread {
-                updateStatus()
-                if (info.optString("usb_speed") == "USB2") {
-                    controls.setStatus("OAK on USB2: high resolutions and frame rates may drop frames. A USB3 port and cable help.")
-                }
-            }
-        }
-
-        override fun onStereoFrame(frame: OakDevice.StereoFrame) {
-            renderer?.oakFrame = frame
-            (recording as? OakRecording)?.onStereoFrame(frame)
-            capture?.let {
-                it.gray(0, frame.left.image, frame.left.width, frame.left.height)
-                it.gray(1, frame.right.image, frame.right.width, frame.right.height)
-            }
-        }
-
-        override fun onRgb(frame: OakDevice.Rgb) {
-            (recording as? OakRecording)?.onRgb(frame)
-            if (frame.raw) capture?.nv12(2, frame.data, frame.width, frame.height) else capture?.jpeg(2, frame.data)
-        }
-
-        override fun onImu(samples: List<OakDevice.ImuSample>) {
-            (recording as? OakRecording)?.onImu(samples)
-            capture?.let { c ->
-                // Each sensor at its own rate: packets repeat the slower one's last sample (skipped by timestamp).
-                for (x in samples) {
-                    c.gyro.add(x.gyroNs, x.gx.toFloat(), x.gy.toFloat(), x.gz.toFloat())
-                    c.accel.add(x.accelNs, x.ax.toFloat(), x.ay.toFloat(), x.az.toFloat())
-                }
-            }
-        }
-    }
-
-    private fun startOakRecording() {
-        val info = oak.info
-        if (!playing || !oak.isRunning || info == null) {
-            controls.setStatus("Recording needs the OAK camera running")
-            return
-        }
-        beginRecording("Recording OAK cameras", usb = true) {
-            OakRecording.start(this, viewModel.settings.value, info, recordingInfo())
-        }
-    }
-
-    // endregion
 
     // region Recording metadata
 
@@ -1076,9 +717,9 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         renderer?.cameras?.let { cams ->
             put("camera_models", JSONArray(listOf(cams.left, cams.right).distinct().map { it.describe() }))
         }
-        put("camera_report", runCatching { CameraUtils.describeCameras(cameraManager) }.getOrElse { it.toString() })
-        glasses.controls?.let { put("glasses_camera_controls", it.report) }
-        if (glasses.imuReadsQueued > 0) put("glasses_imu_reads_queued", glasses.imuReadsQueued)
+        put("camera_report", runCatching { CameraUtils.describeCameras(phone.cameraManager) }.getOrElse { it.toString() })
+        glasses.device.controls?.let { put("glasses_camera_controls", it.report) }
+        if (glasses.device.imuReadsQueued > 0) put("glasses_imu_reads_queued", glasses.device.imuReadsQueued)
     }
 
     // endregion
@@ -1109,32 +750,14 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             capture = c
         }
         view.clear()
-        stopCaptureSensors()
-        when (s.cameraSource) {
-            CameraSource.OAK -> {
-                view.setTiles(listOfNotNull(
-                    CapturePreview.Tile("cam0 left"), CapturePreview.Tile("cam1 right"),
-                    if (s.oakRgbHeight > 0) CapturePreview.Tile("cam2 color") else null,
-                ))
-                view.setImuTitle(if (s.oakImuRateHz > 0) "OAK IMU (imu0), raw" else "OAK IMU off (Settings → OAK IMU)")
-            }
-            CameraSource.GLASSES -> {
-                view.setTiles(listOf(CapturePreview.Tile("cam0 left"), CapturePreview.Tile("cam1 right")))
-                view.setImuTitle(if (s.glassesImu) "Glasses IMU (imu0)" else "Glasses IMU left to the system (Settings → Glasses IMU)")
-            }
-            CameraSource.BEAM_PRO -> {
-                view.setTiles(listOf(CapturePreview.Tile("phone cameras: left / right", external = true)))
-                view.setImuTitle("Phone IMU")
-                startCaptureSensors(view)
-            }
-        }
-        val imuOn = when (s.cameraSource) {
-            CameraSource.OAK -> s.oakImuRateHz > 0
-            CameraSource.GLASSES -> s.glassesImu
-            CameraSource.BEAM_PRO -> true
-        }
-        for (plot in listOf(view.gyro, view.accel)) plot.emptyText = if (imuOn) "waiting for samples…" else "IMU off"
-        if (s.cameraSource == CameraSource.BEAM_PRO && presentation != null) view.setCameraMessage("The stereo view is on the glasses")
+        sessions.forEach { it.onCaptureHidden() }
+        val session = session(s.cameraSource)
+        val layout = session.captureLayout(s)
+        view.setTiles(layout.tiles)
+        view.setImuTitle(layout.imuTitle)
+        session.onCaptureShown(view)
+        for (plot in listOf(view.gyro, view.accel)) plot.emptyText = if (layout.imuOn) "waiting for samples…" else "IMU off"
+        if (session.drawsInCaptureArea && presentation != null) view.setCameraMessage("The stereo view is on the glasses")
         if (presentation == null) binding.messageText.visibility = View.GONE
         updateCaptureMargin()
         placeRendererOverCapture()
@@ -1143,7 +766,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     private fun removeCapture() {
         val c = capture ?: return
         capture = null
-        stopCaptureSensors()
+        sessions.forEach { it.onCaptureHidden() }
         binding.controls.root.removeOnLayoutChangeListener(controlsLayoutListener)
         binding.root.removeView(c)
         c.release()
@@ -1174,7 +797,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     private fun placeRendererOverCapture() {
         val c = capture ?: return
         val lp = binding.glContainer.layoutParams as android.widget.FrameLayout.LayoutParams
-        val overArea = viewModel.settings.value.cameraSource == CameraSource.BEAM_PRO
+        val overArea = session().drawsInCaptureArea
         val area = c.cameraArea
         val (w, h, top, left) = if (overArea && area.height > 0) {
             listOf(area.width, area.height, c.top + area.top, c.left + area.left)
@@ -1195,27 +818,6 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         }
         // Keep the overlays (messages, HUD, controls) above the renderer.
         for (v in listOf(binding.messageText, binding.grantButton, binding.hudText, binding.controls.root)) v.bringToFront()
-    }
-
-    private fun startCaptureSensors(view: CapturePreview) {
-        val sm = getSystemService(android.hardware.SensorManager::class.java)
-        val listener = object : android.hardware.SensorEventListener {
-            override fun onSensorChanged(e: android.hardware.SensorEvent) {
-                val plot = if (e.sensor.type == android.hardware.Sensor.TYPE_GYROSCOPE) view.gyro else view.accel
-                plot.add(e.timestamp, e.values[0], e.values[1], e.values[2])
-            }
-
-            override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) = Unit
-        }
-        for (type in listOf(android.hardware.Sensor.TYPE_GYROSCOPE, android.hardware.Sensor.TYPE_ACCELEROMETER)) {
-            sm.getDefaultSensor(type)?.let { sm.registerListener(listener, it, android.hardware.SensorManager.SENSOR_DELAY_GAME) }
-        }
-        captureSensors = listener
-    }
-
-    private fun stopCaptureSensors() {
-        captureSensors?.let { getSystemService(android.hardware.SensorManager::class.java).unregisterListener(it) }
-        captureSensors = null
     }
 
     // endregion

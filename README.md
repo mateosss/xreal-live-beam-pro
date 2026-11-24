@@ -79,9 +79,13 @@ needs one uninstall, because the keys differ.
 | Measures vertical offset and roll between the eyes from the image | `render/AlignmentEstimator.kt` |
 | Side-by-side compositing and the auto-align pass | `render/StereoRenderer.kt` |
 | Full-screen output on the glasses display | `render/StereoPresentation.kt`, `util/DisplayUtils.kt` |
+| One camera source on the live screen (start/stop, live settings, HUD, recording, capture view): phone, glasses, OAK. A new device is a new session | `device/DeviceSession.kt`, `device/PhoneSession.kt`, `device/GlassesSession.kt`, `device/OakSession.kt` |
+| The live screen: output, renderer, recording lifecycle, capture view | `MainActivity.kt` |
 | Touchscreen controls and DataStore settings | `ui/ControlsOverlay.kt`, `ui/SettingsSheet.kt`, `ui/SettingsViewModel.kt` |
+| Every persisted setting, declared once (DataStore keys, profile JSON) | `ui/SettingsSchema.kt` |
 | Capture profiles | `ui/Profiles.kt`, `ui/ProfilesDialog.kt` |
 | Dataset recording: files, metadata, encoders, IMU | `record/*.kt`, `render/GlRecorder.kt` |
+| Per-camera files and stats of glasses and OAK datasets, bounded writer threads | `record/CameraStream.kt` |
 | Extracts video recordings' frames into the EuRoC image folders | `tools/to_euroc.py` |
 
 **Camera selection.** The app ranks every pair of rear cameras it can find. Matching focal
