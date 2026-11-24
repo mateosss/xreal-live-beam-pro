@@ -1,6 +1,5 @@
 package com.xreal.stereoview.record
 
-import com.xreal.stereoview.util.appendFixed
 import android.content.Context
 import android.hardware.SensorManager
 import android.os.SystemClock
@@ -8,6 +7,7 @@ import android.util.Log
 import com.xreal.stereoview.oak.OakDevice
 import com.xreal.stereoview.ui.StereoSettings
 import com.xreal.stereoview.util.PngGray
+import com.xreal.stereoview.util.appendFixed
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -63,17 +63,21 @@ class OakRecording private constructor(
     override var error: String? = null
 
     private val writer = ThreadPoolExecutor(writerThreads, writerThreads, 1, TimeUnit.SECONDS, ArrayBlockingQueue(queueFrames)) { r -> Thread(r, "OakWriter") }
+
     /** Color frames that came in another form than [rgbFormat] needs (only while the stream restarts). */
     private val rgbMismatched = AtomicInteger()
     private val rgbBuffer = ThreadLocal<ByteArray>()
+
     @Volatile private var peakQueue = 0
     private val dropped = AtomicInteger()
     private val failed = AtomicInteger()
     private var lastAccelNs = Long.MIN_VALUE
     private var lastGyroNs = Long.MIN_VALUE
     private var imuSamples = 0L
+
     /** min(arrival on BOOTTIME − device timestamp): the clock offset plus the smallest delivery delay. */
     @Volatile private var boottimeMinusDevice = Long.MAX_VALUE
+
     @Volatile private var monotonicMinusDevice = 0L
     private val pairSpread = PairSpread()
 
@@ -282,6 +286,7 @@ class OakRecording private constructor(
 
     companion object {
         private const val TAG = "OakRecording"
+
         /** Width of the color images (1280×800 or 1280×720). */
         const val RGB_WIDTH = 1280
         private const val FRAMES_HEADER = "timestamp_ns,sensor_timestamp_ns,sequence,host_monotonic_ns,arrival_ns,exposure_us,iso,start_of_exposure_ns"

@@ -23,11 +23,11 @@ import kotlinx.coroutines.launch
 
 /** How each camera image is fitted into its half of the SBS frame. */
 enum class ScaleMode(val label: String) {
-    REAL("1:1"),        // camera angles shown at their true size in the glasses
-    FILL("Fill"),       // keep aspect, crop overflow
-    FIT("Fit"),         // keep aspect, letterbox
+    REAL("1:1"), // camera angles shown at their true size in the glasses
+    FILL("Fill"), // keep aspect, crop overflow
+    FIT("Fit"), // keep aspect, letterbox
     STRETCH("Stretch"), // ignore aspect (useful for half-SBS output)
-    RAW("Raw"),         // the cameras' own images, unrectified, whole and undistorted (fitted)
+    RAW("Raw"), // the cameras' own images, unrectified, whole and undistorted (fitted)
 }
 
 /** The portrait phone preview's modes: all but 1:1, which only means something in the glasses. */
@@ -354,8 +354,10 @@ class SettingsRepository(private val context: Context) {
         val BUILTINS_SEEN = stringPreferencesKey("builtin_profiles_seen")
     }
 
-    /** Saved profiles (the built-in ones until anything is saved) and the active one's name. */
-    /** Built-in profiles added in later versions are appended once; deleted ones stay deleted. */
+    /**
+     * Saved profiles (the built-in ones until anything is saved) and the active one's name.
+     * Built-in profiles added in later versions are appended once; deleted ones stay deleted.
+     */
     val profiles = context.dataStore.data.map { p ->
         val stored = p[Keys.PROFILES]?.let { runCatching { Profile.migrate(Profile.fromJson(it)) }.getOrNull() }
         val seen = p[Keys.BUILTINS_SEEN]?.split('\n')?.toSet()
@@ -534,11 +536,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val settings: StateFlow<StereoSettings> = _settings.asStateFlow()
     private val _profiles = MutableStateFlow(ProfileState(Profile.defaults, Profile.PASSTHROUGH))
     val profiles: StateFlow<ProfileState> = _profiles.asStateFlow()
+
     /** Whether the stored settings are in; until then [settings] holds the defaults. */
     var loaded = false
         private set
 
     private val _loadedFlow = MutableStateFlow(false)
+
     /**
      * Becomes true once the stored settings are in. [settings] alone can't signal it: when the
      * stored values equal the defaults it doesn't emit again.

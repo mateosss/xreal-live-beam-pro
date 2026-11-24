@@ -22,6 +22,7 @@ object AlignmentEstimator {
      */
     data class Estimate(val offsetLeftStrip: Double, val offsetRightStrip: Double, val regionDistance: Double, val score: Double) {
         val meanOffset: Double get() = (offsetLeftStrip + offsetRightStrip) / 2
+
         /** Slope of the offset across the image (rows per column); positive = right view rotated clockwise. */
         val slope: Double get() = (offsetRightStrip - offsetLeftStrip) / regionDistance
     }

@@ -9,9 +9,9 @@ import com.xreal.stereoview.glasses.GlassesDevice
 import com.xreal.stereoview.glasses.GlassesImuCalibration
 import com.xreal.stereoview.glasses.GlassesProtocol
 import com.xreal.stereoview.glasses.Kb4Camera
-import com.xreal.stereoview.util.appendFixed
 import com.xreal.stereoview.ui.StereoSettings
 import com.xreal.stereoview.util.PngGray
+import com.xreal.stereoview.util.appendFixed
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -72,6 +72,7 @@ class GlassesRecording private constructor(
     private val encoder = ThreadPoolExecutor(3, 3, 1, TimeUnit.SECONDS, ArrayBlockingQueue(queueFrames)) { r ->
         Thread(r, "GlassesPng")
     }
+
     @Volatile
     private var peakQueue = 0
     private val dropped = AtomicInteger()
@@ -82,10 +83,13 @@ class GlassesRecording private constructor(
     private val cameraOffset = OffsetEstimate()
     private val imuOffset = OffsetEstimate()
     private val pairSpread = PairSpread()
+
     @Volatile
     private var calibration: String? = null
+
     /** Converts samples to imu0 as Monado does: factory calibration, Monado's IMU axes. */
     @Volatile private var imuCalibration = GlassesImuCalibration.parse(null)
+
     /** imu0 rows written before the factory calibration arrived (axes only). */
     private var imuWithoutFactory = 0L
 

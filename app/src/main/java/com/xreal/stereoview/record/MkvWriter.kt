@@ -116,6 +116,7 @@ class MkvWriter(private val file: File, private val width: Int, private val heig
         private const val CLUSTER_ID_LENGTH = 4
         private const val SIMPLE_BLOCK = 0xA3
         private const val TIMESCALE_NS = 1_000_000L
+
         /** 8-byte "unknown size", patched by [close]. */
         private val UNKNOWN_SIZE = byteArrayOf(0x01, 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte())
 

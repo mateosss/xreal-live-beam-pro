@@ -34,11 +34,14 @@ class GlassesDevice(private val context: Context, private val listener: Listener
     interface Listener {
         fun onStatus(message: String)
         fun onError(message: String)
+
         /** A left/right pair with the same sequence number; images are 480×640, upright. */
         fun onStereoFrame(frame: StereoFrame)
         fun onImu(sample: GlassesProtocol.ImuSample, arrivalNs: Long)
+
         /** The glasses' factory calibration (JSON), read before the IMU stream starts. */
         fun onCalibration(json: String)
+
         /** The camera controls the glasses offer, once the stream runs. */
         fun onControls(controls: CameraControls)
     }
@@ -60,6 +63,7 @@ class GlassesDevice(private val context: Context, private val listener: Listener
         val report: String,
     ) {
         val any: Boolean get() = exposure != null || gain != null
+
         /** What the last exposure request set, what the camera rejected, and what it reports back. */
         @Volatile var lastApplied: String = "no exposure request applied yet"
     }
@@ -73,6 +77,7 @@ class GlassesDevice(private val context: Context, private val listener: Listener
     data class Stats(val frames: Int, val pairs: Int, val incomplete: Int, val dropped: Int, val imuSamples: Int, val megabytes: Double)
 
     private val manager = context.getSystemService(UsbManager::class.java)
+
     @Volatile
     private var running = false
     private var ioThread: Thread? = null
@@ -88,14 +93,18 @@ class GlassesDevice(private val context: Context, private val listener: Listener
     // Camera controls: set from any thread, applied on their own thread.
     @Volatile
     private var connection: UsbDeviceConnection? = null
+
     @Volatile
     private var uvcControls: Uvc.Controls? = null
+
     @Volatile
     var controls: CameraControls? = null
         private set
+
     @Volatile
     private var requestedExposure: Exposure? = null
     private val controlExecutor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { Thread(it, "GlassesControls") }
+
     /**
      * Exposure requests are paced: dragging a slider back and forth sent bursts of control
      * requests (mode, exposure, then ~15 read-backs each) that locked up the glasses' camera
@@ -104,15 +113,19 @@ class GlassesDevice(private val context: Context, private val listener: Listener
      * read-back happens once, after the slider has rested for [READ_BACK_DELAY_MS].
      */
     private val applyQueued = java.util.concurrent.atomic.AtomicBoolean(false)
+
     @Volatile private var lastApplyMs = 0L
     private val applyGeneration = java.util.concurrent.atomic.AtomicInteger()
+
     // Values last sent to the camera (null: unknown, send); control thread only.
     private var sentMode: Int? = null
     private var sentExposure: Int? = null
     private var sentGain: Int? = null
+
     /** IMU reads the USB driver accepted (of [imuReadsWanted]); 0 before the IMU starts. */
     @Volatile var imuReadsQueued = 0
         private set
+
     /**
      * IMU reads to keep queued: reports keep arriving while any is pending, so the USB thread
      * may be late by about this many report periods (1 ms each) without losing samples.
@@ -556,18 +569,24 @@ class GlassesDevice(private val context: Context, private val listener: Listener
 
     companion object {
         const val TAG = "GlassesDevice"
+
         /** Shortest time between two exposure updates sent to the camera. */
         const val MIN_APPLY_INTERVAL_MS = 150L
+
         /** Read back the camera state this long after the last update. */
         const val READ_BACK_DELAY_MS = 600L
         const val CAMERA_REQUESTS = 12
+
         /** Default [imuReadsWanted]: 5 s at 1 kHz (2.5 MB). */
         const val IMU_REQUESTS = 5000
+
         /** IMU reports per second. */
         const val IMU_RATE_HZ = 1000
         const val IMU_INITIAL_REQUESTS = 16
+
         /** Frames being assembled or waiting for the decode thread. */
         const val POOL = 8
+
         /** Bytes of each frame's metadata row kept in [Eye.meta]. */
         const val META_BYTES = 64
         const val ACTION_PERMISSION = "com.xreal.stereoview.GLASSES_USB_PERMISSION"

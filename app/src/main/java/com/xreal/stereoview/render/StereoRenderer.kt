@@ -14,10 +14,10 @@ import com.xreal.stereoview.camera.FrameSynchronizer
 import com.xreal.stereoview.glasses.GlassesDevice
 import com.xreal.stereoview.record.Recording
 import com.xreal.stereoview.ui.RecordView
-import com.xreal.stereoview.ui.ScaleMode
-import com.xreal.stereoview.ui.portraitMode
 import com.xreal.stereoview.ui.SbsLayout
+import com.xreal.stereoview.ui.ScaleMode
 import com.xreal.stereoview.ui.StereoSettings
+import com.xreal.stereoview.ui.portraitMode
 import com.xreal.stereoview.util.Mat3
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -369,17 +369,21 @@ class StereoRenderer(
         private val x: IntArray, private val y: IntArray, private val portraitPreview: Boolean,
     ) {
         fun apply(eye: Int) = GLES20.glViewport(x[eye], y[eye], width, height)
+
         /** The scale mode: the profile's, or in portrait the phone preview's own. */
         fun mode(s: StereoSettings): ScaleMode = if (portraitPreview) portraitMode(s.portraitScaleMode) else s.scaleMode
-        /** Depth zoom and convergence shift crop the image, so the portrait preview and Raw leave them out. */
+
         /** Raw: the cameras' own images, unrectified, fitted whole. */
         fun raw(s: StereoSettings): Boolean = mode(s) == ScaleMode.RAW
+
         /**
          * Shape of an eye as the image should appear: [aspect] (as seen in the glasses, where
          * half-SBS stretches each half), but for Raw the drawn pixels' own shape, so Raw keeps
          * the camera's aspect on the screen that draws it.
          */
         fun aspectFor(s: StereoSettings): Float = if (raw(s)) width.toFloat() / height else aspect
+
+        /** Depth zoom and convergence shift crop the image, so the portrait preview and Raw leave them out. */
         fun zoom(s: StereoSettings): Float = if (portraitPreview || raw(s)) 1f else s.depth.coerceIn(StereoSettings.DEPTH_MIN, StereoSettings.DEPTH_MAX)
         fun convergencePx(s: StereoSettings): Float = if (portraitPreview || raw(s)) 0f else s.convergencePx
     }
@@ -426,7 +430,7 @@ class StereoRenderer(
             ScaleMode.FILL -> if (imageAspect > eyeAspect) imageAspect / eyeAspect to 1f else 1f to eyeAspect / imageAspect
             ScaleMode.FIT, ScaleMode.REAL, ScaleMode.RAW -> if (imageAspect > eyeAspect) 1f to eyeAspect / imageAspect else imageAspect / eyeAspect to 1f
         }
-        viewDescription = "$label ${w}×$h, ${eyes.mode(s).label}, ${eyes.label}"
+        viewDescription = "$label $w×$h, ${eyes.mode(s).label}, ${eyes.label}"
         for (viewport in 0..1) {
             val slot = if (s.swapEyes) 1 - viewport else viewport
             // Positive convergence moves the left image left and the right image right.
@@ -608,6 +612,7 @@ class StereoRenderer(
         const val ALIGN_MAX_ATTEMPTS = 40
         const val IMAGE_W = 480 // upright glasses camera images
         const val IMAGE_H = 640
+
         /** Maps output (u, v, 1) to (u, 1 − v, 1): renders upside down, for glReadPixels. */
         val FLIP_Y = doubleArrayOf(1.0, 0.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0, 1.0)
     }

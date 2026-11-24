@@ -26,6 +26,7 @@ class LineWriter(file: File, header: String? = null) {
     @Volatile
     var backlogChars = 0
         private set
+
     @Volatile
     var peakBacklogChars = 0
         private set
@@ -114,6 +115,7 @@ class LineWriter(file: File, header: String? = null) {
  */
 object DiskWriter {
     private const val PERIOD_MS = 100L
+
     /** fsync every 2 s: lines reach the file within 0.1 s (safe from an app crash) and storage within ~2 s. */
     private const val SYNC_EVERY = 20
     private var ticks = 0

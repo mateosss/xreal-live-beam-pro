@@ -69,6 +69,7 @@ class GlassesImuCalibration(
     companion object {
         /** Monado's (float)MATH_GRAVITY_M_S2. */
         const val GRAVITY = 9.8066f
+
         /** Monado's (float)M_PI / 180.0f. */
         const val DEG_TO_RAD = Math.PI.toFloat() / 180f
 

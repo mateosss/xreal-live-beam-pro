@@ -21,11 +21,11 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.PopupMenu
-import com.google.android.material.progressindicator.LinearProgressIndicator
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
+import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.xreal.stereoview.R
 import com.xreal.stereoview.preview.RecordingPreviewActivity
 import com.xreal.stereoview.record.Recording
@@ -48,6 +48,7 @@ class RecordingsActivity : AppCompatActivity(), RecordingQueue.Listener {
     private fun dp(v: Int) = (v * density).toInt()
     private lateinit var list: LinearLayout
     private lateinit var status: TextView
+
     /** The folder being recorded into, if any: it can't be touched until the recording ends. */
     private val activeDir: File? by lazy { intent.getStringExtra(EXTRA_ACTIVE)?.let(::File) }
 

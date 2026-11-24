@@ -25,9 +25,20 @@ Connect the glasses before or after launch; the app reacts to the display being 
 removed. For true 3D, the glasses must be in their 3D/SBS mode (3840×1080), so each eye sees
 one half. In 2D mode both eyes see the whole frame.
 
+## Checks
+
+```sh
+./gradlew spotlessApply                 # format Kotlin (ktlint; rules in build.gradle.kts)
+./gradlew spotlessCheck assembleRelease testDebugUnitTest lintDebug   # what CI runs
+```
+
+Lint fails on any warning not listed in `app/lint-baseline.xml`, the warnings present when the
+check was set up; fix one and run `./gradlew updateLintBaseline` to drop it from the list.
+Instrumented tests (`app/src/androidTest`) need a device or emulator and aren't run by CI.
+
 ## Releases and CI
 
-`.github/workflows/android.yml` builds, tests and lints every push and pull request, and
+`.github/workflows/android.yml` checks formatting, builds, tests and lints every push and pull request, and
 keeps the APK as a workflow artifact. Pushing a tag `vX.Y.Z` that matches `versionName` in
 `app/build.gradle.kts` also creates a GitHub release with the APK and its SHA-256, using the
 tag's annotation as the release notes:

@@ -129,6 +129,7 @@ class VideoFrameDecoder(file: File) : Closeable {
         val format: MediaFormat
         val count: Int
         fun keyframeAtOrBefore(index: Int): Int
+
         /** Sample [index]; called with consecutive indices after a keyframe. */
         fun sample(index: Int): ByteArray
     }

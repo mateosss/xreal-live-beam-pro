@@ -19,6 +19,7 @@ import com.google.android.material.slider.Slider
 import com.xreal.stereoview.R
 import com.xreal.stereoview.camera.StereoRig
 import com.xreal.stereoview.glasses.GlassesDevice
+import com.xreal.stereoview.record.BasaltCalib
 import com.xreal.stereoview.record.ImuStream
 import com.xreal.stereoview.record.Recording
 import java.io.File
@@ -72,6 +73,7 @@ class SettingsSheet(
         fun showProfiles()
         fun probeUsb()
         fun showRecordings()
+
         /** Lets the user pick a file; [onPicked] gets its uri and display name (or nothing if cancelled). */
         fun pickFile(onPicked: (android.net.Uri, String?) -> Unit)
     }
@@ -192,8 +194,7 @@ class SettingsSheet(
      * one, or a file imported here.
      */
     private fun calibrationRow(content: LinearLayout, device: CameraSource, recording: Boolean) {
-        val Custom = com.xreal.stereoview.record.BasaltCalib.Custom
-        val custom = Custom.name(context, device)
+        val custom = BasaltCalib.Custom.name(context, device)
         row(content, "Calibration (Basalt)", if (custom != null) "Custom: $custom" else "Factory calibration, exported with each recording", locked = recording) {
             val options = listOf(
                 "Import a Basalt calibration file (calibration.bslt.json in every ${device.shortLabel} recording)",
@@ -201,12 +202,12 @@ class SettingsSheet(
             )
             choose("Calibration for ${device.shortLabel} recordings", options, if (custom != null) 0 else 1) { i ->
                 if (i == 1) {
-                    Custom.clear(context, device)
+                    BasaltCalib.Custom.clear(context, device)
                     host.setStatus("${device.shortLabel} recordings will carry the factory calibration")
                     refresh()
                 } else {
                     host.pickFile { uri, name ->
-                        val message = runCatching { Custom.import(context, device, uri, name) }
+                        val message = runCatching { BasaltCalib.Custom.import(context, device, uri, name) }
                             .fold({ "Calibration for ${device.shortLabel} recordings: ${name ?: "file"} ($it)" }, { "⚠ Not imported: ${it.message}" })
                         host.setStatus(message)
                         refresh()

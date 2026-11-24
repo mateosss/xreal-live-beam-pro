@@ -28,6 +28,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.xreal.stereoview.camera.CameraController
 import com.xreal.stereoview.camera.CameraModel
 import com.xreal.stereoview.camera.CameraTarget
@@ -36,17 +37,17 @@ import com.xreal.stereoview.camera.StereoRig
 import com.xreal.stereoview.databinding.ActivityMainBinding
 import com.xreal.stereoview.glasses.GlassesDevice
 import com.xreal.stereoview.glasses.GlassesProtocol
+import com.xreal.stereoview.oak.OakDevice
+import com.xreal.stereoview.preview.CapturePreview
 import com.xreal.stereoview.record.ActiveRecording
 import com.xreal.stereoview.record.GlassesRecording
 import com.xreal.stereoview.record.OakRecording
-import com.xreal.stereoview.oak.OakDevice
-import com.xreal.stereoview.preview.CapturePreview
 import com.xreal.stereoview.record.Recording
 import com.xreal.stereoview.record.RecordingService
 import com.xreal.stereoview.render.RenderThread
+import com.xreal.stereoview.render.Stabilizer
 import com.xreal.stereoview.render.StereoPresentation
 import com.xreal.stereoview.render.StereoRenderer
-import com.xreal.stereoview.render.Stabilizer
 import com.xreal.stereoview.ui.CameraSource
 import com.xreal.stereoview.ui.ControlsOverlay
 import com.xreal.stereoview.ui.FocusMode
@@ -57,7 +58,6 @@ import com.xreal.stereoview.ui.StereoSettings
 import com.xreal.stereoview.util.CrashReporter
 import com.xreal.stereoview.util.DisplayUtils
 import com.xreal.stereoview.util.UsbProbe
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -85,8 +85,10 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     private var renderThread: RenderThread? = null
     private var renderer: StereoRenderer? = null
     private var presentation: StereoPresentation? = null
+
     /** Portrait capture view (Settings → Phone preview), while shown; camera threads feed it. */
     @Volatile private var capture: CapturePreview? = null
+
     /** Phone IMU feeding [capture] with the phone's own cameras. */
     private var captureSensors: android.hardware.SensorEventListener? = null
     private var outputDisplay: Display? = null
@@ -98,6 +100,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     private var outputActive = false
     private var lastSettings: StereoSettings? = null
     private var permissionRequested = false
+
     /** The cameras should start as soon as the stored settings (camera source etc.) are loaded. */
     private var cameraStartPending = false
     private var recording: ActiveRecording? = null
@@ -106,10 +109,13 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     private lateinit var glasses: GlassesDevice
     private lateinit var oak: OakDevice
     private var oakStatsTime = 0L
+
     /** The user accepted taking the glasses' camera (and IMU) from the system this session. */
     private var glassesTakeoverConfirmed = false
+
     @Volatile
     private var glassesCalibration: String? = null
+
     @Volatile private var glassesImuCalibration = com.xreal.stereoview.glasses.GlassesImuCalibration.parse(null)
     private var glassesImuActive = false
     private var glassesStatsTime = 0L
@@ -1264,6 +1270,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         const val EXTRA_PROFILE = "profile"
         private const val TAG = "StereoView"
         private const val MIN_FREE_BYTES = 500_000_000L
+
         /** Recordings stop below this, leaving room to finish their files. */
         private const val STOP_FREE_BYTES = 200_000_000L
     }

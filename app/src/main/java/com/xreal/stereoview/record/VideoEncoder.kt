@@ -69,6 +69,7 @@ class VideoEncoder(
     /** The input surface (surface input only). */
     val inputSurface: Surface?
     val codecName: String
+
     /** What was actually configured (encoders ignore unsupported modes and profiles). */
     val applied = JSONObject()
 
@@ -81,6 +82,7 @@ class VideoEncoder(
 
     @Volatile
     var samples = 0
+
     /** Encoded frames that could not go into the file (container not started); they have no data.csv row. */
     @Volatile var notWritten = 0
         private set
@@ -95,11 +97,13 @@ class VideoEncoder(
     val dropped = AtomicInteger()
 
     // Gray input state (declared before init: the codec calls back as soon as it starts).
+
     /** [pixels]: 8-bit gray, or NV12 if [nv12]. */
     private class GrayFrame(val ptsUs: Long, val pixels: ByteArray, val nv12: Boolean = false)
     private val freeInputs = ArrayDeque<Int>()
     private val pending = ArrayDeque<GrayFrame>()
     private var lastPtsUs = Long.MIN_VALUE
+
     /** End of stream requested while no input buffer was free: sent with the next one. */
     @Volatile
     private var pendingEos = false
@@ -107,7 +111,7 @@ class VideoEncoder(
     init {
         val name = (if (options.software) softwareEncoder(mime, width, height) else null)
             ?: MediaCodecList(MediaCodecList.REGULAR_CODECS).findEncoderForFormat(MediaFormat.createVideoFormat(mime, width, height))
-            ?: throw IllegalArgumentException("No $mime encoder for ${width}×$height")
+            ?: throw IllegalArgumentException("No $mime encoder for $width×$height")
         codecName = name
         codec = MediaCodec.createByCodecName(name)
         val format = MediaFormat.createVideoFormat(mime, width, height).apply {
@@ -197,7 +201,7 @@ class VideoEncoder(
             codec.release()
             writer.finish()
             thread.quitSafely()
-            throw IllegalArgumentException("$name can't encode ${width}×$height at $fps fps: ${e.message}", e)
+            throw IllegalArgumentException("$name can't encode $width×$height at $fps fps: ${e.message}", e)
         }
     }
 
@@ -286,7 +290,6 @@ class VideoEncoder(
         private set
 
     private var loggedLayout = false
-
 
     /**
      * Queues an 8-bit [width]×[height] image at [timestampNs] (increasing). Returns false if it
@@ -453,7 +456,6 @@ class VideoEncoder(
         thread.quitSafely()
     }
 
-
     /** Encoded bytes waiting for the file, and the most seen at once. */
     val backlogBytes: Long get() = writer.bytes.get()
     val peakBacklogBytes: Long get() = writer.peak
@@ -462,8 +464,10 @@ class VideoEncoder(
 
     private interface Sink {
         fun start(format: MediaFormat)
+
         /** A codec-config buffer (SPS/PPS) from the encoder. */
         fun config(data: ByteArray) {}
+
         /** Whether frame [data] can be written now (starts the container if needed). */
         fun ready(data: ByteArray, keyframe: Boolean): Boolean
         val notReadyReason: String
@@ -558,6 +562,7 @@ class VideoEncoder(
     /** Runs sink calls in order on its own thread; waits only if [MAX_BACKLOG] bytes are queued. */
     private class SinkWriter {
         val bytes = java.util.concurrent.atomic.AtomicLong()
+
         @Volatile
         var peak = 0L
         private val queue = java.util.concurrent.LinkedBlockingQueue<Pair<Int, () -> Unit>>()
@@ -596,8 +601,10 @@ class VideoEncoder(
     companion object {
         private const val TAG = "VideoEncoder"
         private val NEUTRAL = ByteArray(8192) { 128.toByte() }
+
         /** Encoded video that may wait for storage: tens of seconds at recording bitrates. */
         const val MAX_BACKLOG = 128 shl 20
+
         /** Least [maxPending], gray frames waiting for an encoder input buffer. */
         const val MIN_PENDING = 30
 
@@ -616,12 +623,12 @@ class VideoEncoder(
         /** Matches recorded presentation times (µs) back to exact ns timestamps. */
         class PtsMap {
             private val map = ConcurrentHashMap<Long, Long>()
+
             /** The frame presented at [presentationNs] (its pts is that / 1000) has dataset time [datasetNs]. */
             fun put(presentationNs: Long, datasetNs: Long) {
                 map[presentationNs / 1000] = datasetNs
             }
             fun take(ptsUs: Long): Long = map.remove(ptsUs) ?: (ptsUs * 1000)
         }
-
     }
 }

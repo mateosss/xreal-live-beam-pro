@@ -67,10 +67,12 @@ class RecordingPreviewActivity : AppCompatActivity() {
     private lateinit var root: LinearLayout
     private var timeline: TimelineView? = null
     private var tiles: List<Pair<ZoomImageView, TextView>> = emptyList()
+
     /** Zoom and pan of the camera tiles, linked or per tile (a stored preference); while zoomed in, frames are decoded at full resolution. */
     private lateinit var zoom: ZoomGroup
     private var fitWidth = 640
     private var zoomedIn = false
+
     /** Per camera: why its frame cannot be shown (hidden when it can). */
     private var tileErrors: List<TextView> = emptyList()
     private var plots: List<ImuPlotView> = emptyList()
@@ -712,6 +714,7 @@ class RecordingPreviewActivity : AppCompatActivity() {
 
     companion object {
         private const val EXTRA_DIR = "dir"
+
         /** maxWidth that keeps every pixel (larger than any camera). */
         private const val FULL_RESOLUTION = 1 shl 14
         private const val KEY_POSITION = "position"

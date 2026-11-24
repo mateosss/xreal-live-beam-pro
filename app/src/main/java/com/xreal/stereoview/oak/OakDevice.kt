@@ -25,6 +25,7 @@ class OakDevice(private val context: Context, private val listener: Listener) {
     interface Listener {
         fun onStatus(message: String)
         fun onError(message: String)
+
         /** Streaming; [info] is depthai's description of the device, with its calibration. */
         fun onStarted(info: JSONObject)
         fun onStereoFrame(frame: StereoFrame)
@@ -89,7 +90,7 @@ class OakDevice(private val context: Context, private val listener: Listener) {
 
         fun toJson(): JSONObject = JSONObject().put("auto", auto).put("exposure_us", exposureUs).put("iso", iso).put("compensation", compensation)
 
-        val label: String get() = if (auto) "auto" + (if (compensation != 0) " %+d".format(compensation) else "") else "${exposureUs} µs ISO $iso"
+        val label: String get() = if (auto) "auto" + (if (compensation != 0) " %+d".format(compensation) else "") else "$exposureUs µs ISO $iso"
 
         companion object {
             const val MIN_EXPOSURE_US = 20
@@ -140,7 +141,7 @@ class OakDevice(private val context: Context, private val listener: Listener) {
 
     /** A color frame: a JPEG from the camera, or (if [raw]) NV12 at [width]×[height] (Y plane, then interleaved U/V). */
     class Rgb(val data: ByteArray, val raw: Boolean, val width: Int, val height: Int, val timestampNs: Long, val hostNs: Long,
-              val sequence: Long, val exposureUs: Long, val iso: Int, val arrivalNs: Long, val startOfExposureNs: Long)
+        val sequence: Long, val exposureUs: Long, val iso: Int, val arrivalNs: Long, val startOfExposureNs: Long)
 
     /** Raw accelerometer (m/s²) and gyroscope (rad/s) with their own device timestamps. */
     class ImuSample(
@@ -152,13 +153,18 @@ class OakDevice(private val context: Context, private val listener: Listener) {
     class Stats(val pairs: Long, val monoFrames: Long, val rgbFrames: Long, val imuSamples: Long, val droppedSequences: Long)
 
     private val usb = context.getSystemService(UsbManager::class.java)
+
     @Volatile private var handle = 0L
+
     @Volatile private var running = false
+
     /** Whether the camera should be streaming: false cancels a boot in progress once it ends. */
     @Volatile private var wanted = false
     private var threads = emptyList<Thread>()
+
     /** Boots and shutdowns, in order, off the caller's thread (a boot takes seconds). */
     private val lifecycle = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "OakLifecycle") }
+
     @Volatile var info: JSONObject? = null
         private set
 
@@ -276,8 +282,11 @@ class OakDevice(private val context: Context, private val listener: Listener) {
 
     /** Sequence numbers between consecutive kept mono frames (see [FpsPlan.monoEvery]). */
     @Volatile private var monoStep = 1L
+
     @Volatile private var rgbRaw = false
+
     @Volatile private var pendingLeft: Mono? = null
+
     @Volatile private var pendingRight: Mono? = null
     private val pairLock = Any()
 
@@ -399,8 +408,10 @@ class OakDevice(private val context: Context, private val listener: Listener) {
 
     companion object {
         private const val TAG = "OakDevice"
+
         /** Intel Movidius: OAK cameras before (0x2485) and after (0xf63b) booting. */
         const val VENDOR_ID = 0x03E7
+
         /** Least [Config.linkFrames] and [Config.imuPackets] (what depthai queues held before). */
         const val MIN_LINK_FRAMES = 8
         const val MIN_IMU_PACKETS = 50
@@ -410,6 +421,7 @@ class OakDevice(private val context: Context, private val listener: Listener) {
          * offers 400 Hz (higher jitters); the BMI270 rounds requests down to what it supports.
          */
         const val MAX_GYRO_HZ = 400
+
         /** The BNO086's fastest raw accelerometer rate (it rounds 500 to its 500 Hz step). */
         const val MAX_ACCEL_HZ = 500
 

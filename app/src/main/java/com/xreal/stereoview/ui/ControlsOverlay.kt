@@ -3,7 +3,6 @@ package com.xreal.stereoview.ui
 import android.content.res.ColorStateList
 import android.util.Range
 import android.view.View
-import android.widget.LinearLayout.LayoutParams as LP
 import androidx.core.content.ContextCompat
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.slider.Slider
@@ -14,6 +13,7 @@ import com.xreal.stereoview.glasses.GlassesDevice
 import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.roundToInt
+import android.widget.LinearLayout.LayoutParams as LP
 
 /**
  * The control panel on the Beam Pro touchscreen. When the stereo view goes to a separate
@@ -32,8 +32,10 @@ class ControlsOverlay(
         fun onRecord()
         fun onUsbProbe()
         fun isRecording(): Boolean
+
         /** The folder being recorded into, if any. */
         fun recordingDir(): java.io.File?
+
         /** Opens the system file picker; [onPicked] gets the chosen file's uri and display name. */
         fun pickFile(onPicked: (android.net.Uri, String?) -> Unit)
 
@@ -47,8 +49,10 @@ class ControlsOverlay(
     private var glassesControls: GlassesDevice.CameraControls? = null
     private var collapsed = false
     private var recordingShown = false
+
     /** OAK: the camera the exposure controls set, −1 for all (cam0's values shown). */
     private var oakTarget = -1
+
     /** Set while [render] moves widgets, so their listeners don't write the values back. */
     private var rendering = false
 
@@ -444,5 +448,4 @@ class ControlsOverlay(
         val snapped = valueFrom + ((v.coerceIn(valueFrom, valueTo) - valueFrom) / step).roundToInt() * step
         value = snapped.coerceIn(valueFrom, valueTo)
     }
-
 }

@@ -30,6 +30,7 @@ class ImageWriter(
 ) {
     val extension: String get() = if (png) "png" else "jpg"
     private val frameBytes = width * height * 4
+
     /** Frames that can wait at once; buffers are allocated as the backlog grows. */
     val capacity = capacityFrames.coerceAtLeast(8)
     private val free = ArrayBlockingQueue<ByteBuffer>(capacity)
@@ -47,6 +48,7 @@ class ImageWriter(
 
     /** Frames waiting to be written now, and the most seen at once. */
     val backlog: Int get() = queued.get()
+
     @Volatile
     var peakBacklog = 0
         private set

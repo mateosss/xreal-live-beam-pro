@@ -1,6 +1,5 @@
 package com.xreal.stereoview.record
 
-import com.xreal.stereoview.util.appendFixed
 import android.hardware.Sensor
 import android.hardware.SensorDirectChannel
 import android.hardware.SensorEvent
@@ -13,6 +12,7 @@ import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import com.xreal.stereoview.ui.ImuRate
+import com.xreal.stereoview.util.appendFixed
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -138,6 +138,7 @@ class ImuRecorder(
     private var memory: MemoryFile? = null
     private var channel: SensorDirectChannel? = null
     private var reader: Thread? = null
+
     @Volatile
     private var reading = false
     private var directLost = 0L

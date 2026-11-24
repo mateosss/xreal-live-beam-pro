@@ -17,6 +17,7 @@ import android.view.View
 class ZoomState {
     var scale = 1f
         private set
+
     /** Image point (0..1) shown at the view center. */
     var u = 0.5f
         private set

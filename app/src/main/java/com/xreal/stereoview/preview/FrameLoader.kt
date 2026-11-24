@@ -26,6 +26,7 @@ class FrameLoader(private val cameras: List<Dataset.Camera>, private val onFrame
     private var pending: IntArray? = null
     private val shown = IntArray(cameras.size) { -1 }
     private val decoders = arrayOfNulls<VideoFrameDecoder>(cameras.size)
+
     @Volatile var maxWidth = 640
 
     /** Shows frame [frames] [i] of camera i (negative: leave that camera as it is). */

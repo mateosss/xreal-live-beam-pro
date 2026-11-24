@@ -42,7 +42,9 @@ class CapturePreview(context: Context) : LinearLayout(context) {
 
     private class TileState(val spec: Tile, val image: ZoomImageView?, val caption: TextView) {
         val busy = AtomicBoolean(false)
+
         @Volatile var lastShownMs = 0L
+
         @Volatile var size = ""
         var frames = 0
         var fps = 0.0
@@ -166,7 +168,7 @@ class CapturePreview(context: Context) : LinearLayout(context) {
         val tile = accept(index) ?: return
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ALPHA_8)
         bitmap.copyPixelsFromBuffer(ByteBuffer.wrap(image, 0, width * height))
-        show(tile, bitmap, "${width}×$height")
+        show(tile, bitmap, "$width×$height")
     }
 
     /** A JPEG frame for tile [index], decoded at half size or less (enough for a phone tile). */
@@ -189,7 +191,7 @@ class CapturePreview(context: Context) : LinearLayout(context) {
             val bitmap = runCatching {
                 Bitmap.createBitmap(com.xreal.stereoview.util.Nv12.toArgb(nv12, width, height, step), width / step, height / step, Bitmap.Config.ARGB_8888)
             }.getOrNull()
-            if (bitmap == null) tile.busy.set(false) else show(tile, bitmap, "${width}×$height")
+            if (bitmap == null) tile.busy.set(false) else show(tile, bitmap, "$width×$height")
         }
     }
 

@@ -11,8 +11,10 @@ import java.nio.file.Files
 class DatasetTest {
     private val period = 33_333_333L
 
-    /** A small image recording: cam0 with frames 0..9 except 4 and 5, imu0 at 100 Hz, a raw stream. */
-    /** A small recording; [legacyImu]: raw IMU streams in imu/ (before 0.15.3) instead of mav0/imu0. */
+    /**
+     * A small image recording: cam0 with frames 0..9 except 4 and 5, imu0 at 100 Hz, a raw
+     * stream; [legacyImu]: raw IMU streams in imu/ (before 0.15.3) instead of mav0/imu0.
+     */
     private fun sample(legacyImu: Boolean = false): File {
         val dir = File(Files.createTempDirectory("ds").toFile(), "2026-01-01_00-00-00")
         val cam = File(dir, "mav0/cam0/data").apply { mkdirs() }.parentFile!!

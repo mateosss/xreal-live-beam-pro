@@ -66,6 +66,17 @@ android {
     buildFeatures {
         viewBinding = true
     }
+
+    // New lint warnings fail the build; the ones present when this was set up are listed in
+    // lint-baseline.xml (fix them and run ./gradlew updateLintBaseline to shrink it). Checks
+    // whose result changes without any change here (newer library versions) are off.
+    lint {
+        baseline = file("lint-baseline.xml")
+        warningsAsErrors = true
+        abortOnError = true
+        checkTestSources = true
+        disable += setOf("GradleDependency", "NewerVersionAvailable", "AndroidGradlePluginVersion", "OldTargetApi")
+    }
 }
 
 dependencies {

@@ -52,13 +52,13 @@ class UsbProbe(private val context: Context) {
         }
     }
 
+    /** Result of [requestAndProbe]: the report, and whether a camera frame can be grabbed. */
+    class Result(val report: String, val canGrab: Boolean, val cameraHeldBySystem: Boolean = false)
+
     /**
      * Asks for permission to [device] (the system shows a dialog), then probes it on a
      * background thread. [onDone] gets the report on the main thread.
      */
-    /** Result of [requestAndProbe]: the report, and whether a camera frame can be grabbed. */
-    class Result(val report: String, val canGrab: Boolean, val cameraHeldBySystem: Boolean = false)
-
     fun requestAndProbe(device: UsbDevice, onDone: (Result) -> Unit) {
         val manager = manager ?: return onDone(Result("No UsbManager", false))
         if (manager.hasPermission(device)) {
@@ -142,84 +142,84 @@ class UsbProbe(private val context: Context) {
         var canGrab = false
         var cameraHeld = false
         val report = buildString {
-        appendLine("Probing ${deviceLine(device).trim()}")
-        appendLine("Serial: ${runCatching { device.serialNumber }.getOrNull() ?: "-"}, version ${device.version}")
-        val connection = manager?.openDevice(device)
-        if (connection == null) {
-            appendLine("openDevice failed: the device is held exclusively by another process.")
-            return@buildString
-        }
-        try {
-            val raw = connection.rawDescriptors ?: ByteArray(0)
-            appendLine("Opened. Raw descriptors: ${raw.size} bytes")
-            val formats = Uvc.parseFormats(raw)
-            if (formats.isNotEmpty()) {
-                appendLine()
-                appendLine("Camera video formats (UVC):")
-                formats.forEach { appendLine(it.describe()) }
+            appendLine("Probing ${deviceLine(device).trim()}")
+            appendLine("Serial: ${runCatching { device.serialNumber }.getOrNull() ?: "-"}, version ${device.version}")
+            val connection = manager?.openDevice(device)
+            if (connection == null) {
+                appendLine("openDevice failed: the device is held exclusively by another process.")
+                return@buildString
             }
-            var videoClaimed = 0
-            var videoTotal = 0
-            var claimed = 0
-            var total = 0
-            for (c in 0 until device.configurationCount) {
-                val config = device.getConfiguration(c)
-                for (i in 0 until config.interfaceCount) {
-                    val iface = config.getInterface(i)
-                    total++
+            try {
+                val raw = connection.rawDescriptors ?: ByteArray(0)
+                appendLine("Opened. Raw descriptors: ${raw.size} bytes")
+                val formats = Uvc.parseFormats(raw)
+                if (formats.isNotEmpty()) {
                     appendLine()
-                    append(interfaceLines(iface))
-                    val video = iface.interfaceClass == UsbConstants.USB_CLASS_VIDEO && iface.alternateSetting == 0
-                    if (video) videoTotal++
-                    if (!connection.claimInterface(iface, false)) {
-                        appendLine("    claim: FAILED (in use by a kernel driver or another app)")
-                        continue
-                    }
-                    claimed++
-                    if (video) videoClaimed++
-                    appendLine("    claim: OK")
-                    for (e in 0 until iface.endpointCount) {
-                        val ep = iface.getEndpoint(e)
-                        if (ep.direction != UsbConstants.USB_DIR_IN) continue
-                        // A UVC stream sends nothing until started; the frame grab does that.
-                        if (iface.interfaceClass == UsbConstants.USB_CLASS_VIDEO) continue
-                        when (ep.type) {
-                            UsbConstants.USB_ENDPOINT_XFER_BULK, UsbConstants.USB_ENDPOINT_XFER_INT -> {
-                                val buffer = ByteArray(maxOf(ep.maxPacketSize, 64) * 4)
-                                var bytes = 0
-                                var reads = 0
-                                var first: String? = null
-                                repeat(5) {
-                                    val n = connection.bulkTransfer(ep, buffer, buffer.size, 200)
-                                    if (n > 0) {
-                                        bytes += n
-                                        reads++
-                                        if (first == null) first = buffer.take(minOf(n, 24)).joinToString(" ") { "%02x".format(it) }
-                                    }
-                                }
-                                appendLine("    read ${endpointName(ep)}: $reads of 5 reads returned data, $bytes bytes" + (first?.let { " (first: $it …)" } ?: ""))
-                            }
-                            UsbConstants.USB_ENDPOINT_XFER_ISOC ->
-                                appendLine("    ${endpointName(ep)}: isochronous; needs native usbdevfs/libusb (not in Android's Java USB API)")
+                    appendLine("Camera video formats (UVC):")
+                    formats.forEach { appendLine(it.describe()) }
+                }
+                var videoClaimed = 0
+                var videoTotal = 0
+                var claimed = 0
+                var total = 0
+                for (c in 0 until device.configurationCount) {
+                    val config = device.getConfiguration(c)
+                    for (i in 0 until config.interfaceCount) {
+                        val iface = config.getInterface(i)
+                        total++
+                        appendLine()
+                        append(interfaceLines(iface))
+                        val video = iface.interfaceClass == UsbConstants.USB_CLASS_VIDEO && iface.alternateSetting == 0
+                        if (video) videoTotal++
+                        if (!connection.claimInterface(iface, false)) {
+                            appendLine("    claim: FAILED (in use by a kernel driver or another app)")
+                            continue
                         }
+                        claimed++
+                        if (video) videoClaimed++
+                        appendLine("    claim: OK")
+                        for (e in 0 until iface.endpointCount) {
+                            val ep = iface.getEndpoint(e)
+                            if (ep.direction != UsbConstants.USB_DIR_IN) continue
+                            // A UVC stream sends nothing until started; the frame grab does that.
+                            if (iface.interfaceClass == UsbConstants.USB_CLASS_VIDEO) continue
+                            when (ep.type) {
+                                UsbConstants.USB_ENDPOINT_XFER_BULK, UsbConstants.USB_ENDPOINT_XFER_INT -> {
+                                    val buffer = ByteArray(maxOf(ep.maxPacketSize, 64) * 4)
+                                    var bytes = 0
+                                    var reads = 0
+                                    var first: String? = null
+                                    repeat(5) {
+                                        val n = connection.bulkTransfer(ep, buffer, buffer.size, 200)
+                                        if (n > 0) {
+                                            bytes += n
+                                            reads++
+                                            if (first == null) first = buffer.take(minOf(n, 24)).joinToString(" ") { "%02x".format(it) }
+                                        }
+                                    }
+                                    appendLine("    read ${endpointName(ep)}: $reads of 5 reads returned data, $bytes bytes" + (first?.let { " (first: $it …)" } ?: ""))
+                                }
+                                UsbConstants.USB_ENDPOINT_XFER_ISOC ->
+                                    appendLine("    ${endpointName(ep)}: isochronous; needs native usbdevfs/libusb (not in Android's Java USB API)")
+                            }
+                        }
+                        connection.releaseInterface(iface)
                     }
-                    connection.releaseInterface(iface)
                 }
+                appendLine()
+                appendLine("Claimed $claimed of $total interfaces.")
+                appendLine(
+                    when {
+                        claimed == 0 -> "Verdict: every interface is held by the system; direct access would need it to let go (or root)."
+                        claimed < total -> "Verdict: partial access. Interfaces marked OK can be used directly by the app."
+                        else -> "Verdict: full access. Camera and IMU streams can be read directly by the app, given their protocol (see Monado)."
+                    }
+                )
+                canGrab = videoTotal > 0 && videoClaimed == videoTotal
+                cameraHeld = videoTotal > 0 && videoClaimed < videoTotal
+            } finally {
+                connection.close()
             }
-            appendLine()
-            appendLine("Claimed $claimed of $total interfaces.")
-            appendLine(
-                when {
-                    claimed == 0 -> "Verdict: every interface is held by the system; direct access would need it to let go (or root)."
-                    claimed < total -> "Verdict: partial access. Interfaces marked OK can be used directly by the app."
-                    else -> "Verdict: full access. Camera and IMU streams can be read directly by the app, given their protocol (see Monado)."
-                }
-            )
-            canGrab = videoTotal > 0 && videoClaimed == videoTotal
-            cameraHeld = videoTotal > 0 && videoClaimed < videoTotal
-        } finally {
-            connection.close()
-        }
         }
         return Result(report, canGrab, cameraHeld)
     }

@@ -1,8 +1,8 @@
 package com.xreal.stereoview.glasses
 
+import com.xreal.stereoview.util.appendFixed
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
-import com.xreal.stereoview.util.appendFixed
 import org.junit.Test
 
 class GlassesImuCalibrationTest {

@@ -51,6 +51,7 @@ import kotlinx.coroutines.launch
 class HomeActivity : AppCompatActivity() {
     private val viewModel: SettingsViewModel by viewModels()
     private lateinit var page: LinearLayout
+
     /** The device whose profiles are shown, or null for the device list. */
     private var device: CameraSource? = null
     private val density by lazy { resources.displayMetrics.density }

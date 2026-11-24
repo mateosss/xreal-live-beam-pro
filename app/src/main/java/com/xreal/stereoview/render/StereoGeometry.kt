@@ -40,6 +40,7 @@ class StereoGeometry(
         val sensorOrientation = if (rotationOverride >= 0) (rotationOverride + displayDegrees) % 360 else camera.sensorOrientation
         camera.deviceToCamera(sensorOrientation, useFactoryCalibration)
     }
+
     /** Device → camera rotation of each camera (x right, y down, z forward in its raw image). */
     val deviceToCamera = orientations.map { it.first }
 
@@ -122,12 +123,12 @@ class StereoGeometry(
     fun toRectFrame(deviceRotation: DoubleArray): DoubleArray =
         Mat3.mul(rectFromDevice, deviceRotation, Mat3.transpose(rectFromDevice))
 
-    /** Half-FOV tangents (horizontal, vertical) each eye shows, for an eye of physical aspect [eyeAspect]. */
     /** Width / height of the upright camera view (both cameras' common field of view). */
     val viewAspect: Double
         get() = cameras.minOf { if (imageXIsHorizontal) it.tanHalfFovX else it.tanHalfFovY } /
             cameras.minOf { if (imageXIsHorizontal) it.tanHalfFovY else it.tanHalfFovX }
 
+    /** Half-FOV tangents (horizontal, vertical) each eye shows, for an eye of physical aspect [eyeAspect]. */
     fun displayTangents(mode: ScaleMode, eyeAspect: Double, glassesFovDeg: Double): Pair<Double, Double> {
         val camH = cameras.minOf { if (imageXIsHorizontal) it.tanHalfFovX else it.tanHalfFovY }
         val camV = cameras.minOf { if (imageXIsHorizontal) it.tanHalfFovY else it.tanHalfFovX }
@@ -161,9 +162,7 @@ class StereoGeometry(
         pitchDeg: Double,
         rollDeg: Double,
         stabilization: DoubleArray,
-    ): DoubleArray {
-        return Mat3.mul(cameraFromVirtual(camera, pitchDeg, rollDeg), stabilization, outputToRay(tanH, tanV, shift, zoom))
-    }
+    ): DoubleArray = Mat3.mul(cameraFromVirtual(camera, pitchDeg, rollDeg), stabilization, outputToRay(tanH, tanV, shift, zoom))
 
     /**
      * Rotation from the eye's virtual (rectified, aligned) camera to the real camera [camera],

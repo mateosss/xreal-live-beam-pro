@@ -7,8 +7,8 @@ import android.view.View
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.xreal.stereoview.preview.ImuPlotView
-import com.xreal.stereoview.preview.ZoomImageView
 import com.xreal.stereoview.preview.ZoomGroup
+import com.xreal.stereoview.preview.ZoomImageView
 import com.xreal.stereoview.preview.ZoomState
 import com.xreal.stereoview.record.Dataset
 import org.junit.Assert.assertEquals

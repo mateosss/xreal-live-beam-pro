@@ -36,6 +36,7 @@ object RecordingQueue {
     private val pending = ArrayDeque<Job>()
     var current: Job? = null
         private set
+
     /** Progress of [current], 0..1 (negative: not known yet), and its text. */
     var fraction = -1f
         private set

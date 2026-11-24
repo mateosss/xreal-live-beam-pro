@@ -1,0 +1,990 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<issues format="6" by="lint 8.5.2" type="baseline" client="gradle" dependencies="false" name="AGP (8.5.2)" variant="all" version="8.5.2">
+
+    <issue
+        id="ScrollViewSize"
+        message="This LinearLayout should use `android:layout_width=&quot;wrap_content&quot;`"
+        errorLine1="                android:layout_width=&quot;match_parent&quot;"
+        errorLine2="                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/overlay_controls.xml"
+            line="43"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="InlinedApi"
+        message="Field requires API level 33 (current min is 31): `android.content.Context#RECEIVER_EXPORTED`"
+        errorLine1="        }, RECEIVER_EXPORTED)"
+        errorLine2="           ~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/HomeActivity.kt"
+            line="111"
+            column="12"/>
+    </issue>
+
+    <issue
+        id="InlinedApi"
+        message="Field requires API level 33 (current min is 31): `android.Manifest.permission#POST_NOTIFICATIONS`"
+        errorLine1="            requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)"
+        errorLine2="                                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/MainActivity.kt"
+            line="836"
+            column="41"/>
+    </issue>
+
+    <issue
+        id="InlinedApi"
+        message="Field requires API level 33 (current min is 31): `android.content.Context#RECEIVER_EXPORTED`"
+        errorLine1="            context.registerReceiver(receiver, IntentFilter(UsbManager.ACTION_USB_DEVICE_ATTACHED), Context.RECEIVER_EXPORTED)"
+        errorLine2="                                                                                                    ~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/oak/OakDevice.kt"
+            line="389"
+            column="101"/>
+    </issue>
+
+    <issue
+        id="InlinedApi"
+        message="Field requires API level 33 (current min is 31): `android.content.Context#RECEIVER_NOT_EXPORTED`"
+        errorLine1="        context.registerReceiver(receiver, IntentFilter(action), Context.RECEIVER_NOT_EXPORTED)"
+        errorLine2="                                                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/oak/OakDevice.kt"
+            line="402"
+            column="66"/>
+    </issue>
+
+    <issue
+        id="HighSamplingRate"
+        message="Most apps don&apos;t need access to high sensor sampling rate."
+        errorLine1="    &lt;uses-permission android:name=&quot;android.permission.HIGH_SAMPLING_RATE_SENSORS&quot; />"
+        errorLine2="                                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="6"
+            column="36"/>
+    </issue>
+
+    <issue
+        id="DiscouragedApi"
+        message="Should not restrict activity to fixed orientation. This may not be suitable for different form factors, causing the app to be letterboxed."
+        errorLine1="            android:screenOrientation=&quot;fullUser&quot; />"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="35"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="DiscouragedApi"
+        message="Should not restrict activity to fixed orientation. This may not be suitable for different form factors, causing the app to be letterboxed."
+        errorLine1="            android:screenOrientation=&quot;fullUser&quot; />"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="41"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="DiscouragedApi"
+        message="Should not restrict activity to fixed orientation. This may not be suitable for different form factors, causing the app to be letterboxed."
+        errorLine1="            android:screenOrientation=&quot;fullUser&quot; />"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="47"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="DiscouragedApi"
+        message="Should not restrict activity to fixed orientation. This may not be suitable for different form factors, causing the app to be letterboxed."
+        errorLine1="            android:screenOrientation=&quot;fullUser&quot;>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="54"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="DataExtractionRules"
+        message="The attribute `android:allowBackup` is deprecated from Android 12 and the default allows backup"
+        errorLine1="        android:allowBackup=&quot;true&quot;"
+        errorLine2="                             ~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="23"
+            column="30"/>
+    </issue>
+
+    <issue
+        id="DrawAllocation"
+        message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
+        errorLine1="        systemGestureExclusionRects = listOf(android.graphics.Rect(0, 0, width, height))"
+        errorLine2="                                             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/preview/TimelineView.kt"
+            line="79"
+            column="46"/>
+    </issue>
+
+    <issue
+        id="DrawAllocation"
+        message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
+        errorLine1="        systemGestureExclusionRects = listOf(android.graphics.Rect(0, 0, width, height))"
+        errorLine2="                                             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/preview/TimelineView.kt"
+            line="79"
+            column="46"/>
+    </issue>
+
+    <issue
+        id="DrawAllocation"
+        message="Avoid object allocations during draw/layout operations (preallocate and reuse instead)"
+        errorLine1="                canvas.drawRoundRect(RectF(hx - dp(3f), dp(2f), hx + dp(3f), height - dp(2f)), dp(3f), dp(3f), handle)"
+        errorLine2="                                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/preview/TimelineView.kt"
+            line="133"
+            column="38"/>
+    </issue>
+
+    <issue
+        id="ObsoleteSdkInt"
+        message="Unnecessary; SDK_INT is always >= 31"
+        errorLine1="        if (Build.VERSION.SDK_INT >= 29) info.isSoftwareOnly"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/preview/VideoFrameDecoder.kt"
+            line="118"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="ObsoleteSdkInt"
+        message="This folder configuration (`v26`) is unnecessary; `minSdkVersion` is 31. Merge all the resources in this folder into `mipmap-anydpi`.">
+        <location
+            file="src/main/res/mipmap-anydpi-v26"/>
+    </issue>
+
+    <issue
+        id="VectorPath"
+        message="Very long vector path (904 characters), which is bad for performance. Considering reducing precision, removing minor details or rasterizing vector."
+        errorLine1="        android:pathData=&quot;M19.14,12.94c0.04,-0.3 0.06,-0.61 0.06,-0.94c0,-0.32 -0.02,-0.64 -0.07,-0.94l2.03,-1.58c0.18,-0.14 0.23,-0.41 0.12,-0.61l-1.92,-3.32c-0.12,-0.22 -0.37,-0.29 -0.59,-0.22l-2.39,0.96c-0.5,-0.38 -1.03,-0.7 -1.62,-0.94L14.4,2.81c-0.04,-0.24 -0.24,-0.41 -0.48,-0.41h-3.84c-0.24,0 -0.43,0.17 -0.47,0.41L9.25,5.35C8.66,5.59 8.12,5.92 7.63,6.29L5.24,5.33c-0.22,-0.08 -0.47,0 -0.59,0.22L2.74,8.87C2.62,9.08 2.66,9.34 2.86,9.48l2.03,1.58C4.84,11.36 4.8,11.69 4.8,12s0.02,0.64 0.07,0.94l-2.03,1.58c-0.18,0.14 -0.23,0.41 -0.12,0.61l1.92,3.32c0.12,0.22 0.37,0.29 0.59,0.22l2.39,-0.96c0.5,0.38 1.03,0.7 1.62,0.94l0.36,2.54c0.05,0.24 0.24,0.41 0.48,0.41h3.84c0.24,0 0.44,-0.17 0.47,-0.41l0.36,-2.54c0.59,-0.24 1.13,-0.56 1.62,-0.94l2.39,0.96c0.22,0.08 0.47,0 0.59,-0.22l1.92,-3.32c0.12,-0.22 0.07,-0.47 -0.12,-0.61L19.14,12.94zM12,15.6c-1.98,0 -3.6,-1.62 -3.6,-3.6s1.62,-3.6 3.6,-3.6s3.6,1.62 3.6,3.6S13.98,15.6 12,15.6z&quot; />"
+        errorLine2="                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/drawable/ic_settings.xml"
+            line="8"
+            column="27"/>
+    </issue>
+
+    <issue
+        id="NestedWeights"
+        message="Nested weights are bad for performance"
+        errorLine1="                android:layout_weight=&quot;2&quot;"
+        errorLine2="                ~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/overlay_controls.xml"
+            line="273"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="Overdraw"
+        message="Possible overdraw: Root element paints background `@android:color/black` with a theme that also paints a background (inferred theme is `@style/Theme.StereoView`)"
+        errorLine1="    android:background=&quot;@android:color/black&quot;>"
+        errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/activity_main.xml"
+            line="6"
+            column="5"/>
+    </issue>
+
+    <issue
+        id="UsableSpace"
+        message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
+        errorLine1="        if (root.usableSpace &lt; MIN_FREE_BYTES) {"
+        errorLine2="                 ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/MainActivity.kt"
+            line="734"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="UsableSpace"
+        message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
+        errorLine1="            controls.setStatus(&quot;⚠ Not enough free space to record (%.1f GB left)&quot;.format(root.usableSpace / 1e9))"
+        errorLine2="                                                                                              ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/MainActivity.kt"
+            line="735"
+            column="95"/>
+    </issue>
+
+    <issue
+        id="UsableSpace"
+        message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
+        errorLine1="        if (rec.dir.usableSpace &lt; STOP_FREE_BYTES) rec.error = &quot;storage is almost full&quot;"
+        errorLine2="                    ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/MainActivity.kt"
+            line="764"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="UsableSpace"
+        message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
+        errorLine1="        if (root.usableSpace &lt; MIN_FREE_BYTES) {"
+        errorLine2="                 ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/MainActivity.kt"
+            line="854"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="UsableSpace"
+        message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
+        errorLine1="            controls.setStatus(&quot;⚠ Not enough free space to record (%.1f GB left)&quot;.format(root.usableSpace / 1e9))"
+        errorLine2="                                                                                              ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/MainActivity.kt"
+            line="855"
+            column="95"/>
+    </issue>
+
+    <issue
+        id="UsableSpace"
+        message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
+        errorLine1="        if (root.usableSpace &lt; MIN_FREE_BYTES) {"
+        errorLine2="                 ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/MainActivity.kt"
+            line="1056"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="UsableSpace"
+        message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
+        errorLine1="            controls.setStatus(&quot;⚠ Not enough free space to record (%.1f GB left)&quot;.format(root.usableSpace / 1e9))"
+        errorLine2="                                                                                              ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/MainActivity.kt"
+            line="1057"
+            column="95"/>
+    </issue>
+
+    <issue
+        id="UsableSpace"
+        message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
+        errorLine1="            (if (root.exists()) root.usableSpace else getExternalFilesDir(null)?.usableSpace ?: 0L) / 1e9, root.path,"
+        errorLine2="                                     ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/RecordingsActivity.kt"
+            line="142"
+            column="38"/>
+    </issue>
+
+    <issue
+        id="UsableSpace"
+        message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
+        errorLine1="            (if (root.exists()) root.usableSpace else getExternalFilesDir(null)?.usableSpace ?: 0L) / 1e9, root.path,"
+        errorLine2="                                     ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/RecordingsActivity.kt"
+            line="142"
+            column="38"/>
+    </issue>
+
+    <issue
+        id="UsableSpace"
+        message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
+        errorLine1="            (if (root.exists()) root.usableSpace else getExternalFilesDir(null)?.usableSpace ?: 0L) / 1e9, root.path,"
+        errorLine2="                                                                                 ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/RecordingsActivity.kt"
+            line="142"
+            column="82"/>
+    </issue>
+
+    <issue
+        id="UsableSpace"
+        message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
+        errorLine1="            (if (root.exists()) root.usableSpace else getExternalFilesDir(null)?.usableSpace ?: 0L) / 1e9, root.path,"
+        errorLine2="                                                                                 ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/RecordingsActivity.kt"
+            line="142"
+            column="82"/>
+    </issue>
+
+    <issue
+        id="UsableSpace"
+        message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
+        errorLine1="        return &quot;%d saved · %.1f GB free&quot;.format(count, Recording.root(context).let { if (it.exists()) it.usableSpace else context.getExternalFilesDir(null)?.usableSpace ?: 0L } / 1e9)"
+        errorLine2="                                                                                                         ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
+            line="685"
+            column="106"/>
+    </issue>
+
+    <issue
+        id="UsableSpace"
+        message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
+        errorLine1="        return &quot;%d saved · %.1f GB free&quot;.format(count, Recording.root(context).let { if (it.exists()) it.usableSpace else context.getExternalFilesDir(null)?.usableSpace ?: 0L } / 1e9)"
+        errorLine2="                                                                                                                                                             ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
+            line="685"
+            column="158"/>
+    </issue>
+
+    <issue
+        id="MonochromeLauncherIcon"
+        message="The application adaptive icon is missing a monochrome tag"
+        errorLine1="&lt;adaptive-icon xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot;>"
+        errorLine2="^">
+        <location
+            file="src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
+            line="2"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="ViewConstructor"
+        message="Custom view `ImuPlotView` is missing constructor used by tools: `(Context)` or `(Context,AttributeSet)` or `(Context,AttributeSet,int)`"
+        errorLine1="class ImuPlotView(context: Context, private val title: String, private val unit: String, private val channels: IntRange) : View(context) {"
+        errorLine2="      ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/preview/ImuPlotView.kt"
+            line="24"
+            column="7"/>
+    </issue>
+
+    <issue
+        id="ViewConstructor"
+        message="Custom view `LiveImuPlotView` is missing constructor used by tools: `(Context)` or `(Context,AttributeSet)` or `(Context,AttributeSet,int)`"
+        errorLine1="class LiveImuPlotView(context: Context, private val title: String, private val unit: String) : View(context) {"
+        errorLine2="      ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/preview/LiveImuPlotView.kt"
+            line="15"
+            column="7"/>
+    </issue>
+
+    <issue
+        id="ViewConstructor"
+        message="Custom view `ZoomImageView` is missing constructor used by tools: `(Context)` or `(Context,AttributeSet)` or `(Context,AttributeSet,int)`"
+        errorLine1="class ZoomImageView(context: Context, initialZoom: ZoomState) : View(context) {"
+        errorLine2="      ~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/preview/ZoomImageView.kt"
+            line="93"
+            column="7"/>
+    </issue>
+
+    <issue
+        id="ViewConstructor"
+        message="Custom view `ZoomLinkButton` is missing constructor used by tools: `(Context)` or `(Context,AttributeSet)` or `(Context,AttributeSet,int)`"
+        errorLine1="class ZoomLinkButton(context: Context, linked: Boolean, private val onToggle: (Boolean) -> Unit) :"
+        errorLine2="      ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/preview/ZoomLinkButton.kt"
+            line="11"
+            column="7"/>
+    </issue>
+
+    <issue
+        id="ClickableViewAccessibility"
+        message="Custom view `ImuPlotView` overrides `onTouchEvent` but not `performClick`"
+        errorLine1="    override fun onTouchEvent(e: MotionEvent): Boolean {"
+        errorLine2="                 ~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/preview/ImuPlotView.kt"
+            line="229"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="ClickableViewAccessibility"
+        message="Custom view `TimelineView` overrides `onTouchEvent` but not `performClick`"
+        errorLine1="    override fun onTouchEvent(e: MotionEvent): Boolean {"
+        errorLine2="                 ~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/preview/TimelineView.kt"
+            line="144"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="ClickableViewAccessibility"
+        message="Custom view `ZoomImageView` overrides `onTouchEvent` but not `performClick`"
+        errorLine1="    override fun onTouchEvent(e: MotionEvent): Boolean {"
+        errorLine2="                 ~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/preview/ZoomImageView.kt"
+            line="198"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
+        errorLine1="        binding.convergenceLabel.text = context.getString(R.string.convergence) + &quot;  %+.0f px&quot;.format(s.convergencePx)"
+        errorLine2="                                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
+            line="171"
+            column="41"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="        binding.convergenceLabel.text = context.getString(R.string.convergence) + &quot;  %+.0f px&quot;.format(s.convergencePx)"
+        errorLine2="                                                                                   ~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
+            line="171"
+            column="84"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
+        errorLine1="        binding.depthLabel.text = context.getString(R.string.depth) + &quot;  %.2f×&quot;.format(s.depth)"
+        errorLine2="                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
+            line="173"
+            column="35"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="        binding.depthLabel.text = context.getString(R.string.depth) + &quot;  %.2f×&quot;.format(s.depth)"
+        errorLine2="                                                                       ~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
+            line="173"
+            column="72"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
+        errorLine1="        binding.brightnessLabel.text = context.getString(R.string.brightness) + &quot;  %+d&quot;.format(s.exposure)"
+        errorLine2="                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
+            line="199"
+            column="40"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="        binding.shutterLabel.text = &quot;Shutter  1/%d s&quot;.format((1e9 / shutter).roundToInt())"
+        errorLine2="                                     ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
+            line="203"
+            column="38"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
+        errorLine1="        binding.isoLabel.text = &quot;ISO  $iso&quot;"
+        errorLine2="                                ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
+            line="207"
+            column="33"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="        binding.isoLabel.text = &quot;ISO  $iso&quot;"
+        errorLine2="                                 ~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
+            line="207"
+            column="34"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
+        errorLine1="        binding.brightnessLabel.text = context.getString(R.string.brightness) + &quot;  %+d&quot;.format(e.compensation)"
+        errorLine2="                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
+            line="223"
+            column="40"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
+        errorLine1="        binding.isoLabel.text = &quot;ISO  ${e.iso}&quot;"
+        errorLine2="                                ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
+            line="230"
+            column="33"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="        binding.isoLabel.text = &quot;ISO  ${e.iso}&quot;"
+        errorLine2="                                 ~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
+            line="230"
+            column="34"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="            binding.shutterLabel.text = &quot;Exposure  %.1f ms&quot;.format(e / 10.0)"
+        errorLine2="                                         ~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
+            line="261"
+            column="42"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
+        errorLine1="            binding.isoLabel.text = &quot;Gain  $g&quot; + if (s.glassesGain &lt; 0) &quot; (default)&quot; else &quot;&quot;"
+        errorLine2="                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
+            line="269"
+            column="37"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
+        errorLine1="            binding.isoLabel.text = &quot;Gain  $g&quot; + if (s.glassesGain &lt; 0) &quot; (default)&quot; else &quot;&quot;"
+        errorLine2="                                    ~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
+            line="269"
+            column="37"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="            binding.isoLabel.text = &quot;Gain  $g&quot; + if (s.glassesGain &lt; 0) &quot; (default)&quot; else &quot;&quot;"
+        errorLine2="                                     ~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
+            line="269"
+            column="38"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="            button.text = &quot;%d:%02d&quot;.format(elapsedSec / 60, elapsedSec % 60)"
+        errorLine2="                           ~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
+            line="394"
+            column="28"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
+        errorLine1="                    text = (if (ready) &quot;● &quot; else &quot;○ &quot;) + status"
+        errorLine2="                           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/HomeActivity.kt"
+            line="146"
+            column="28"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="            text = &quot;Recordings&quot;"
+        errorLine2="                    ~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/HomeActivity.kt"
+            line="165"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="            text = &quot;‹ Devices&quot;"
+        errorLine2="                    ~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/HomeActivity.kt"
+            line="210"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="            text = &quot;New profile&quot;"
+        errorLine2="                    ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/HomeActivity.kt"
+            line="222"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="                    text = &quot;Edit&quot;"
+        errorLine2="                            ~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/HomeActivity.kt"
+            line="260"
+            column="29"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="                    text = &quot;Start&quot;"
+        errorLine2="                            ~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/HomeActivity.kt"
+            line="271"
+            column="29"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="            text = &quot;Restore built-in profiles&quot;"
+        errorLine2="                    ~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/HomeActivity.kt"
+            line="282"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
+        errorLine1="            binding.messageText.text = &quot;Stereo view is on the glasses.\nAdjust it with the controls below.&quot;"
+        errorLine2="                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/MainActivity.kt"
+            line="277"
+            column="40"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="            binding.messageText.text = &quot;Stereo view is on the glasses.\nAdjust it with the controls below.&quot;"
+        errorLine2="                                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/MainActivity.kt"
+            line="277"
+            column="41"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="            binding.messageText.text = &quot;Stereo view is on the glasses.\nAdjust it with the controls below.&quot;"
+        errorLine2="                                                                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/MainActivity.kt"
+            line="277"
+            column="73"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="                text = &quot;No profiles. Save the current settings as one, or restore the built-in ones.&quot;"
+        errorLine2="                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/ProfilesDialog.kt"
+            line="112"
+            column="25"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="            text = &quot;Trim&quot;"
+        errorLine2="                    ~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/preview/RecordingPreviewActivity.kt"
+            line="243"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
+        errorLine1="                text = &quot;${seconds}s&quot;"
+        errorLine2="                       ~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/preview/RecordingPreviewActivity.kt"
+            line="335"
+            column="24"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="        timeText?.text = &quot;%.3f s / %.3f s&quot;.format(positionNs / 1e9, d.durationNs / 1e9)"
+        errorLine2="                          ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/preview/RecordingPreviewActivity.kt"
+            line="545"
+            column="27"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
+        errorLine1="        tiles.getOrNull(camera)?.second?.text = &quot;${c.name}  ${frame + 1}/${c.timestamps.size}  +%.3f s&quot;.format((c.timestamps[frame] - d.startNs) / 1e9)"
+        errorLine2="                                                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/preview/RecordingPreviewActivity.kt"
+            line="556"
+            column="49"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
+        errorLine1="        tiles.getOrNull(camera)?.second?.text = &quot;${c.name}  ${frame + 1}/${c.timestamps.size}  +%.3f s&quot;.format((c.timestamps[frame] - d.startNs) / 1e9)"
+        errorLine2="                                                              ~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/preview/RecordingPreviewActivity.kt"
+            line="556"
+            column="63"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="        tiles.getOrNull(camera)?.second?.text = &quot;${c.name}  ${frame + 1}/${c.timestamps.size}  +%.3f s&quot;.format((c.timestamps[frame] - d.startNs) / 1e9)"
+        errorLine2="                                                                                             ~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/preview/RecordingPreviewActivity.kt"
+            line="556"
+            column="94"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
+        errorLine1="        trimText?.text = &quot;Keep %.2f s → %.2f s  (%.2f s)&quot;.format(trimStart / 1e9, trimEnd / 1e9, (trimEnd - trimStart) / 1e9) +"
+        errorLine2="                         ^">
+        <location
+            file="src/main/java/com/xreal/stereoview/preview/RecordingPreviewActivity.kt"
+            line="656"
+            column="26"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="        trimText?.text = &quot;Keep %.2f s → %.2f s  (%.2f s)&quot;.format(trimStart / 1e9, trimEnd / 1e9, (trimEnd - trimStart) / 1e9) +"
+        errorLine2="                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/preview/RecordingPreviewActivity.kt"
+            line="656"
+            column="27"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="            text = &quot;Recordings&quot;"
+        errorLine2="                    ~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/RecordingsActivity.kt"
+            line="73"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="            text = &quot;Storage…&quot;"
+        errorLine2="                    ~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/RecordingsActivity.kt"
+            line="77"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="                    text = &quot;Cancel&quot;"
+        errorLine2="                            ~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/RecordingsActivity.kt"
+            line="244"
+            column="29"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
+        errorLine1="                text = &quot;Edit “${editor.profileName}”&quot;"
+        errorLine2="                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
+            line="126"
+            column="24"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="                text = &quot;Edit “${editor.profileName}”&quot;"
+        errorLine2="                        ~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
+            line="126"
+            column="25"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="                text = &quot;Cancel&quot;"
+        errorLine2="                        ~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
+            line="131"
+            column="25"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="                text = &quot;Save&quot;"
+        errorLine2="                        ~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
+            line="135"
+            column="25"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="                text = &quot;Save to profile&quot;"
+        errorLine2="                        ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
+            line="575"
+            column="25"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="            text = &quot;Profiles…&quot;"
+        errorLine2="                    ~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
+            line="583"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
+        errorLine1="            fun show(v: Int) { label.text = &quot;${spec.label}: ${bufferText(spec, v)}&quot; }"
+        errorLine2="                                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
+            line="777"
+            column="45"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
+        errorLine1="            val text = TextView(context).apply { this.text = &quot;$label %+.2f°&quot;.format(value) }"
+        errorLine2="                                                             ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
+            line="827"
+            column="62"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="            val text = TextView(context).apply { this.text = &quot;$label %+.2f°&quot;.format(value) }"
+        errorLine2="                                                                    ~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
+            line="827"
+            column="69"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
+        errorLine1="                    text.text = &quot;$label %+.2f°&quot;.format(v)"
+        errorLine2="                                ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
+            line="836"
+            column="33"/>
+    </issue>
+
+    <issue
+        id="SetTextI18n"
+        message="String literal in `setText` can not be translated. Use Android resources instead."
+        errorLine1="                    text.text = &quot;$label %+.2f°&quot;.format(v)"
+        errorLine2="                                       ~~~~~~~">
+        <location
+            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
+            line="836"
+            column="40"/>
+    </issue>
+
+    <issue
+        id="HardcodedText"
+        message="Hardcoded string &quot;All&quot;, should use `@string` resource"
+        errorLine1="                android:text=&quot;All&quot;"
+        errorLine2="                ~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/overlay_controls.xml"
+            line="228"
+            column="17"/>
+    </issue>
+
+</issues>

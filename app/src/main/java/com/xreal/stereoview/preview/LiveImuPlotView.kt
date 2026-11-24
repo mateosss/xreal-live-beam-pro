@@ -30,6 +30,7 @@ class LiveImuPlotView(context: Context, private val title: String, private val u
     private var rateCount = 0
     private var rateStartNs = 0L
     private var rateHz = 0.0
+
     @Volatile private var redrawPosted = false
 
     private val density = resources.displayMetrics.density

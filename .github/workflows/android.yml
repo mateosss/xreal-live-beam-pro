@@ -56,12 +56,12 @@ jobs:
             echo "::warning::SIGNING_KEYSTORE_BASE64 is not set: the APK is signed with a throwaway debug key and cannot update other installs"
           fi
 
-      - name: Build, test and lint
+      - name: Check formatting, build, test and lint
         env:
           SIGNING_KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
-        run: ./gradlew assembleRelease testDebugUnitTest lintDebug
+        run: ./gradlew spotlessCheck assembleRelease testDebugUnitTest lintDebug
 
       - name: Collect APK
         run: |

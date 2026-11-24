@@ -34,7 +34,7 @@ object BasaltCalib {
 
     /** OpenCV's rational model (k1, k2, p1, p2, k3, k4, k5, k6); rpmax −1 lets Basalt estimate it. */
     fun radtan8(fx: Double, fy: Double, cx: Double, cy: Double, k1: Double, k2: Double, p1: Double, p2: Double, k3: Double,
-                k4: Double = 0.0, k5: Double = 0.0, k6: Double = 0.0) =
+        k4: Double = 0.0, k5: Double = 0.0, k6: Double = 0.0) =
         pinhole(fx, fy, cx, cy) + listOf("k1" to k1, "k2" to k2, "p1" to p1, "p2" to p2, "k3" to k3, "k4" to k4, "k5" to k5, "k6" to k6, "rpmax" to -1.0)
 
     /** Fisheye with 6 radial, 2 tangential and 4 thin-prism terms (Meta's / Project Aria's Fisheye624). */

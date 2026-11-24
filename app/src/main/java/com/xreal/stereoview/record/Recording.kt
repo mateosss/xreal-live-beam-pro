@@ -258,11 +258,6 @@ class Recording private constructor(
         }
     }
 
-    /**
-     * Completes mav0/imu0, written live from the gyroscope and accelerometer (calibrated if
-     * both were recorded, else uncalibrated): its sensor.yaml with the measured rate. Returns a
-     * summary for metadata.json.
-     */
     /** The cameras' factory calibration in Basalt's format (from [writeEurocDescriptions]). */
     private var basaltCameras: List<BasaltCalib.Camera> = emptyList()
 
@@ -277,6 +272,11 @@ class Recording private constructor(
         metadata.put("basalt_calibration", BasaltCalib.write(appContext, dir, com.xreal.stereoview.ui.CameraSource.BEAM_PRO, factory))
     }
 
+    /**
+     * Completes mav0/imu0, written live from the gyroscope and accelerometer (calibrated if
+     * both were recorded, else uncalibrated): its sensor.yaml with the measured rate. Returns a
+     * summary for metadata.json.
+     */
     private fun writeImu0(): JSONObject {
         val live = imu.imu0 ?: return JSONObject().put("samples", 0).put("note", "record the gyroscope and accelerometer streams")
             .also { writeBasalt(0.0) }

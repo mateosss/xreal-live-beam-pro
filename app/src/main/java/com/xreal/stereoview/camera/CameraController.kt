@@ -71,6 +71,7 @@ class CameraController(context: Context, private val listener: Listener) {
     private var sizeIndex = 0
     private var exposure = Exposure()
     private var lastStatsMs = 0L
+
     /** Bumped whenever cameras are closed or reconfigured; stale callbacks compare against it. */
     private var generation = 0
     private val devices = LinkedHashMap<String, CameraDevice>()

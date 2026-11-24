@@ -23,11 +23,18 @@ object OakNative {
     }
 
     @JvmStatic private external fun initialize(): Boolean
+
     @JvmStatic external fun start(config: IntArray): Long
+
     @JvmStatic external fun info(handle: Long): String
+
     @JvmStatic external fun pollMono(handle: Long, which: Int, out: ByteArray, meta: LongArray, timeoutMs: Int): Int
+
     @JvmStatic external fun pollRgb(handle: Long, out: ByteArray, meta: LongArray, timeoutMs: Int): Int
+
     @JvmStatic external fun pollImu(handle: Long, out: DoubleArray, timeoutMs: Int): Int
+
     @JvmStatic external fun setExposure(handle: Long, camera: Int, auto: Boolean, exposureUs: Int, iso: Int, compensation: Int)
+
     @JvmStatic external fun stop(handle: Long)
 }

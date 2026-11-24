@@ -32,16 +32,20 @@ class ImuPlotView(context: Context, private val title: String, private val unit:
             field = value
             invalidate()
         }
+
     /** Visible span in ns. */
     var windowNs = 5_000_000_000L
         set(value) {
             field = value
             invalidate()
         }
+
     /** Called while dragging, with the new cursor time. */
     var onScrub: ((Long) -> Unit)? = null
+
     /** Called while pinching horizontally, with the new span. */
     var onWindowChange: ((Long) -> Unit)? = null
+
     /** Value-axis zoom: 1 fits the visible samples, larger magnifies around the cursor values. */
     var valueZoom = 1f
         set(value) {
@@ -49,10 +53,13 @@ class ImuPlotView(context: Context, private val title: String, private val unit:
             if (field == 1f) valueCenter = null
             invalidate()
         }
+
     /** Middle of the zoomed value axis once panned; null follows the values at the cursor. */
     private var valueCenter: Float? = null
+
     /** The panned middle of the value axis (null: following the cursor). */
     val pannedCenter: Float? get() = valueCenter
+
     /** Last drawn value range: the visible samples' min and max, and the axis shown. */
     private var dataLo = 0f
     private var dataHi = 0f
@@ -195,9 +202,11 @@ class ImuPlotView(context: Context, private val title: String, private val unit:
     private var lastY = 0f
     private var startX = 0f
     private var startY = 0f
+
     /** 0 undecided, 1 horizontal (scrub), 2 vertical (pan values). */
     private var dragAxis = 0
     private val touchSlop = android.view.ViewConfiguration.get(context).scaledTouchSlop
+
     /** Set once a second finger touches: no scrubbing until all fingers are up. */
     private var multiTouch = false
 

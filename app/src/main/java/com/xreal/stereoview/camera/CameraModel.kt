@@ -159,9 +159,9 @@ class CameraModel(
          */
         fun nominalDeviceToCamera(sensorOrientation: Int): DoubleArray {
             val t = Math.toRadians(sensorOrientation.toDouble())
-            val x = doubleArrayOf(cos(t), -sin(t), 0.0)  // image right
+            val x = doubleArrayOf(cos(t), -sin(t), 0.0) // image right
             val y = doubleArrayOf(-sin(t), -cos(t), 0.0) // image down
-            val z = doubleArrayOf(0.0, 0.0, -1.0)        // out of the back of the device
+            val z = doubleArrayOf(0.0, 0.0, -1.0) // out of the back of the device
             return Mat3.fromRows(x, y, z)
         }
     }
