@@ -174,166 +174,20 @@ data class Profile(val name: String, val settings: StereoSettings) {
         const val OAK_PASSTHROUGH = "OAK passthrough"
         const val OAK_EUROC = "OAK EuRoC dataset"
 
-        fun toJson(profiles: List<Profile>): String = JSONArray(profiles.map { p ->
-            JSONObject().put("name", p.name).put("settings", JSONObject().apply {
-                val s = p.settings
-                put("convergencePx", s.convergencePx.toDouble())
-                put("depth", s.depth.toDouble())
-                put("scaleMode", s.scaleMode.name)
-                put("exposure", s.exposure)
-                put("manualExposure", s.manualExposure)
-                put("exposureTimeNs", s.exposureTimeNs)
-                put("iso", s.iso)
-                put("targetFps", s.targetFps)
-                put("maxResolution", s.maxResolution)
-                put("syncThresholdMs", s.syncThresholdMs)
-                put("stabilization", s.stabilization.name)
-                put("focusMode", s.focusMode.name)
-                put("recordView", s.recordView.name)
-                put("recordFormat", s.recordFormat.name)
-                put("recordBitrateMbps", s.recordBitrateMbps)
-                put("imuRate", s.imuRate.name)
-                put("imuStreams", s.imuStreams)
-                put("cameraSource", s.cameraSource.name)
-                put("glassesImu", s.glassesImu)
-                put("glassesRectify", s.glassesRectify)
-                put("glassesManualExposure", s.glassesManualExposure)
-                put("glassesExposure100us", s.glassesExposure100us)
-                put("glassesGain", s.glassesGain)
-                put("oakMonoHeight", s.oakMonoHeight)
-                put("oakFps", s.oakFps)
-                put("oakRgbHeight", s.oakRgbHeight)
-                put("oakJpegQuality", s.oakJpegQuality)
-                put("oakImuRateHz", s.oakImuRateHz)
-                put("oakRgbFps", s.oakRgbFps)
-                put("previewStyle", s.previewStyle.name)
-                put("oakUsb3", s.oakUsb3)
-                put("oakRgbFormat", s.oakRgbFormat.name)
-                put("oakRgbVideoBitrateMbps", s.oakRgbVideoBitrateMbps)
-                put("oakExposures", JSONArray(OakDevice.Exposure.listToJson(s.oakExposures)))
-                put("glassesImageFormat", s.glassesImageFormat.name)
-                put("oakImageFormat", s.oakImageFormat.name)
-                put("grayJpegQuality", s.grayJpegQuality)
-                put("videoBitrateMode", s.videoBitrateMode.name)
-                put("videoKeyframeIntervalS", s.videoKeyframeIntervalS.toDouble())
-                put("videoProfile", s.videoProfile.name)
-                put("videoSoftwareEncoder", s.videoSoftwareEncoder)
-                put("glassesVideoBitrateMbps", s.glassesVideoBitrateMbps)
-                put("oakVideoBitrateMbps", s.oakVideoBitrateMbps)
-            })
-        }).toString()
+        fun toJson(profiles: List<Profile>): String = JSONArray(
+            profiles.map { p -> JSONObject().put("name", p.name).put("settings", SettingsSchema.toProfileJson(p.settings)) },
+        ).toString()
 
         /** Parses [toJson]'s output; missing or unknown values take the defaults. */
         fun fromJson(text: String): List<Profile> {
             val array = JSONArray(text)
-            val d = StereoSettings()
             return List(array.length()) { i ->
                 val o = array.getJSONObject(i)
-                val j = o.getJSONObject("settings")
-                Profile(
-                    o.getString("name"),
-                    d.copy(
-                        convergencePx = j.optDouble("convergencePx", d.convergencePx.toDouble()).toFloat(),
-                        depth = j.optDouble("depth", d.depth.toDouble()).toFloat(),
-                        scaleMode = enumOr(j.optString("scaleMode"), d.scaleMode),
-                        exposure = j.optInt("exposure", d.exposure),
-                        manualExposure = j.optBoolean("manualExposure", d.manualExposure),
-                        exposureTimeNs = j.optLong("exposureTimeNs", d.exposureTimeNs),
-                        iso = j.optInt("iso", d.iso),
-                        targetFps = j.optInt("targetFps", d.targetFps),
-                        maxResolution = j.optInt("maxResolution", d.maxResolution),
-                        syncThresholdMs = j.optInt("syncThresholdMs", d.syncThresholdMs),
-                        stabilization = enumOr(j.optString("stabilization"), d.stabilization),
-                        focusMode = enumOr(j.optString("focusMode"), d.focusMode),
-                        recordView = enumOr(j.optString("recordView"), d.recordView),
-                        recordFormat = enumOr(j.optString("recordFormat"), d.recordFormat),
-                        recordBitrateMbps = j.optInt("recordBitrateMbps", d.recordBitrateMbps),
-                        imuRate = enumOr(j.optString("imuRate"), d.imuRate),
-                        imuStreams = j.optString("imuStreams", d.imuStreams),
-                        cameraSource = enumOr(j.optString("cameraSource"), d.cameraSource),
-                        glassesImu = j.optBoolean("glassesImu", d.glassesImu),
-                        glassesRectify = j.optBoolean("glassesRectify", d.glassesRectify),
-                        glassesManualExposure = j.optBoolean("glassesManualExposure", d.glassesManualExposure),
-                        glassesExposure100us = j.optInt("glassesExposure100us", d.glassesExposure100us),
-                        glassesGain = j.optInt("glassesGain", d.glassesGain),
-                        oakMonoHeight = j.optInt("oakMonoHeight", d.oakMonoHeight),
-                        oakFps = j.optInt("oakFps", d.oakFps),
-                        oakRgbHeight = j.optInt("oakRgbHeight", d.oakRgbHeight),
-                        oakJpegQuality = j.optInt("oakJpegQuality", d.oakJpegQuality),
-                        oakImuRateHz = j.optInt("oakImuRateHz", d.oakImuRateHz),
-                        oakRgbFps = j.optInt("oakRgbFps", d.oakRgbFps),
-                        previewStyle = enumOr(j.optString("previewStyle"), d.previewStyle),
-                        oakUsb3 = j.optBoolean("oakUsb3", d.oakUsb3),
-                        oakRgbFormat = enumOr(j.optString("oakRgbFormat"), d.oakRgbFormat),
-                        oakRgbVideoBitrateMbps = j.optInt("oakRgbVideoBitrateMbps", d.oakRgbVideoBitrateMbps),
-                        // Before 0.16 the OAK took the profile's shared exposure settings.
-                        oakExposures = OakDevice.Exposure.listFromJson(j.optJSONArray("oakExposures")?.toString())
-                            ?: StereoSettings.legacyOakExposures(
-                                j.optBoolean("manualExposure", d.manualExposure), j.optLong("exposureTimeNs", d.exposureTimeNs),
-                                j.optInt("iso", d.iso), j.optInt("exposure", d.exposure),
-                            ),
-                        glassesImageFormat = enumOr(j.optString("glassesImageFormat"), d.glassesImageFormat),
-                        oakImageFormat = enumOr(j.optString("oakImageFormat"), d.oakImageFormat),
-                        grayJpegQuality = j.optInt("grayJpegQuality", d.grayJpegQuality),
-                        videoBitrateMode = enumOr(j.optString("videoBitrateMode"), d.videoBitrateMode),
-                        videoKeyframeIntervalS = j.optDouble("videoKeyframeIntervalS", d.videoKeyframeIntervalS.toDouble()).toFloat(),
-                        videoProfile = enumOr(j.optString("videoProfile"), d.videoProfile),
-                        videoSoftwareEncoder = j.optBoolean("videoSoftwareEncoder", d.videoSoftwareEncoder),
-                        glassesVideoBitrateMbps = j.optInt("glassesVideoBitrateMbps", d.glassesVideoBitrateMbps),
-                        oakVideoBitrateMbps = j.optInt("oakVideoBitrateMbps", d.oakVideoBitrateMbps),
-                    ),
-                )
+                Profile(o.getString("name"), SettingsSchema.fromProfileJson(o.getJSONObject("settings")))
             }
         }
-
-        private inline fun <reified T : Enum<T>> enumOr(name: String, default: T): T =
-            enumValues<T>().firstOrNull { it.name == name } ?: default
     }
 }
 
 /** These settings with every profile setting taken from [profile]. */
-fun StereoSettings.withProfile(profile: StereoSettings) = copy(
-    convergencePx = profile.convergencePx,
-    depth = profile.depth,
-    scaleMode = profile.scaleMode,
-    exposure = profile.exposure,
-    manualExposure = profile.manualExposure,
-    exposureTimeNs = profile.exposureTimeNs,
-    iso = profile.iso,
-    targetFps = profile.targetFps,
-    maxResolution = profile.maxResolution,
-    syncThresholdMs = profile.syncThresholdMs,
-    stabilization = profile.stabilization,
-    focusMode = profile.focusMode,
-    recordView = profile.recordView,
-    recordFormat = profile.recordFormat,
-    recordBitrateMbps = profile.recordBitrateMbps,
-    imuRate = profile.imuRate,
-    imuStreams = profile.imuStreams,
-    cameraSource = profile.cameraSource,
-    glassesImu = profile.glassesImu,
-    glassesRectify = profile.glassesRectify,
-    glassesManualExposure = profile.glassesManualExposure,
-    glassesExposure100us = profile.glassesExposure100us,
-    glassesGain = profile.glassesGain,
-    oakMonoHeight = profile.oakMonoHeight,
-    oakFps = profile.oakFps,
-    oakRgbHeight = profile.oakRgbHeight,
-    oakJpegQuality = profile.oakJpegQuality,
-    oakImuRateHz = profile.oakImuRateHz,
-    oakRgbFps = profile.oakRgbFps,
-    previewStyle = profile.previewStyle,
-    oakUsb3 = profile.oakUsb3,
-    oakRgbFormat = profile.oakRgbFormat,
-    oakRgbVideoBitrateMbps = profile.oakRgbVideoBitrateMbps,
-    oakExposures = profile.oakExposures,
-    glassesImageFormat = profile.glassesImageFormat,
-    oakImageFormat = profile.oakImageFormat,
-    grayJpegQuality = profile.grayJpegQuality,
-    videoBitrateMode = profile.videoBitrateMode,
-    videoKeyframeIntervalS = profile.videoKeyframeIntervalS,
-    videoProfile = profile.videoProfile,
-    videoSoftwareEncoder = profile.videoSoftwareEncoder,
-    glassesVideoBitrateMbps = profile.glassesVideoBitrateMbps,
-    oakVideoBitrateMbps = profile.oakVideoBitrateMbps,
-)
+fun StereoSettings.withProfile(profile: StereoSettings) = SettingsSchema.withProfile(this, profile)
