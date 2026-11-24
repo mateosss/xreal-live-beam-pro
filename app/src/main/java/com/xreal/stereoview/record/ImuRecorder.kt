@@ -123,7 +123,7 @@ class ImuRecorder(
             put("samples", count)
             put("first_timestamp_ns", firstNs)
             put("last_timestamp_ns", lastNs)
-            if (count > 1) put("mean_rate_hz", (count - 1) * 1e9 / (lastNs - firstNs))
+            if (count > 1) put("mean_rate_hz", Euroc.meanRateHz(count, firstNs, lastNs))
             put("max_gap_ms", maxGapNs / 1e6)
             put("non_monotonic_samples", nonMonotonic)
         }

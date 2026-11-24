@@ -35,7 +35,7 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class OakRecording private constructor(
     override val dir: File,
-    private val cams: List<Cam>,
+    private val cams: List<CameraStream>,
     private val accel: LineWriter?,
     private val gyro: LineWriter?,
     /** mav0/imu0/data.csv, written live from the OAK IMU. */
@@ -45,34 +45,18 @@ class OakRecording private constructor(
     private val monoFormat: GrayImageFormat,
     private val jpegQuality: Int,
     private val rgbFormat: OakRgbFormat,
-    /** Images that may wait for the writers (Settings → Recording buffers). */
-    private val queueFrames: Int,
-    writerThreads: Int,
+    /** Image writers, with room for a few seconds of frames (Settings → Recording buffers). */
+    private val writers: FrameWriterPool,
 ) : ActiveRecording {
-    private class Cam(val name: String, val dir: File, val extension: String, val data: LineWriter, val frames: LineWriter) {
-        /** H.264 mono recordings: the camera's encoder; data.csv rows are written as frames reach the file. */
-        var video: VideoEncoder? = null
-        val pts = VideoEncoder.Companion.PtsMap()
-        var stored = 0L
-        var firstNs = 0L
-        var lastNs = 0L
-        var maxGapNs = 0L
-    }
-
     override val startBoottimeNs: Long = SystemClock.elapsedRealtimeNanos()
 
     @Volatile
     override var error: String? = null
 
-    private val writer = ThreadPoolExecutor(writerThreads, writerThreads, 1, TimeUnit.SECONDS, ArrayBlockingQueue(queueFrames)) { r -> Thread(r, "OakWriter") }
-
     /** Color frames that came in another form than [rgbFormat] needs (only while the stream restarts). */
     private val rgbMismatched = AtomicInteger()
     private val rgbBuffer = ThreadLocal<ByteArray>()
 
-    @Volatile private var peakQueue = 0
-    private val dropped = AtomicInteger()
-    private val failed = AtomicInteger()
     private var lastAccelNs = Long.MIN_VALUE
     private var lastGyroNs = Long.MIN_VALUE
     private var imuSamples = 0L
@@ -90,17 +74,14 @@ class OakRecording private constructor(
         for ((cam, mono) in cams.zip(listOf(frame.left, frame.right))) {
             offset(mono.arrivalNs, mono.timestampNs, mono.hostNs)
             val row = "$t,${mono.timestampNs},${mono.sequence},${mono.hostNs},${mono.arrivalNs},${mono.exposureUs},${mono.iso},${mono.startOfExposureNs}"
-            val video = cam.video
-            if (video != null) {
-                cam.pts.put(t, t)
-                if (video.submitGray(t, mono.image)) cam.frames.line(row) else dropped.incrementAndGet()
-                continue
-            }
-            submit {
-                GrayImages.write(File(cam.dir, "data/$t.${cam.extension}"), mono.image, mono.width, mono.height, monoFormat, jpegQuality)
-                stored(cam, t, row)
-            }
-        }
+            if (cam.video != null) {
+                if (!cam.submitVideo(t, row) { it.submitGray(t, mono.image) }) writers.countDropped()
+            } else {
+                writers.submit {
+                    GrayImages.write(cam.imageFile(t), mono.image, mono.width, mono.height, monoFormat, jpegQuality)
+                    cam.imageStored(t, row)
+                }
+            } }
     }
 
     fun onRgb(frame: OakDevice.Rgb) {
@@ -112,14 +93,12 @@ class OakRecording private constructor(
             rgbMismatched.incrementAndGet()
             return
         }
-        val video = cam.video
-        if (video != null) {
-            cam.pts.put(t, t)
-            if (video.submitNv12(t, frame.data)) cam.frames.line(row) else dropped.incrementAndGet()
+        if (cam.video != null) {
+            if (!cam.submitVideo(t, row) { it.submitNv12(t, frame.data) }) writers.countDropped()
             return
         }
-        submit {
-            val file = File(cam.dir, "data/$t.${cam.extension}")
+        writers.submit {
+            val file = cam.imageFile(t)
             if (frame.raw) {
                 val rgb = Nv12.toRgb(frame.data, frame.width, frame.height, rgbBuffer.get())
                 rgbBuffer.set(rgb)
@@ -127,7 +106,7 @@ class OakRecording private constructor(
             } else {
                 file.writeBytes(frame.data)
             }
-            stored(cam, t, row)
+            cam.imageStored(t, row)
         }
     }
 
@@ -159,68 +138,20 @@ class OakRecording private constructor(
         monotonicMinusDevice = hostNs - deviceNs
     }
 
-    private fun submit(task: () -> Unit) {
-        try {
-            writer.execute {
-                try {
-                    task()
-                } catch (e: Exception) {
-                    Log.w(TAG, "Writing a frame failed", e)
-                    failed.incrementAndGet()
-                }
-            }
-            writer.queue.size.let { if (it > peakQueue) peakQueue = it }
-        } catch (e: RejectedExecutionException) {
-            dropped.incrementAndGet()
-        }
-    }
-
-    private fun stored(cam: Cam, timestampNs: Long, framesRow: String) {
-        synchronized(cam) {
-            if (cam.stored == 0L) cam.firstNs = timestampNs else cam.maxGapNs = maxOf(cam.maxGapNs, timestampNs - cam.lastNs)
-            cam.lastNs = maxOf(cam.lastNs, timestampNs)
-            cam.stored++
-            cam.data.line("$timestampNs,$timestampNs.${cam.extension}")
-            cam.frames.line(framesRow)
-        }
-    }
-
     override fun onSettingsChanged(s: StereoSettings) = settingsLog.log(s)
 
-    override val backlog: String
-        get() = "write queue ${writer.queue.size}/$queueFrames images (peak $peakQueue), dropped ${dropped.get()}"
+    override val backlog: String get() = writers.backlog
 
-    override fun writeErrors(): String? = (cams.flatMap { listOf(it.data, it.frames) } + listOfNotNull(accel, gyro))
-        .firstNotNullOfOrNull { it.error }?.toString()
-
-    /** Encoder thread: a frame of [cam] reached the video file. */
-    private fun onVideoFrame(cam: Cam, ptsUs: Long) {
-        val t = cam.pts.take(ptsUs)
-        synchronized(cam) {
-            if (cam.stored == 0L) cam.firstNs = t else cam.maxGapNs = maxOf(cam.maxGapNs, t - cam.lastNs)
-            cam.lastNs = maxOf(cam.lastNs, t)
-            cam.stored++
-            cam.data.lineNow("$t,$t.png")
-        }
-    }
+    override fun writeErrors(): String? = (cams.map { it.writeError } + listOfNotNull(accel, gyro).map { it.error })
+        .firstNotNullOfOrNull { it }?.toString()
 
     override fun finish(): String {
         val end = Metadata.clocks()
-        writer.shutdown()
-        writer.awaitTermination(5, TimeUnit.MINUTES)
+        writers.finish()
+        val camerasJson = metadata.getJSONArray("cameras")
         cams.forEachIndexed { i, cam ->
-            cam.video?.let {
-                it.finish()
-                metadata.getJSONArray("cameras").optJSONObject(i)?.put("encoder_settings", it.applied)
-                    ?.apply { if (it.notWritten > 0) put("video_frames_not_written", it.notWritten) }
-                it.error?.let { e -> error = error ?: "${cam.name} encoder: $e" }
-            }
-        }
-        cams.forEach {
-            it.data.close()
-            it.frames.close()
-            Euroc.sortByTimestamp(File(it.dir, "data.csv"))
-            Euroc.sortByTimestamp(File(it.dir, "frames.csv"))
+            cam.finish()?.let { e -> error = error ?: "${cam.name} encoder: $e" }
+            cam.encoderJson(camerasJson.getJSONObject(i))
         }
         synchronized(this) {
             accel?.close()
@@ -242,27 +173,9 @@ class OakRecording private constructor(
             put("note", "boottime ≈ oak + offset. The first value is min(arrival − timestamp), i.e. the offset plus the smallest " +
                 "USB delivery delay; the second is depthai's host-synced estimate on CLOCK_MONOTONIC (frames.csv host_ns).")
         })
-        val camerasJson = metadata.getJSONArray("cameras")
-        cams.forEachIndexed { i, cam ->
-            camerasJson.getJSONObject(i).put("stats", JSONObject().apply {
-                put("frames", cam.stored)
-                put("first_timestamp_ns", cam.firstNs)
-                put("last_timestamp_ns", cam.lastNs)
-                if (cam.stored > 1) put("mean_fps", (cam.stored - 1) * 1e9 / (cam.lastNs - cam.firstNs))
-                put("max_gap_ms", cam.maxGapNs / 1e6)
-                cam.video?.let { v ->
-                    put("encoder_frames_dropped", v.dropped.get())
-                    put("encoder_backlog_peak_frames", v.peakPending)
-                    put("encoder_backlog_capacity_frames", v.maxPending)
-                }
-            })
-        }
-        metadata.put("stats", JSONObject().apply {
-            put("frames_dropped_by_writer", dropped.get())
-            put("frames_failed", failed.get())
+        cams.forEachIndexed { i, cam -> camerasJson.getJSONObject(i).put("stats", cam.statsJson()) }
+        metadata.put("stats", writers.statsJson("frames_dropped_by_writer").apply {
             if (rgbMismatched.get() > 0) put("color_frames_skipped_wrong_format", rgbMismatched.get())
-            put("write_queue_capacity_frames", queueFrames)
-            put("write_queue_peak_frames", peakQueue)
             put("oak_imu_gyro_samples", imuSamples)
         })
         File(dir, "metadata.json").writeText(metadata.toString(2))
@@ -270,7 +183,7 @@ class OakRecording private constructor(
             append("Saved ${dir.name}: ")
             append(cams.joinToString { "${it.name} ${it.stored} frames" })
             if (imu0.optLong("samples") > 0) append(", imu0 %.0f Hz".format(imu0.optDouble("rate_hz")))
-            if (dropped.get() > 0) append(", ${dropped.get()} frames dropped")
+            if (writers.dropped > 0) append(", ${writers.dropped} frames dropped")
         }
     }
 
@@ -317,17 +230,14 @@ class OakRecording private constructor(
                 Spec("cam1", "right", s.oakImageFormat.extension, monoW, s.oakMonoHeight, s.oakFps, s.oakVideoBitrateMbps, monoBacklog),
                 if (s.oakRgbHeight > 0) Spec("cam2", "rgb", s.oakRgbFormat.extension, RGB_WIDTH, s.oakRgbHeight, rgbFps, s.oakRgbVideoBitrateMbps, rgbBacklog) else null,
             )
-            lateinit var recording: OakRecording
             val cams = specs.map { spec ->
-                val video = spec.ext == GrayImageFormat.H264.extension
                 val camDir = File(mav, spec.name).apply { mkdirs() }
-                if (!video) File(camDir, "data").mkdirs()
                 calibration?.optJSONObject(spec.key)?.let { c -> runCatching { File(camDir, "sensor.yaml").writeText(cameraYaml(spec.name, spec.key, c, spec.fps)) } }
-                Cam(spec.name, camDir, spec.ext, LineWriter(File(camDir, "data.csv"), Euroc.CAMERA_HEADER), LineWriter(File(camDir, "frames.csv"), FRAMES_HEADER)).also { cam ->
-                    if (video) {
-                        cam.video = VideoEncoder(
+                CameraStream(spec.name, camDir, spec.ext, FRAMES_HEADER).apply {
+                    if (spec.ext == GrayImageFormat.H264.extension) {
+                        video = VideoEncoder(
                             File(camDir, "data.mkv"), "video/avc", spec.width, spec.height, spec.fps, s.encoderOptions(spec.bitrateMbps),
-                            grayInput = true, onWritten = { p -> recording.onVideoFrame(cam, p) }, grayBacklogFrames = spec.backlog,
+                            grayInput = true, onWritten = ::videoFrameWritten, grayBacklogFrames = spec.backlog,
                         )
                     }
                 }
@@ -423,9 +333,9 @@ class OakRecording private constructor(
             val queue = specs.filter { it.ext != GrayImageFormat.H264.extension }.sumOf { it.backlog }.coerceAtLeast(8)
             // RGB PNGs take several times longer than the mono ones: more writers.
             val threads = if (rgbRaw && s.oakRgbFormat == OakRgbFormat.PNG) 6 else 3
-            recording = OakRecording(
+            val recording = OakRecording(
                 dir, cams, accel, gyro, imu0, SettingsLog(dir), metadata, s.oakImageFormat, s.grayJpegQuality,
-                s.oakRgbFormat, queue, threads,
+                s.oakRgbFormat, FrameWriterPool(threads, queue, "OakWriter"),
             )
             recording.onSettingsChanged(s)
             return recording

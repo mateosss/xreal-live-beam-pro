@@ -42,43 +42,21 @@ import java.util.concurrent.atomic.AtomicInteger
 class GlassesRecording private constructor(
     private val appContext: Context,
     override val dir: File,
-    private val cams: List<Cam>,
+    private val cams: List<CameraStream>,
     private val glassesImu: LineWriter?,
     private val imu0: LineWriter?,
     private val settingsLog: SettingsLog,
     private val metadata: JSONObject,
     private val format: GrayImageFormat,
     private val jpegQuality: Int,
-    /** Images that may wait for the writers (Settings → Recording buffers). */
-    private val queueFrames: Int,
+    /** Image writers, with room for several seconds of frames (Settings → Recording buffers). */
+    private val writers: FrameWriterPool,
 ) : ActiveRecording {
-    private class Cam(val name: String, val dir: File, val data: LineWriter, val frames: LineWriter) {
-        /** H.264 recordings: the camera's encoder; data.csv rows are written as frames reach the file. */
-        var video: VideoEncoder? = null
-        val pts = VideoEncoder.Companion.PtsMap()
-        var stored = 0L
-        var firstNs = 0L
-        var lastNs = 0L
-        var maxGapNs = 0L
-    }
-
     override val startBoottimeNs: Long = SystemClock.elapsedRealtimeNanos()
 
     @Volatile
     override var error: String? = null
 
-    /**
-     * PNG encoding and writing off the decode thread, with room for several seconds of frames
-     * (300 kB each) when storage stalls; only beyond that are frames dropped (and counted).
-     */
-    private val encoder = ThreadPoolExecutor(3, 3, 1, TimeUnit.SECONDS, ArrayBlockingQueue(queueFrames)) { r ->
-        Thread(r, "GlassesPng")
-    }
-
-    @Volatile
-    private var peakQueue = 0
-    private val dropped = AtomicInteger()
-    private val failed = AtomicInteger()
     private var imuSamples = 0L
     private var imuFirstNs = 0L
     private var imuLastNs = 0L
@@ -113,44 +91,20 @@ class GlassesRecording private constructor(
         pairSpread.add(frame.right.timestampNs - frame.left.timestampNs)
         for ((cam, eye) in cams.zip(listOf(frame.left, frame.right))) {
             cameraOffset.add(eye.arrivalNs, eye.timestampNs)
-            val video = cam.video
-            if (video != null) {
-                cam.pts.put(t, t)
-                if (video.submitGray(t, eye.image)) {
-                    cam.frames.line(framesRow(t, eye))
-                } else {
-                    dropped.incrementAndGet()
+            val row = framesRow(t, eye)
+            if (cam.video != null) {
+                if (!cam.submitVideo(t, row) { it.submitGray(t, eye.image) }) writers.countDropped()
+            } else {
+                writers.submit {
+                    GrayImages.write(cam.imageFile(t), eye.image, IMAGE_W, IMAGE_H, format, jpegQuality)
+                    cam.imageStored(t, row)
                 }
-                continue
-            }
-            try {
-                encoder.execute { store(cam, t, eye) }
-                encoder.queue.size.let { if (it > peakQueue) peakQueue = it }
-            } catch (e: java.util.concurrent.RejectedExecutionException) {
-                dropped.incrementAndGet()
             }
         }
     }
 
     private fun framesRow(t: Long, eye: GlassesDevice.Eye) =
         "$t,${eye.timestampNs},${eye.sequence},${eye.arrivalNs},${eye.meta.joinToString("") { "%02x".format(it) }}"
-
-    private fun store(cam: Cam, t: Long, eye: GlassesDevice.Eye) {
-        try {
-            GrayImages.write(File(cam.dir, "data/$t.${format.extension}"), eye.image, IMAGE_W, IMAGE_H, format, jpegQuality)
-        } catch (e: Exception) {
-            Log.w(TAG, "Writing a frame failed", e)
-            failed.incrementAndGet()
-            return
-        }
-        synchronized(cam) {
-            if (cam.stored == 0L) cam.firstNs = t else cam.maxGapNs = maxOf(cam.maxGapNs, t - cam.lastNs)
-            cam.lastNs = maxOf(cam.lastNs, t)
-            cam.stored++
-            cam.data.line("$t,$t.${format.extension}")
-            cam.frames.line(framesRow(t, eye))
-        }
-    }
 
     /** USB thread: one glasses IMU sample. */
     fun onImu(s: GlassesProtocol.ImuSample, arrivalNs: Long) {
@@ -200,47 +154,24 @@ class GlassesRecording private constructor(
 
     override fun onSettingsChanged(s: StereoSettings) = settingsLog.log(s)
 
-    override val backlog: String
-        get() = "write queue ${encoder.queue.size}/$queueFrames images (peak $peakQueue), dropped ${dropped.get()}"
+    override val backlog: String get() = writers.backlog
 
-    override fun writeErrors(): String? = (cams.flatMap { listOf(it.data, it.frames) } + listOfNotNull(imu0, glassesImu))
-        .firstNotNullOfOrNull { it.error }?.toString()
-
-    /** Encoder thread: a frame of [cam] reached the video file. */
-    private fun onVideoFrame(cam: Cam, ptsUs: Long) {
-        val t = cam.pts.take(ptsUs)
-        synchronized(cam) {
-            if (cam.stored == 0L) cam.firstNs = t else cam.maxGapNs = maxOf(cam.maxGapNs, t - cam.lastNs)
-            cam.lastNs = maxOf(cam.lastNs, t)
-            cam.stored++
-            cam.data.lineNow("$t,$t.png")
-        }
-    }
+    override fun writeErrors(): String? = (cams.map { it.writeError } + listOfNotNull(imu0, glassesImu).map { it.error })
+        .firstNotNullOfOrNull { it }?.toString()
 
     override fun finish(): String {
         val end = Metadata.clocks()
-        encoder.shutdown()
-        encoder.awaitTermination(5, TimeUnit.MINUTES)
-        cams.forEach { cam ->
-            cam.video?.let {
-                it.finish()
-                metadata.getJSONArray("cameras").optJSONObject(cams.indexOf(cam))?.put("encoder_settings", it.applied)
-                    ?.apply { if (it.notWritten > 0) put("video_frames_not_written", it.notWritten) }
-                it.error?.let { e -> error = error ?: "${cam.name} encoder: $e" }
-            }
-        }
-        cams.forEach {
-            it.data.close()
-            it.frames.close()
-            // PNGs are stored by two threads, so rows can be slightly out of order.
-            Euroc.sortByTimestamp(File(it.dir, "data.csv"))
-            Euroc.sortByTimestamp(File(it.dir, "frames.csv"))
+        writers.finish()
+        val camerasJson = metadata.getJSONArray("cameras")
+        cams.forEachIndexed { i, cam ->
+            cam.finish()?.let { e -> error = error ?: "${cam.name} encoder: $e" }
+            cam.encoderJson(camerasJson.getJSONObject(i))
         }
         glassesImu?.close()
         imu0?.close()
         settingsLog.close()
         if (imu0 != null) {
-            val rate = if (imuSamples > 1) (imuSamples - 1) * 1e9 / (imuLastNs - imuFirstNs) else 0.0
+            val rate = Euroc.meanRateHz(imuSamples, imuFirstNs, imuLastNs)
             writeImu0Yaml(dir, rate)
             writeBasalt(if (rate > 0) rate else GlassesDevice.IMU_RATE_HZ.toDouble())
         } else {
@@ -265,28 +196,8 @@ class GlassesRecording private constructor(
             put("rows_without_factory_calibration", imuWithoutFactory)
         })
         metadata.put("glasses_factory_calibration", calibration?.let { runCatching { JSONObject(it) }.getOrElse { _ -> it } } ?: JSONObject.NULL)
-        val camerasJson = metadata.getJSONArray("cameras")
-        cams.forEachIndexed { i, cam ->
-            camerasJson.getJSONObject(i).put("stats", JSONObject().apply {
-                put("frames", cam.stored)
-                put("first_timestamp_ns", cam.firstNs)
-                put("last_timestamp_ns", cam.lastNs)
-                if (cam.stored > 1) put("mean_fps", (cam.stored - 1) * 1e9 / (cam.lastNs - cam.firstNs))
-                put("max_gap_ms", cam.maxGapNs / 1e6)
-                cam.video?.let { v ->
-                    put("encoder_frames_dropped", v.dropped.get())
-                    put("encoder_backlog_peak_frames", v.peakPending)
-                    put("encoder_backlog_capacity_frames", v.maxPending)
-                }
-            })
-        }
-        metadata.put("stats", JSONObject().apply {
-            put("frames_dropped_by_encoder", dropped.get())
-            put("write_queue_capacity_frames", queueFrames)
-            put("write_queue_peak_frames", peakQueue)
-            put("frames_failed", failed.get())
-            put("glasses_imu_samples", imuSamples)
-        })
+        cams.forEachIndexed { i, cam -> camerasJson.getJSONObject(i).put("stats", cam.statsJson()) }
+        metadata.put("stats", writers.statsJson("frames_dropped_by_encoder").put("glasses_imu_samples", imuSamples))
         File(dir, "metadata.json").writeText(metadata.toString(2))
 
         return buildString {
@@ -296,7 +207,7 @@ class GlassesRecording private constructor(
                 val seconds = (end.getLong("boottime_ns") - startBoottimeNs) / 1e9
                 append(", glasses IMU %.0f Hz".format(imuSamples / seconds.coerceAtLeast(1e-3)))
             }
-            if (dropped.get() > 0) append(", ${dropped.get()} frames dropped")
+            if (writers.dropped > 0) append(", ${writers.dropped} frames dropped")
         }
     }
 
@@ -326,20 +237,14 @@ class GlassesRecording private constructor(
             val video = s.glassesImageFormat == GrayImageFormat.H264
             // Per camera; both cameras share the memory cap.
             val backlog = RecordingBuffers.frames(s.buffers.glassesCameraS, 30, IMAGE_W.toLong() * IMAGE_H, streams = 2, min = VideoEncoder.MIN_PENDING)
-            lateinit var recording: GlassesRecording
             val cams = listOf("cam0", "cam1").mapIndexed { i, camName ->
                 val camDir = File(mav, camName).apply { mkdirs() }
-                if (!video) File(camDir, "data").mkdirs()
                 File(camDir, "sensor.yaml").writeText(cameraYaml(i))
-                Cam(
-                    camName, camDir,
-                    LineWriter(File(camDir, "data.csv"), Euroc.CAMERA_HEADER),
-                    LineWriter(File(camDir, "frames.csv"), FRAMES_HEADER),
-                ).also { cam ->
+                CameraStream(camName, camDir, s.glassesImageFormat.extension, FRAMES_HEADER).apply {
                     if (video) {
-                        cam.video = VideoEncoder(
+                        this.video = VideoEncoder(
                             File(camDir, "data.mkv"), "video/avc", IMAGE_W, IMAGE_H, 30, s.encoderOptions(s.glassesVideoBitrateMbps),
-                            grayInput = true, onWritten = { p -> recording.onVideoFrame(cam, p) }, grayBacklogFrames = backlog,
+                            grayInput = true, onWritten = ::videoFrameWritten, grayBacklogFrames = backlog,
                         )
                     }
                 }
@@ -420,7 +325,9 @@ class GlassesRecording private constructor(
                 })
             }
             File(dir, "metadata.json").writeText(metadata.toString(2))
-            recording = GlassesRecording(context.applicationContext, dir, cams, glassesImu, imu0, SettingsLog(dir), metadata, s.glassesImageFormat, s.grayJpegQuality, 2 * backlog)
+            val recording = GlassesRecording(context.applicationContext, dir, cams, glassesImu, imu0, SettingsLog(dir), metadata, s.glassesImageFormat, s.grayJpegQuality,
+                FrameWriterPool(3, 2 * backlog, "GlassesWriter"),
+            )
             recording.onSettingsChanged(s)
             recording.writeBasalt(GlassesDevice.IMU_RATE_HZ.toDouble())
             return recording

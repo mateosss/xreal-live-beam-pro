@@ -223,7 +223,7 @@ class Recording private constructor(
                 put("frames", o.stored)
                 put("first_timestamp_ns", o.firstNs)
                 put("last_timestamp_ns", o.lastNs)
-                if (o.stored > 1) put("mean_fps", (o.stored - 1) * 1e9 / (o.lastNs - o.firstNs))
+                if (o.stored > 1) put("mean_fps", Euroc.meanRateHz(o.stored, o.firstNs, o.lastNs))
                 put("max_gap_ms", o.maxGapNs / 1e6)
                 o.video?.let {
                     put("video_samples", it.samples)

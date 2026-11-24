@@ -104,6 +104,13 @@ object Euroc {
         File(mav(dir), "imu0/sensor.yaml").writeText(imuYaml(notes + pending, comment, transform(Mat3.identity(), null), rateHz))
     }
 
+    /**
+     * Mean rate of [count] samples spanning [firstNs]..[lastNs], or 0 if it can't be measured
+     * (fewer than two samples, or no time between them): never infinite or NaN, which JSON
+     * can't hold and would make saving a recording fail.
+     */
+    fun meanRateHz(count: Long, firstNs: Long, lastNs: Long): Double = if (count > 1 && lastNs > firstNs) (count - 1) * 1e9 / (lastNs - firstNs) else 0.0
+
     fun bodyYaml(comment: String) = "# This is the body frame definition\ncomment: '$comment'\n"
 
     /**
@@ -140,7 +147,7 @@ object Euroc {
                 }
             }
         }
-        val rate = if (rows > 1) (rows - 1) * 1e9 / (last - first) else 0.0
+        val rate = meanRateHz(rows, first, last)
         return rows to rate
     }
 

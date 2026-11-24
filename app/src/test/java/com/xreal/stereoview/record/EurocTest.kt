@@ -10,6 +10,14 @@ class EurocTest {
     val tmp = TemporaryFolder()
 
     @Test
+    fun meanRateIsNeverInfiniteOrNaN() {
+        assertEquals(100.0, Euroc.meanRateHz(101, 0, 1_000_000_000), 1e-9)
+        assertEquals(0.0, Euroc.meanRateHz(5, 7, 7), 0.0) // all at one instant
+        assertEquals(0.0, Euroc.meanRateHz(5, 9, 7), 0.0) // span unknown
+        assertEquals(0.0, Euroc.meanRateHz(1, 0, 0), 0.0)
+    }
+
+    @Test
     fun mergesGyroWithInterpolatedAccelerometer() {
         val gyro = tmp.newFile("gyroscope.csv").apply {
             writeText("timestamp_ns,arrival_ns,wx,wy,wz,accuracy\n5,0,0.1,0.2,0.3,3\n15,0,1,2,3,3\n25,0,4,5,6,3\n40,0,7,8,9,3\n")
