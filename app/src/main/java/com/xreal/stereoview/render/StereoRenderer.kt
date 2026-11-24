@@ -12,7 +12,9 @@ import android.util.Size
 import com.xreal.stereoview.camera.CameraModel
 import com.xreal.stereoview.camera.FrameSynchronizer
 import com.xreal.stereoview.glasses.GlassesDevice
+import com.xreal.stereoview.oak.OakDevice
 import com.xreal.stereoview.record.Recording
+import com.xreal.stereoview.ui.CameraSource
 import com.xreal.stereoview.ui.RecordView
 import com.xreal.stereoview.ui.SbsLayout
 import com.xreal.stereoview.ui.ScaleMode
@@ -89,12 +91,12 @@ class StereoRenderer(
 
     /** With an OAK camera as source: the newest mono pair to show. */
     @Volatile
-    var oakFrame: com.xreal.stereoview.oak.OakDevice.StereoFrame? = null
+    var oakFrame: OakDevice.StereoFrame? = null
         set(value) {
             field = value
             requestRender()
         }
-    private var shownOakFrame: com.xreal.stereoview.oak.OakDevice.StereoFrame? = null
+    private var shownOakFrame: OakDevice.StereoFrame? = null
 
     /** Description of the current rectification, for the Info dialog. */
     @Volatile
@@ -205,8 +207,8 @@ class StereoRenderer(
 
     override fun onDrawFrame(gl: GL10?) {
         val start = SystemClock.elapsedRealtimeNanos()
-        if (settings.cameraSource != com.xreal.stereoview.ui.CameraSource.BEAM_PRO) {
-            if (settings.cameraSource == com.xreal.stereoview.ui.CameraSource.OAK) drawOak() else drawGlasses()
+        if (settings.cameraSource != CameraSource.BEAM_PRO) {
+            if (settings.cameraSource == CameraSource.OAK) drawOak() else drawGlasses()
             draws++
             drawNanos += SystemClock.elapsedRealtimeNanos() - start
             maybeReportStats()

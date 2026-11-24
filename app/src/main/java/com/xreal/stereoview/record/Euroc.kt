@@ -1,5 +1,6 @@
 package com.xreal.stereoview.record
 
+import com.xreal.stereoview.util.Mat3
 import com.xreal.stereoview.util.appendFixed
 import java.io.File
 import java.util.Locale
@@ -92,6 +93,15 @@ object Euroc {
         appendLine("gyroscope_random_walk: 1.0e-5       # [ rad / s^2 / sqrt(Hz) ] ( gyro bias diffusion )")
         appendLine("accelerometer_noise_density: 1.0e-2  # [ m / s^2 / sqrt(Hz) ]   ( accel \"white noise\" )")
         appendLine("accelerometer_random_walk: 1.0e-4    # [ m / s^3 / sqrt(Hz) ].  ( accel bias diffusion )")
+    }
+
+    /**
+     * mav0/imu0/sensor.yaml of a dataset whose body frame is its IMU, written at the start
+     * ([rateHz] 0 = not measured yet, noted in the file) and again at the end.
+     */
+    fun writeImu0Yaml(dir: File, notes: List<String>, comment: String, rateHz: Double) {
+        val pending = if (rateHz == 0.0) listOf("rate_hz is measured when the recording ends (0 = the recording did not end normally).") else emptyList()
+        File(mav(dir), "imu0/sensor.yaml").writeText(imuYaml(notes + pending, comment, transform(Mat3.identity(), null), rateHz))
     }
 
     fun bodyYaml(comment: String) = "# This is the body frame definition\ncomment: '$comment'\n"

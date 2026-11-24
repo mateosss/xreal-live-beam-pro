@@ -10,6 +10,7 @@ import com.xreal.stereoview.R
 import com.xreal.stereoview.camera.StereoRig
 import com.xreal.stereoview.databinding.OverlayControlsBinding
 import com.xreal.stereoview.glasses.GlassesDevice
+import com.xreal.stereoview.oak.OakDevice
 import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.roundToInt
@@ -101,7 +102,7 @@ class ControlsOverlay(
             val s = viewModel.settings.value
             val cameras = if (s.oakRgbHeight > 0) 3 else 2
             oakTarget = if (oakTarget + 1 >= cameras) -1 else oakTarget + 1
-            setStatus("Exposure controls set " + if (oakTarget < 0) "all OAK cameras alike" else com.xreal.stereoview.oak.OakDevice.Exposure.CAMERAS[oakTarget])
+            setStatus("Exposure controls set " + if (oakTarget < 0) "all OAK cameras alike" else OakDevice.Exposure.CAMERAS[oakTarget])
             render(s)
         }
         binding.brightnessSlider.onUserChange { v ->
@@ -234,7 +235,7 @@ class ControlsOverlay(
      * Changes the exposure of the OAK camera the controls set: [oakTarget], or all of them, which
      * then all take the shown (cam0's) values with the change.
      */
-    private fun updateOak(change: (com.xreal.stereoview.oak.OakDevice.Exposure) -> com.xreal.stereoview.oak.OakDevice.Exposure) {
+    private fun updateOak(change: (OakDevice.Exposure) -> OakDevice.Exposure) {
         viewModel.update { s ->
             val e = change(s.oakExposures[oakTarget.coerceAtLeast(0)]).clamped()
             s.copy(oakExposures = s.oakExposures.mapIndexed { i, old -> if (oakTarget < 0 || i == oakTarget) e else old })
@@ -418,7 +419,7 @@ class ControlsOverlay(
         val min = maxOf(range?.lower ?: 50_000L, 50_000L)
         // OAK: the sensors' own rate (higher than the mono rate when the color camera runs faster).
         val fps = if (s.cameraSource == CameraSource.OAK) {
-            val plan = com.xreal.stereoview.oak.OakDevice.FpsPlan.of(s.oakFps, if (s.oakRgbHeight > 0 && s.oakRgbFps > 0) s.oakRgbFps else s.oakFps)
+            val plan = OakDevice.FpsPlan.of(s.oakFps, if (s.oakRgbHeight > 0 && s.oakRgbFps > 0) s.oakRgbFps else s.oakFps)
             if (oakColor) plan.rgbSensorFps else plan.monoSensorFps
         } else {
             s.targetFps

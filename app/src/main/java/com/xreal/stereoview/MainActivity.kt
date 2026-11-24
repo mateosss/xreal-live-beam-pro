@@ -36,20 +36,25 @@ import com.xreal.stereoview.camera.CameraUtils
 import com.xreal.stereoview.camera.StereoRig
 import com.xreal.stereoview.databinding.ActivityMainBinding
 import com.xreal.stereoview.glasses.GlassesDevice
+import com.xreal.stereoview.glasses.GlassesImuCalibration
 import com.xreal.stereoview.glasses.GlassesProtocol
 import com.xreal.stereoview.oak.OakDevice
 import com.xreal.stereoview.preview.CapturePreview
 import com.xreal.stereoview.record.ActiveRecording
 import com.xreal.stereoview.record.GlassesRecording
 import com.xreal.stereoview.record.OakRecording
+import com.xreal.stereoview.record.OakRgbFormat
 import com.xreal.stereoview.record.Recording
 import com.xreal.stereoview.record.RecordingService
+import com.xreal.stereoview.record.RecordingStorage
 import com.xreal.stereoview.render.RenderThread
 import com.xreal.stereoview.render.Stabilizer
 import com.xreal.stereoview.render.StereoPresentation
 import com.xreal.stereoview.render.StereoRenderer
 import com.xreal.stereoview.ui.CameraSource
 import com.xreal.stereoview.ui.ControlsOverlay
+import com.xreal.stereoview.ui.Dialogs
+import com.xreal.stereoview.ui.FilePicker
 import com.xreal.stereoview.ui.FocusMode
 import com.xreal.stereoview.ui.OutputMode
 import com.xreal.stereoview.ui.PreviewStyle
@@ -116,7 +121,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     @Volatile
     private var glassesCalibration: String? = null
 
-    @Volatile private var glassesImuCalibration = com.xreal.stereoview.glasses.GlassesImuCalibration.parse(null)
+    @Volatile private var glassesImuCalibration = GlassesImuCalibration.parse(null)
     private var glassesImuActive = false
     private var glassesStatsTime = 0L
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -155,7 +160,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
                 if (recording == null) {
                     finish()
                 } else {
-                    com.xreal.stereoview.ui.Dialogs.confirm(this@MainActivity, "Stop the recording and go back to the profiles?", "Stop and go back") {
+                    Dialogs.confirm(this@MainActivity, "Stop the recording and go back to the profiles?", "Stop and go back") {
                         stopRecording(null)
                         finish()
                     }
@@ -730,25 +735,36 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             controls.setStatus("Recording needs the cameras running")
             return
         }
-        val root = Recording.root(this).apply { mkdirs() }
+        val rec = beginRecording("Recording", usb = false) {
+            Recording.start(this, viewModel.settings.value, rig, size, cams, cameraManager, recordingInfo())
+        } ?: return
+        camera.resultListener = rec
+        renderer.startRecording(rec)
+    }
+
+    /**
+     * Starts a recording made by [create] if there is room for it, keeps it running in the
+     * background and shows its progress. Returns it, or null (and says why) if it can't start.
+     */
+    private fun <R : ActiveRecording> beginRecording(what: String, usb: Boolean, create: () -> R): R? {
+        val root = RecordingStorage.root(this).apply { mkdirs() }
         if (root.usableSpace < MIN_FREE_BYTES) {
             controls.setStatus("⚠ Not enough free space to record (%.1f GB left)".format(root.usableSpace / 1e9))
-            return
+            return null
         }
         val rec = try {
-            Recording.start(this, viewModel.settings.value, rig, size, cams, cameraManager, recordingInfo())
+            create()
         } catch (e: Exception) {
             Log.e(TAG, "Cannot start recording", e)
             controls.setStatus("⚠ Cannot record: ${e.message}")
-            return
+            return null
         }
         recording = rec
-        camera.resultListener = rec
-        renderer.startRecording(rec)
-        keepRecordingInBackground(rec, usb = false)
-        controls.setStatus("Recording to ${rec.dir.name}")
+        keepRecordingInBackground(rec, usb)
+        controls.setStatus("$what to ${rec.dir.name}")
         Log.i(TAG, "Recording to ${rec.dir}")
         updateRecordingTimer()
+        return rec
     }
 
     /** Elapsed time on the button; also stops the recording if the renderer reported an error. */
@@ -840,7 +856,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
     private var notificationPermissionAsked = false
     private val requestNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
-    private val filePicker = com.xreal.stereoview.ui.FilePicker(this)
+    private val filePicker = FilePicker(this)
 
     override fun pickFile(onPicked: (android.net.Uri, String?) -> Unit) = filePicker.pick(onPicked)
 
@@ -850,24 +866,10 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             controls.setStatus("Recording needs the glasses cameras running")
             return
         }
-        val root = Recording.root(this).apply { mkdirs() }
-        if (root.usableSpace < MIN_FREE_BYTES) {
-            controls.setStatus("⚠ Not enough free space to record (%.1f GB left)".format(root.usableSpace / 1e9))
-            return
-        }
-        val rec = try {
+        beginRecording("Recording glasses cameras", usb = true) {
             GlassesRecording.start(this, viewModel.settings.value, device, glassesImuActive, recordingInfo())
-        } catch (e: Exception) {
-            Log.e(TAG, "Cannot start recording", e)
-            controls.setStatus("⚠ Cannot record: ${e.message}")
-            return
+                .also { rec -> glassesCalibration?.let(rec::onCalibration) }
         }
-        glassesCalibration?.let(rec::onCalibration)
-        recording = rec
-        keepRecordingInBackground(rec, usb = true)
-        controls.setStatus("Recording glasses cameras to ${rec.dir.name}")
-        Log.i(TAG, "Recording to ${rec.dir}")
-        updateRecordingTimer()
     }
 
     // endregion
@@ -910,7 +912,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
 
         override fun onCalibration(json: String) {
             glassesCalibration = json
-            glassesImuCalibration = com.xreal.stereoview.glasses.GlassesImuCalibration.parse(json)
+            glassesImuCalibration = GlassesImuCalibration.parse(json)
             Log.i(TAG, "Glasses calibration: ${json.length} bytes")
             (recording as? GlassesRecording)?.onCalibration(json)
         }
@@ -983,7 +985,7 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
         linkFrames = (s.buffers.oakLinkS * maxOf(s.oakFps, s.oakRgbFps)).coerceAtLeast(OakDevice.MIN_LINK_FRAMES),
         imuPackets = (s.buffers.oakImuS * (s.oakImuRateHz + OakDevice.accelRateFor(s.oakImuRateHz))).coerceAtLeast(OakDevice.MIN_IMU_PACKETS),
         rgbFps = s.oakRgbFps,
-        rgbRaw = s.oakRgbFormat != com.xreal.stereoview.record.OakRgbFormat.JPEG,
+        rgbRaw = s.oakRgbFormat != OakRgbFormat.JPEG,
     )
 
     private fun startOak() {
@@ -1052,22 +1054,9 @@ class MainActivity : AppCompatActivity(), CameraController.Listener, StereoRende
             controls.setStatus("Recording needs the OAK camera running")
             return
         }
-        val root = Recording.root(this).apply { mkdirs() }
-        if (root.usableSpace < MIN_FREE_BYTES) {
-            controls.setStatus("⚠ Not enough free space to record (%.1f GB left)".format(root.usableSpace / 1e9))
-            return
-        }
-        val rec = try {
+        beginRecording("Recording OAK cameras", usb = true) {
             OakRecording.start(this, viewModel.settings.value, info, recordingInfo())
-        } catch (e: Exception) {
-            Log.e(TAG, "Cannot start recording", e)
-            controls.setStatus("⚠ Cannot record: ${e.message}")
-            return
         }
-        recording = rec
-        keepRecordingInBackground(rec, usb = true)
-        controls.setStatus("Recording OAK cameras to ${rec.dir.name}")
-        updateRecordingTimer()
     }
 
     // endregion

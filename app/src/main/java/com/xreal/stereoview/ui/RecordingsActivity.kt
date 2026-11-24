@@ -31,6 +31,7 @@ import com.xreal.stereoview.preview.RecordingPreviewActivity
 import com.xreal.stereoview.record.Recording
 import com.xreal.stereoview.record.RecordingFiles
 import com.xreal.stereoview.record.RecordingQueue
+import com.xreal.stereoview.record.RecordingStorage
 import org.json.JSONObject
 import java.io.File
 import kotlin.concurrent.thread
@@ -123,7 +124,7 @@ class RecordingsActivity : AppCompatActivity(), RecordingQueue.Listener {
         refresh()
     }
 
-    private fun entries(): List<File> = Recording.root(this).listFiles()
+    private fun entries(): List<File> = RecordingStorage.root(this).listFiles()
         ?.filter { (it.isDirectory && !it.name.endsWith(".unzipping") && !it.name.endsWith(".part")) || it.name.endsWith(".zip") }
         ?.sortedByDescending { it.name }.orEmpty()
 
@@ -136,7 +137,7 @@ class RecordingsActivity : AppCompatActivity(), RecordingQueue.Listener {
             topProgress.isIndeterminate = RecordingQueue.fraction < 0
             if (RecordingQueue.fraction >= 0) topProgress.setProgressCompat((RecordingQueue.fraction * 1000).toInt(), false)
         }
-        val root = Recording.root(this)
+        val root = RecordingStorage.root(this)
         status.text = if (running != null) statusText(RecordingQueue.progressText ?: "${running.label}…")
         else "%.1f GB free · %s".format(
             (if (root.exists()) root.usableSpace else getExternalFilesDir(null)?.usableSpace ?: 0L) / 1e9, root.path,
@@ -413,7 +414,7 @@ class RecordingsActivity : AppCompatActivity(), RecordingQueue.Listener {
     private fun showStorageInfo() {
         Dialogs.info(
             this, "Where recordings are stored",
-            "Recordings are written to this app's own storage (${Recording.root(this).path}): the fastest place, " +
+            "Recordings are written to this app's own storage (${RecordingStorage.root(this).path}): the fastest place, " +
                 "with no permission prompts and no media indexing.\n\n" +
                 "• Over USB (MTP): Android/data/$packageName/files/recordings\n" +
                 "• adb pull /sdcard/Android/data/$packageName/files/recordings\n" +

@@ -19,9 +19,16 @@ import com.google.android.material.slider.Slider
 import com.xreal.stereoview.R
 import com.xreal.stereoview.camera.StereoRig
 import com.xreal.stereoview.glasses.GlassesDevice
+import com.xreal.stereoview.oak.OakDevice
 import com.xreal.stereoview.record.BasaltCalib
+import com.xreal.stereoview.record.BitrateMode
+import com.xreal.stereoview.record.GrayImageFormat
+import com.xreal.stereoview.record.H264Profile
 import com.xreal.stereoview.record.ImuStream
+import com.xreal.stereoview.record.OakRgbFormat
 import com.xreal.stereoview.record.Recording
+import com.xreal.stereoview.record.RecordingBuffers
+import com.xreal.stereoview.record.RecordingStorage
 import java.io.File
 
 /** Settings a [SettingsSheet] shows and edits. */
@@ -232,18 +239,18 @@ class SettingsSheet(
     private fun recordingRows(content: LinearLayout, s: StereoSettings, recording: Boolean) {
         val glassesSource = s.cameraSource == CameraSource.GLASSES
         if (s.cameraSource == CameraSource.OAK) {
-            val monoVideo = s.oakImageFormat == com.xreal.stereoview.record.GrayImageFormat.H264
+            val monoVideo = s.oakImageFormat == GrayImageFormat.H264
             grayFormatRows(content, s, recording, s.oakImageFormat, "Mono images") { f -> target.update { it.copy(oakImageFormat = f) } }
             if (monoVideo) {
                 bitrateRow(content, s, recording, "Mono video bitrate", s.oakVideoBitrateMbps, listOf(4, 8, 12, 20, 40)) { v -> target.update { it.copy(oakVideoBitrateMbps = v) } }
             }
-            val rgbFormats = com.xreal.stereoview.record.OakRgbFormat.entries
-            val rgbVideo = s.oakRgbHeight > 0 && s.oakRgbFormat == com.xreal.stereoview.record.OakRgbFormat.H264
+            val rgbFormats = OakRgbFormat.entries
+            val rgbVideo = s.oakRgbHeight > 0 && s.oakRgbFormat == OakRgbFormat.H264
             if (s.oakRgbHeight > 0) {
                 row(content, "Color images", s.oakRgbFormat.label, locked = recording) {
                     choose("Color images (cam2)", rgbFormats.map { it.label }, rgbFormats.indexOf(s.oakRgbFormat)) { i -> target.update { it.copy(oakRgbFormat = rgbFormats[i]) } }
                 }
-                if (s.oakRgbFormat == com.xreal.stereoview.record.OakRgbFormat.JPEG) {
+                if (s.oakRgbFormat == OakRgbFormat.JPEG) {
                     row(content, "Color JPEG quality", "${s.oakJpegQuality} (encoded on the camera)", locked = recording) {
                         val values = listOf(98, 95, 90, 85, 75)
                         choose("Color JPEG quality", values.map { "$it" }, values.indexOf(s.oakJpegQuality)) { i -> target.update { it.copy(oakJpegQuality = values[i]) } }
@@ -261,7 +268,7 @@ class SettingsSheet(
             ) {}
         } else if (glassesSource) {
             grayFormatRows(content, s, recording, s.glassesImageFormat, "Images") { f -> target.update { it.copy(glassesImageFormat = f) } }
-            if (s.glassesImageFormat == com.xreal.stereoview.record.GrayImageFormat.H264) {
+            if (s.glassesImageFormat == GrayImageFormat.H264) {
                 videoRows(content, s, recording, s.glassesVideoBitrateMbps, listOf(2, 4, 6, 10, 16), true) { v -> target.update { it.copy(glassesVideoBitrateMbps = v) } }
             }
             row(content, "Layout", "Raw 480×640 grayscale per camera at 30 fps, EuRoC layout, timestamps on the glasses' clock") {}
@@ -300,7 +307,7 @@ class SettingsSheet(
     private fun videoRows(
         content: LinearLayout, s: StereoSettings, recording: Boolean, bitrate: Int?, choices: List<Int>, h264: Boolean, setBitrate: (Int) -> Unit,
     ) {
-        val modes = com.xreal.stereoview.record.BitrateMode.entries
+        val modes = BitrateMode.entries
         row(content, "Rate control", s.videoBitrateMode.label.substringBefore(":"), locked = recording) {
             choose("Rate control", modes.map { it.label }, modes.indexOf(s.videoBitrateMode)) { i -> target.update { it.copy(videoBitrateMode = modes[i]) } }
         }
@@ -311,7 +318,7 @@ class SettingsSheet(
             choose("Keyframe interval", labels, intervals.indexOf(s.videoKeyframeIntervalS)) { i -> target.update { it.copy(videoKeyframeIntervalS = intervals[i]) } }
         }
         if (h264) {
-            val profiles = com.xreal.stereoview.record.H264Profile.entries
+            val profiles = H264Profile.entries
             row(content, "H.264 profile", s.videoProfile.label, locked = recording) {
                 choose("H.264 profile", profiles.map { it.label }, profiles.indexOf(s.videoProfile)) { i -> target.update { it.copy(videoProfile = profiles[i]) } }
             }
@@ -326,22 +333,22 @@ class SettingsSheet(
     private fun bitrateRow(
         content: LinearLayout, s: StereoSettings, recording: Boolean, title: String, bitrate: Int, choices: List<Int>, set: (Int) -> Unit,
     ) {
-        if (s.videoBitrateMode == com.xreal.stereoview.record.BitrateMode.CQ) return
-        row(content, title, "$bitrate Mbit/s per camera" + if (s.videoBitrateMode == com.xreal.stereoview.record.BitrateMode.VBR) " (average)" else "", locked = recording) {
+        if (s.videoBitrateMode == BitrateMode.CQ) return
+        row(content, title, "$bitrate Mbit/s per camera" + if (s.videoBitrateMode == BitrateMode.VBR) " (average)" else "", locked = recording) {
             choose("$title per camera", choices.map { "$it Mbit/s" }, choices.indexOf(bitrate)) { i -> set(choices[i]) }
         }
     }
 
     /** Format of recorded grayscale images, and the JPEG quality when it applies. */
     private fun grayFormatRows(
-        content: LinearLayout, s: StereoSettings, recording: Boolean, format: com.xreal.stereoview.record.GrayImageFormat,
-        title: String, set: (com.xreal.stereoview.record.GrayImageFormat) -> Unit,
+        content: LinearLayout, s: StereoSettings, recording: Boolean, format: GrayImageFormat,
+        title: String, set: (GrayImageFormat) -> Unit,
     ) {
-        val formats = com.xreal.stereoview.record.GrayImageFormat.entries
+        val formats = GrayImageFormat.entries
         row(content, title, format.label, locked = recording) {
             choose(title, formats.map { it.label }, formats.indexOf(format)) { i -> set(formats[i]) }
         }
-        if (format == com.xreal.stereoview.record.GrayImageFormat.JPEG) {
+        if (format == GrayImageFormat.JPEG) {
             row(content, "JPEG quality", "${s.grayJpegQuality}", locked = recording) {
                 val values = listOf(98, 95, 90, 85, 75)
                 val labels = listOf("98 (near lossless)", "95", "90 (good for SLAM features)", "85", "75 (smallest)")
@@ -431,7 +438,7 @@ class SettingsSheet(
                 target.update { it.copy(oakFps = values[i]) }
             }
         }
-        val rgbStream = if (s.oakRgbFormat == com.xreal.stereoview.record.OakRgbFormat.JPEG) "JPEG ${s.oakJpegQuality} from the camera" else "raw NV12 over USB (USB3 needed)"
+        val rgbStream = if (s.oakRgbFormat == OakRgbFormat.JPEG) "JPEG ${s.oakJpegQuality} from the camera" else "raw NV12 over USB (USB3 needed)"
         row(content, "Color camera", if (s.oakRgbHeight > 0) "1280×${s.oakRgbHeight}, $rgbStream" else "Off", locked = recording) {
             val values = listOf(800, 720, 0)
             val labels = listOf("1280×800", "1280×720", "Off (mono pair only)")
@@ -449,8 +456,8 @@ class SettingsSheet(
                 ) { i -> target.update { it.copy(oakRgbFps = if (values[i] == it.oakFps) 0 else values[i]) } }
             }
         }
-        val maxGyro = com.xreal.stereoview.oak.OakDevice.MAX_GYRO_HZ
-        val maxAccel = com.xreal.stereoview.oak.OakDevice.MAX_ACCEL_HZ
+        val maxGyro = OakDevice.MAX_GYRO_HZ
+        val maxAccel = OakDevice.MAX_ACCEL_HZ
         val imuLabel = when {
             s.oakImuRateHz <= 0 -> "Off"
             s.oakImuRateHz >= maxGyro -> "Maximum: gyroscope $maxGyro Hz, accelerometer $maxAccel Hz (raw)"
@@ -472,12 +479,12 @@ class SettingsSheet(
             }
         }
         row(content, "Exposure", "Per camera with the panel's controls: its first button picks All, cam0, cam1 or cam2; " +
-            com.xreal.stereoview.oak.OakDevice.Exposure.summary(s.oakExposures, s.oakRgbHeight > 0)) {}
+            OakDevice.Exposure.summary(s.oakExposures, s.oakRgbHeight > 0)) {}
     }
 
     /** How a color rate [rgb] combines with the mono rate [mono] (see OakDevice.FpsPlan). */
     private fun rgbFpsNote(mono: Int, rgb: Int): String {
-        val plan = com.xreal.stereoview.oak.OakDevice.FpsPlan.of(mono, rgb)
+        val plan = OakDevice.FpsPlan.of(mono, rgb)
         return when {
             mono == rgb -> "same as mono, synchronized"
             !plan.synchronized -> "not a multiple of $mono: free-running, not synchronized"
@@ -678,11 +685,11 @@ class SettingsSheet(
     }
 
     private fun recordingDirs(): List<File> =
-        Recording.root(context).listFiles()?.filter { it.isDirectory || it.name.endsWith(".zip") }.orEmpty()
+        RecordingStorage.root(context).listFiles()?.filter { it.isDirectory || it.name.endsWith(".zip") }.orEmpty()
 
     private fun recordingsSummary(): String {
         val count = recordingDirs().size
-        return "%d saved · %.1f GB free".format(count, Recording.root(context).let { if (it.exists()) it.usableSpace else context.getExternalFilesDir(null)?.usableSpace ?: 0L } / 1e9)
+        return "%d saved · %.1f GB free".format(count, RecordingStorage.root(context).let { if (it.exists()) it.usableSpace else context.getExternalFilesDir(null)?.usableSpace ?: 0L } / 1e9)
     }
 
     /** One recording buffer: its slider range and what a second of it costs in memory. */
@@ -696,7 +703,7 @@ class SettingsSheet(
         val rate: Int,
         val bytes: Long,
         val streams: Int,
-        /** Shares the camera memory cap ([com.xreal.stereoview.record.RecordingBuffers.memoryCapBytes]). */
+        /** Shares the camera memory cap ([RecordingBuffers.memoryCapBytes]). */
         val capped: Boolean,
     )
 
@@ -714,7 +721,7 @@ class SettingsSheet(
             BufferSpec("OAK", "USB link (frames not yet picked up)", 10, { it.oakLinkS }, { b, v -> b.copy(oakLinkS = v) },
                 s.oakFps, oakMono, 2, false), // color JPEGs are small next to the mono frames
             BufferSpec("OAK", "IMU (packets not yet picked up)", 30, { it.oakImuS }, { b, v -> b.copy(oakImuS = v) },
-                (s.oakImuRateHz + com.xreal.stereoview.oak.OakDevice.accelRateFor(s.oakImuRateHz)).coerceAtLeast(1), 200, 1, false),
+                (s.oakImuRateHz + OakDevice.accelRateFor(s.oakImuRateHz)).coerceAtLeast(1), 200, 1, false),
             BufferSpec("Phone cameras", "JPEG/PNG writers (video needs none)", 30, { it.phoneCameraS }, { b, v -> b.copy(phoneCameraS = v) },
                 s.targetFps, phoneFrame, 2, true),
         )
@@ -723,10 +730,10 @@ class SettingsSheet(
     /** "8 s · ≈147 MB" for [spec] at [seconds]; notes when the memory cap shortens it. */
     private fun bufferText(spec: BufferSpec, seconds: Int): String {
         if (!spec.capped) return "$seconds s · ≈%s".format(formatMb(seconds.toLong() * spec.rate * spec.bytes * spec.streams / 1e6))
-        val frames = com.xreal.stereoview.record.RecordingBuffers.frames(seconds, spec.rate, spec.bytes, spec.streams, min = 1)
+        val frames = RecordingBuffers.frames(seconds, spec.rate, spec.bytes, spec.streams, min = 1)
         val mb = formatMb(frames * spec.bytes * spec.streams / 1e6)
         return if (frames < seconds.toLong() * spec.rate) {
-            "$seconds s · capped to %.1f s (≈%s)".format(com.xreal.stereoview.record.RecordingBuffers.seconds(frames, spec.rate), mb)
+            "$seconds s · capped to %.1f s (≈%s)".format(RecordingBuffers.seconds(frames, spec.rate), mb)
         } else {
             "$seconds s · ≈$mb"
         }
@@ -760,7 +767,7 @@ class SettingsSheet(
             setTextColor(ContextCompat.getColor(context, R.color.panel_text_secondary))
             setPadding(0, dp(top), 0, 0)
         }
-        val capMb = com.xreal.stereoview.record.RecordingBuffers.memoryCapBytes() / 1e6
+        val capMb = RecordingBuffers.memoryCapBytes() / 1e6
         val sliders = ArrayList<Pair<BufferSpec, Slider>>()
         var group = ""
         for (spec in specs) {

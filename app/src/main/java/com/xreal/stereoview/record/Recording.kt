@@ -14,6 +14,7 @@ import com.xreal.stereoview.camera.CameraTarget
 import com.xreal.stereoview.camera.StereoRig
 import com.xreal.stereoview.render.StereoGeometry
 import com.xreal.stereoview.render.StereoRenderer
+import com.xreal.stereoview.ui.CameraSource
 import com.xreal.stereoview.ui.RecordFormat
 import com.xreal.stereoview.ui.RecordView
 import com.xreal.stereoview.ui.ScaleMode
@@ -45,7 +46,7 @@ class Recording private constructor(
     val format: RecordFormat,
     val outputs: List<Output>,
     private val imu: ImuRecorder,
-    private val settingsLog: LineWriter,
+    private val settingsLog: SettingsLog,
     private val metadata: JSONObject,
     private val cameraClockIsBoottime: Boolean,
     private val boottimeMinusMonotonicNs: Long,
@@ -185,12 +186,7 @@ class Recording private constructor(
         return readoutKey
     }
 
-    override fun onSettingsChanged(s: StereoSettings) {
-        settingsLog.line(JSONObject().apply {
-            put("boottime_ns", SystemClock.elapsedRealtimeNanos())
-            put("settings", Metadata.settings(s))
-        }.toString())
-    }
+    override fun onSettingsChanged(s: StereoSettings) = settingsLog.log(s)
 
     override val backlog: String
         get() = "write queue " + outputs.joinToString(", ") { o ->
@@ -269,7 +265,7 @@ class Recording private constructor(
                 "${view.name.lowercase()} images. T_imu_cam in the phone's IMU (Android sensor) frame; the translation is zero where the " +
                 "lens pose is not relative to the gyroscope. IMU noise values are placeholders. Factory values: recalibrate for best results.",
         )
-        metadata.put("basalt_calibration", BasaltCalib.write(appContext, dir, com.xreal.stereoview.ui.CameraSource.BEAM_PRO, factory))
+        metadata.put("basalt_calibration", BasaltCalib.write(appContext, dir, CameraSource.BEAM_PRO, factory))
     }
 
     /**
@@ -292,17 +288,15 @@ class Recording private constructor(
         private fun writeImu0Yaml(dir: File, imu: ImuRecorder, rateHz: Double) {
             val pair = imu.imu0Pair ?: return
             val kind = if (pair.first == ImuStream.GYROSCOPE) "calibrated" else "uncalibrated"
-            File(Euroc.mav(dir), "imu0/sensor.yaml").writeText(Euroc.imuYaml(
+            Euroc.writeImu0Yaml(
+                dir,
                 listOf(
                     "Beam Pro IMU ($kind Android gyroscope + accelerometer), CLOCK_BOOTTIME.",
                     "Body frame = this IMU = Android device sensor frame (x right, y up, z out of the screen).",
-                ) + if (rateHz == 0.0) listOf("rate_hz is measured when the recording ends (0 = the recording did not end normally).") else emptyList(),
-                "Beam Pro gyroscope timestamps, accelerometer linearly interpolated", Euroc.transform(Mat3.identity(), null), rateHz,
-            ))
+                ),
+                "Beam Pro gyroscope timestamps, accelerometer linearly interpolated", rateHz,
+            )
         }
-
-        /** Where recordings go: app-specific external storage, reachable over USB (MTP) and adb. */
-        fun root(context: Context): File = File(context.getExternalFilesDir(null), "recordings")
 
         fun eyeView(geometry: StereoGeometry, s: StereoSettings, index: Int, size: Size, mono: Boolean): EyeView {
             // 1:1 only makes sense in the glasses; a recording keeps the widest view without borders.
@@ -332,9 +326,8 @@ class Recording private constructor(
             cameraManager: CameraManager,
             extraInfo: JSONObject,
         ): Recording {
-            val name = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
-            val dir = File(root(context), name)
-            check(dir.mkdirs()) { "Cannot create $dir" }
+            val dir = RecordingStorage.createDir(context)
+            val name = dir.name
             val startClocks = Metadata.clocks()
 
             val geometry = StereoGeometry(listOf(cameras.left, cameras.right), s.useFactoryCalibration, cameras.displayRotation, s.rotationOverride)
@@ -469,7 +462,7 @@ class Recording private constructor(
             val basaltCameras = writeEurocDescriptions(dir, metadata, rig.targetFps.toDouble(), s.recordView == RecordView.RECTIFIED)
 
             val recording = Recording(
-                context.applicationContext, dir, s.recordView, s.recordFormat, outputs, imu, LineWriter(File(dir, "settings.jsonl")), metadata,
+                context.applicationContext, dir, s.recordView, s.recordFormat, outputs, imu, SettingsLog(dir), metadata,
                 cameraClockIsBoottime = timestamps.getBoolean("camera_timestamps_comparable_with_imu"),
                 boottimeMinusMonotonicNs = startClocks.getLong("boottime_minus_monotonic_ns"),
             )

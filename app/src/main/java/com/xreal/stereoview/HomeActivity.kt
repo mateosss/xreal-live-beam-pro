@@ -29,6 +29,8 @@ import com.xreal.stereoview.camera.CameraUtils
 import com.xreal.stereoview.camera.StereoRig
 import com.xreal.stereoview.glasses.GlassesDevice
 import com.xreal.stereoview.glasses.GlassesProtocol
+import com.xreal.stereoview.oak.OakDevice
+import com.xreal.stereoview.oak.OakNative
 import com.xreal.stereoview.ui.CameraSource
 import com.xreal.stereoview.ui.Dialogs
 import com.xreal.stereoview.ui.DraftSettings
@@ -187,8 +189,8 @@ class HomeActivity : AppCompatActivity() {
             }
         }
         CameraSource.OAK -> {
-            val reason = com.xreal.stereoview.oak.OakNative.unavailableReason
-            val found = getSystemService(UsbManager::class.java).deviceList.values.any { it.vendorId == com.xreal.stereoview.oak.OakDevice.VENDOR_ID }
+            val reason = OakNative.unavailableReason
+            val found = getSystemService(UsbManager::class.java).deviceList.values.any { it.vendorId == OakDevice.VENDOR_ID }
             when {
                 reason != null -> reason to false
                 found -> "OAK camera connected" to true

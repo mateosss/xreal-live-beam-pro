@@ -13,6 +13,15 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.xreal.stereoview.camera.StereoRig
+import com.xreal.stereoview.oak.OakDevice
+import com.xreal.stereoview.record.BitrateMode
+import com.xreal.stereoview.record.EncoderOptions
+import com.xreal.stereoview.record.GrayImageFormat
+import com.xreal.stereoview.record.H264Profile
+import com.xreal.stereoview.record.ImuStream
+import com.xreal.stereoview.record.OakRgbFormat
+import com.xreal.stereoview.record.RecordingBuffers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -118,7 +127,7 @@ enum class OutputMode(val label: String) {
 /**
  * How much data each recording buffer holds, in seconds. They absorb short stalls (CPU spikes,
  * thermal throttling, slow storage, a late USB thread) without losing data; see
- * [com.xreal.stereoview.record.RecordingBuffers] for how they become frames.
+ * [RecordingBuffers] for how they become frames.
  */
 data class BufferSettings(
     /** Glasses frames waiting for the video encoder or the PNG/JPEG writers. */
@@ -160,7 +169,7 @@ data class StereoSettings(
     /** Maximum stream height; the largest shared size up to this is used. */
     val maxResolution: Int = 1080,
     val outputMode: OutputMode = OutputMode.AUTO,
-    /** [com.xreal.stereoview.camera.StereoRig.key] of a manually chosen camera pair, or empty for automatic. */
+    /** [StereoRig.key] of a manually chosen camera pair, or empty for automatic. */
     val cameraPair: String = "",
     /** Diagonal field of view of one eye of the glasses, used by [ScaleMode.REAL]. */
     val glassesFovDeg: Float = 46f,
@@ -188,7 +197,7 @@ data class StereoSettings(
     val recordFormat: RecordFormat = RecordFormat.H264,
     val recordBitrateMbps: Int = 40,
     val imuRate: ImuRate = ImuRate.FASTEST,
-    /** Comma-separated [com.xreal.stereoview.record.ImuStream] names to record. */
+    /** Comma-separated [ImuStream] names to record. */
     val imuStreams: String = "ACCELEROMETER,GYROSCOPE,ACCELEROMETER_UNCALIBRATED,GYROSCOPE_UNCALIBRATED,GAME_ROTATION_VECTOR",
     val cameraSource: CameraSource = CameraSource.BEAM_PRO,
     /** With the glasses cameras: also take over the glasses' IMU (stops XREAL's head tracking until replugged). */
@@ -202,15 +211,15 @@ data class StereoSettings(
     /** Glasses camera gain, or -1 for the camera's default. */
     val glassesGain: Int = -1,
     /** Glasses cameras: how recorded images are stored. */
-    val glassesImageFormat: com.xreal.stereoview.record.GrayImageFormat = com.xreal.stereoview.record.GrayImageFormat.PNG,
+    val glassesImageFormat: GrayImageFormat = GrayImageFormat.PNG,
     /** OAK mono cameras: how recorded images are stored. */
-    val oakImageFormat: com.xreal.stereoview.record.GrayImageFormat = com.xreal.stereoview.record.GrayImageFormat.PNG,
+    val oakImageFormat: GrayImageFormat = GrayImageFormat.PNG,
     /** JPEG quality of recorded grayscale images (glasses, OAK mono). */
     val grayJpegQuality: Int = 90,
     /** Video recordings: rate control, keyframe spacing and H.264 profile (all devices). */
-    val videoBitrateMode: com.xreal.stereoview.record.BitrateMode = com.xreal.stereoview.record.BitrateMode.CBR,
+    val videoBitrateMode: BitrateMode = BitrateMode.CBR,
     val videoKeyframeIntervalS: Float = 1f,
-    val videoProfile: com.xreal.stereoview.record.H264Profile = com.xreal.stereoview.record.H264Profile.HIGH,
+    val videoProfile: H264Profile = H264Profile.HIGH,
     /** Use Android's software encoder instead of the device's hardware one. */
     val videoSoftwareEncoder: Boolean = false,
     /** Bitrate per camera of H.264 recordings of the glasses and OAK mono cameras, Mbit/s. */
@@ -220,26 +229,26 @@ data class StereoSettings(
     val oakMonoHeight: Int = 400,
     /** OAK: frame rate of the mono cameras (and of the color camera unless [oakRgbFps] is set). */
     val oakFps: Int = 30,
-    /** OAK: frame rate of the color camera, or 0 for [oakFps]; see [com.xreal.stereoview.oak.OakDevice.FpsPlan]. */
+    /** OAK: frame rate of the color camera, or 0 for [oakFps]; see [OakDevice.FpsPlan]. */
     val oakRgbFps: Int = 0,
     /** OAK: color camera height (800 or 720), or 0 to leave it off. */
     val oakRgbHeight: Int = 800,
     /** OAK: JPEG quality of the color images (encoded on the camera). */
     val oakJpegQuality: Int = 95,
     /** OAK color camera: how recorded images are stored (JPEG from the camera, or raw frames as PNG or video). */
-    val oakRgbFormat: com.xreal.stereoview.record.OakRgbFormat = com.xreal.stereoview.record.OakRgbFormat.JPEG,
+    val oakRgbFormat: OakRgbFormat = OakRgbFormat.JPEG,
     /** Bitrate of H.264 recordings of the OAK color camera, Mbit/s. */
     val oakRgbVideoBitrateMbps: Int = 20,
     /**
      * OAK exposure per camera: cam0 (left), cam1 (right), cam2 (color). Each camera runs its
      * own auto exposure or its own manual shutter and ISO.
      */
-    val oakExposures: List<com.xreal.stereoview.oak.OakDevice.Exposure> = OAK_DEFAULT_EXPOSURES,
+    val oakExposures: List<OakDevice.Exposure> = OAK_DEFAULT_EXPOSURES,
     /**
-     * OAK: gyroscope rate in Hz, or 0 to leave the IMU off; [com.xreal.stereoview.oak.OakDevice.MAX_GYRO_HZ]
+     * OAK: gyroscope rate in Hz, or 0 to leave the IMU off; [OakDevice.MAX_GYRO_HZ]
      * also runs the accelerometer at its maximum (see OakDevice.accelRateFor).
      */
-    val oakImuRateHz: Int = com.xreal.stereoview.oak.OakDevice.MAX_GYRO_HZ,
+    val oakImuRateHz: Int = OakDevice.MAX_GYRO_HZ,
     /** OAK: allow USB3 (off forces USB2, for flaky cables or hubs). */
     val oakUsb3: Boolean = true,
     /** Recording buffers (this phone's memory: kept across profiles). */
@@ -247,7 +256,7 @@ data class StereoSettings(
 ) {
     /** H.264/H.265 options for a stream at [bitrateMbps]. */
     fun encoderOptions(bitrateMbps: Int) =
-        com.xreal.stereoview.record.EncoderOptions(bitrateMbps * 1_000_000, videoBitrateMode, videoKeyframeIntervalS, videoProfile, videoSoftwareEncoder)
+        EncoderOptions(bitrateMbps * 1_000_000, videoBitrateMode, videoKeyframeIntervalS, videoProfile, videoSoftwareEncoder)
 
     /** Eye alignment of the current camera source. */
     val alignPitchDeg: Float get() = when (cameraSource) {
@@ -273,11 +282,11 @@ data class StereoSettings(
         const val ALIGN_RANGE_DEG = 3f
         const val DEPTH_MIN = 1f
         const val DEPTH_MAX = 2f
-        val OAK_DEFAULT_EXPOSURES = List(3) { com.xreal.stereoview.oak.OakDevice.Exposure() }
+        val OAK_DEFAULT_EXPOSURES = List(3) { OakDevice.Exposure() }
 
         /** The OAK exposures as the shared exposure settings set them before 0.16 (all cameras alike). */
         fun legacyOakExposures(manual: Boolean, exposureTimeNs: Long, iso: Int, compensation: Int) =
-            List(3) { com.xreal.stereoview.oak.OakDevice.Exposure(!manual, (exposureTimeNs / 1000).toInt(), iso, compensation).clamped() }
+            List(3) { OakDevice.Exposure(!manual, (exposureTimeNs / 1000).toInt(), iso, compensation).clamped() }
     }
 }
 
@@ -410,7 +419,7 @@ class SettingsRepository(private val context: Context) {
             oakRgbFormat = enumOrDefault(p[Keys.OAK_RGB_FORMAT], defaults.oakRgbFormat),
             oakRgbVideoBitrateMbps = p[Keys.OAK_RGB_VIDEO_BITRATE] ?: defaults.oakRgbVideoBitrateMbps,
             // Before 0.16 the OAK took the shared exposure settings, for all cameras.
-            oakExposures = com.xreal.stereoview.oak.OakDevice.Exposure.listFromJson(p[Keys.OAK_EXPOSURES])
+            oakExposures = OakDevice.Exposure.listFromJson(p[Keys.OAK_EXPOSURES])
                 ?: StereoSettings.legacyOakExposures(
                     p[Keys.MANUAL_EXPOSURE] ?: defaults.manualExposure, p[Keys.EXPOSURE_TIME] ?: defaults.exposureTimeNs,
                     p[Keys.ISO] ?: defaults.iso, p[Keys.EXPOSURE] ?: defaults.exposure,
@@ -487,7 +496,7 @@ class SettingsRepository(private val context: Context) {
             p[Keys.OAK_USB3] = s.oakUsb3
             p[Keys.OAK_RGB_FORMAT] = s.oakRgbFormat.name
             p[Keys.OAK_RGB_VIDEO_BITRATE] = s.oakRgbVideoBitrateMbps
-            p[Keys.OAK_EXPOSURES] = com.xreal.stereoview.oak.OakDevice.Exposure.listToJson(s.oakExposures)
+            p[Keys.OAK_EXPOSURES] = OakDevice.Exposure.listToJson(s.oakExposures)
             p[Keys.GLASSES_IMAGE_FORMAT] = s.glassesImageFormat.name
             p[Keys.OAK_IMAGE_FORMAT] = s.oakImageFormat.name
             p[Keys.GRAY_JPEG_QUALITY] = s.grayJpegQuality

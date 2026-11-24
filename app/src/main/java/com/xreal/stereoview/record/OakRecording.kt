@@ -5,7 +5,9 @@ import android.hardware.SensorManager
 import android.os.SystemClock
 import android.util.Log
 import com.xreal.stereoview.oak.OakDevice
+import com.xreal.stereoview.ui.CameraSource
 import com.xreal.stereoview.ui.StereoSettings
+import com.xreal.stereoview.util.Nv12
 import com.xreal.stereoview.util.PngGray
 import com.xreal.stereoview.util.appendFixed
 import org.json.JSONArray
@@ -38,7 +40,7 @@ class OakRecording private constructor(
     private val gyro: LineWriter?,
     /** mav0/imu0/data.csv, written live from the OAK IMU. */
     private val imu0: LiveImu0?,
-    private val settingsLog: LineWriter,
+    private val settingsLog: SettingsLog,
     private val metadata: JSONObject,
     private val monoFormat: GrayImageFormat,
     private val jpegQuality: Int,
@@ -119,7 +121,7 @@ class OakRecording private constructor(
         submit {
             val file = File(cam.dir, "data/$t.${cam.extension}")
             if (frame.raw) {
-                val rgb = com.xreal.stereoview.util.Nv12.toRgb(frame.data, frame.width, frame.height, rgbBuffer.get())
+                val rgb = Nv12.toRgb(frame.data, frame.width, frame.height, rgbBuffer.get())
                 rgbBuffer.set(rgb)
                 PngGray.writeRgb(file, rgb, frame.width, frame.height)
             } else {
@@ -183,12 +185,7 @@ class OakRecording private constructor(
         }
     }
 
-    override fun onSettingsChanged(s: StereoSettings) {
-        settingsLog.line(JSONObject().apply {
-            put("boottime_ns", SystemClock.elapsedRealtimeNanos())
-            put("settings", Metadata.settings(s))
-        }.toString())
-    }
+    override fun onSettingsChanged(s: StereoSettings) = settingsLog.log(s)
 
     override val backlog: String
         get() = "write queue ${writer.queue.size}/$queueFrames images (peak $peakQueue), dropped ${dropped.get()}"
@@ -294,18 +291,15 @@ class OakRecording private constructor(
 
         /** imu0/sensor.yaml; written at the start (rate 0 = not measured yet) and again at the end. */
         private fun writeImu0Yaml(dir: File, rateHz: Double) {
-            File(Euroc.mav(dir), "imu0/sensor.yaml").writeText(Euroc.imuYaml(
-                listOf("OAK IMU (raw accelerometer + gyroscope), OAK clock. Body frame = this IMU.") +
-                    if (rateHz == 0.0) listOf("rate_hz is measured when the recording ends (0 = the recording did not end normally).") else emptyList(),
-                "OAK gyroscope timestamps, accelerometer linearly interpolated",
-                Euroc.transform(com.xreal.stereoview.util.Mat3.identity(), null), rateHz,
-            ))
+            Euroc.writeImu0Yaml(
+                dir, listOf("OAK IMU (raw accelerometer + gyroscope), OAK clock. Body frame = this IMU."),
+                "OAK gyroscope timestamps, accelerometer linearly interpolated", rateHz,
+            )
         }
 
         fun start(context: Context, s: StereoSettings, info: JSONObject, extraInfo: JSONObject): OakRecording {
-            val name = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
-            val dir = File(Recording.root(context), name)
-            check(dir.mkdirs()) { "Cannot create $dir" }
+            val dir = RecordingStorage.createDir(context)
+            val name = dir.name
             val mav = Euroc.mav(dir)
             val calibration = info.optJSONObject("calibration")
             val rgbFps = if (s.oakRgbFps > 0) s.oakRgbFps else s.oakFps
@@ -423,14 +417,14 @@ class OakRecording private constructor(
             val imuRate = if (s.oakImuRateHz > 0) s.oakImuRateHz.toDouble() else 200.0
             val basalt = runCatching { basaltFactory(calibration, specs.map { it.key }, imuRate) }
                 .getOrElse { BasaltResult(null, listOf("converting the factory calibration failed: $it")) }
-            metadata.put("basalt_calibration", BasaltCalib.write(context, dir, com.xreal.stereoview.ui.CameraSource.OAK, basalt.json)
+            metadata.put("basalt_calibration", BasaltCalib.write(context, dir, CameraSource.OAK, basalt.json)
                 .put("factory_notes", JSONArray(basalt.notes)))
             File(dir, "metadata.json").writeText(metadata.toString(2))
             val queue = specs.filter { it.ext != GrayImageFormat.H264.extension }.sumOf { it.backlog }.coerceAtLeast(8)
             // RGB PNGs take several times longer than the mono ones: more writers.
             val threads = if (rgbRaw && s.oakRgbFormat == OakRgbFormat.PNG) 6 else 3
             recording = OakRecording(
-                dir, cams, accel, gyro, imu0, LineWriter(File(dir, "settings.jsonl")), metadata, s.oakImageFormat, s.grayJpegQuality,
+                dir, cams, accel, gyro, imu0, SettingsLog(dir), metadata, s.oakImageFormat, s.grayJpegQuality,
                 s.oakRgbFormat, queue, threads,
             )
             recording.onSettingsChanged(s)

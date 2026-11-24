@@ -16,6 +16,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import com.xreal.stereoview.R
+import com.xreal.stereoview.util.Nv12
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -189,7 +190,7 @@ class CapturePreview(context: Context) : LinearLayout(context) {
         worker.execute {
             val step = if (width > 960) 2 else 1
             val bitmap = runCatching {
-                Bitmap.createBitmap(com.xreal.stereoview.util.Nv12.toArgb(nv12, width, height, step), width / step, height / step, Bitmap.Config.ARGB_8888)
+                Bitmap.createBitmap(Nv12.toArgb(nv12, width, height, step), width / step, height / step, Bitmap.Config.ARGB_8888)
             }.getOrNull()
             if (bitmap == null) tile.busy.set(false) else show(tile, bitmap, "$width×$height")
         }

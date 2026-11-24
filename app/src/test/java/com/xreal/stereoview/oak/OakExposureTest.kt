@@ -1,5 +1,6 @@
 package com.xreal.stereoview.oak
 
+import com.xreal.stereoview.record.OakRgbFormat
 import com.xreal.stereoview.ui.Profile
 import com.xreal.stereoview.ui.StereoSettings
 import com.xreal.stereoview.ui.withProfile
@@ -22,7 +23,7 @@ class OakExposureTest {
     @Test
     fun profilesKeepPerCameraExposuresAndOldOnesTakeTheSharedSettings() {
         val e = listOf(OakDevice.Exposure(false, 2000, 200, 0), OakDevice.Exposure(false, 3000, 300, 0), OakDevice.Exposure())
-        val p = Profile("x", StereoSettings().copy(oakExposures = e, oakRgbFormat = com.xreal.stereoview.record.OakRgbFormat.H264, oakRgbVideoBitrateMbps = 40))
+        val p = Profile("x", StereoSettings().copy(oakExposures = e, oakRgbFormat = OakRgbFormat.H264, oakRgbVideoBitrateMbps = 40))
         val back = Profile.fromJson(Profile.toJson(listOf(p)))[0].settings
         assertEquals(e, back.oakExposures)
         assertEquals(StereoSettings().withProfile(p.settings), StereoSettings().withProfile(back))

@@ -1,5 +1,6 @@
 package com.xreal.stereoview.ui
 
+import com.xreal.stereoview.oak.OakDevice
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -61,7 +62,7 @@ class ProfileMigrationTest {
         val old = euroc.settings.copy(oakMonoHeight = 800, oakImuRateHz = 200, imuRate = ImuRate.DIRECT_VERY_FAST, imuStreams = FOUR)
         val migrated = Profile.migrate(listOf(euroc.copy(settings = old)))[0].settings
         assertEquals(400, migrated.oakMonoHeight)
-        assertEquals(com.xreal.stereoview.oak.OakDevice.MAX_GYRO_HZ, migrated.oakImuRateHz)
+        assertEquals(OakDevice.MAX_GYRO_HZ, migrated.oakImuRateHz)
         val edited = Profile.migrate(listOf(euroc.copy(settings = old.copy(oakFps = 15))))[0].settings
         assertEquals(800, edited.oakMonoHeight)
 

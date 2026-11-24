@@ -6,6 +6,7 @@ import android.media.MediaFormat
 import android.media.MediaMuxer
 import com.xreal.stereoview.record.DatasetTrimmer
 import com.xreal.stereoview.record.MkvReader
+import com.xreal.stereoview.record.MkvWriter
 import java.io.File
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -54,7 +55,7 @@ object Mp4Cutter : DatasetTrimmer.VideoCutter {
         return keyframe
     }
 
-    /** Same cut into Matroska (H.264 recordings), with [com.xreal.stereoview.record.MkvWriter]. */
+    /** Same cut into Matroska (H.264 recordings), with [MkvWriter]. */
     private fun cutToMkv(source: File, target: File, keyframe: Int, last: Int): Int {
         val extractor = MediaExtractor()
         try {
@@ -64,7 +65,7 @@ object Mp4Cutter : DatasetTrimmer.VideoCutter {
             val format = extractor.getTrackFormat(track)
             fun csd(name: String) = format.getByteBuffer(name)?.let { b -> ByteArray(b.remaining()).also { b.duplicate().get(it) } }
                 ?: throw IOException("No $name in ${source.name}")
-            val writer = com.xreal.stereoview.record.MkvWriter(
+            val writer = MkvWriter(
                 target, format.getInteger(MediaFormat.KEY_WIDTH), format.getInteger(MediaFormat.KEY_HEIGHT), csd("csd-0"), csd("csd-1"),
             )
             var buffer = ByteBuffer.allocate(8 shl 20)
@@ -98,7 +99,7 @@ object Mp4Cutter : DatasetTrimmer.VideoCutter {
         MkvReader.open(source).use { mkv ->
             if (mkv.frames.isEmpty()) throw IOException("${source.name} has no frames")
             val keyframe = mkv.keyframeAtOrBefore(first)
-            val writer = com.xreal.stereoview.record.MkvWriter(target, mkv.width, mkv.height, mkv.sps, mkv.pps)
+            val writer = MkvWriter(target, mkv.width, mkv.height, mkv.sps, mkv.pps)
             try {
                 for (i in keyframe..minOf(last, mkv.frames.size - 1)) {
                     val data = mkv.annexB(i)

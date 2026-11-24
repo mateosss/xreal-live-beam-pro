@@ -19,6 +19,7 @@ import android.util.Range
 import android.util.Rational
 import android.util.Size
 import android.util.SizeF
+import com.xreal.stereoview.ui.BufferSettings
 import com.xreal.stereoview.ui.StereoSettings
 import org.json.JSONArray
 import org.json.JSONObject
@@ -123,7 +124,7 @@ object Metadata {
             val v = field.get(s)
             put(field.name, when (v) {
                 is Enum<*> -> v.name
-                is com.xreal.stereoview.ui.BufferSettings -> JSONObject().apply {
+                is BufferSettings -> JSONObject().apply {
                     for (f in v.javaClass.declaredFields) {
                         if (Modifier.isStatic(f.modifiers)) continue
                         f.isAccessible = true
