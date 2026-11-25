@@ -61,19 +61,22 @@ class SettingsSchemaTest {
         assertEquals(all, SettingsSchema.read(p))
     }
 
-    /** DataStore keys of 0.16: renaming one would lose what users stored under it. */
+    /**
+     * DataStore keys of 0.16 (the decimal bitrates and color rate of 0.16.5 under new keys, read
+     * from the old ones while missing): renaming one would lose what users stored under it.
+     */
     @Test
     fun storeKeysAreThoseOfEarlierVersions() {
         val keys = (
-            "convergence_px depth swap_eyes exposure scale_mode portrait_scale_mode preview_style oak_rgb_fps show_hud " +
+            "convergence_px depth swap_eyes exposure scale_mode portrait_scale_mode preview_style oak_rgb_fps_float show_hud " +
                 "rotation_override sync_threshold_ms max_resolution output_mode camera_pair glasses_fov_deg sbs_layout stabilization " +
                 "use_factory_calibration align_pitch_deg align_roll_deg glasses_align_pitch_deg glasses_align_roll_deg " +
                 "oak_align_pitch_deg oak_align_roll_deg oak_mono_height oak_fps oak_rgb_height oak_jpeg_quality oak_imu_rate_hz " +
-                "oak_usb3 oak_rgb_format oak_rgb_video_bitrate_mbps oak_exposures glasses_image_format oak_image_format " +
+                "oak_usb3 oak_rgb_format oak_rgb_video_bitrate_mbps_float oak_exposures glasses_image_format oak_image_format " +
                 "gray_jpeg_quality video_bitrate_mode video_keyframe_interval_s video_profile video_software_encoder " +
                 "buffer_glasses_camera_s buffer_glasses_imu_s buffer_oak_camera_s buffer_oak_link_s buffer_oak_imu_s " +
-                "buffer_phone_camera_s glasses_video_bitrate_mbps oak_video_bitrate_mbps target_fps manual_exposure " +
-                "exposure_time_ns iso focus_mode record_view record_format record_bitrate_mbps imu_rate imu_streams camera_source " +
+                "buffer_phone_camera_s glasses_video_bitrate_mbps_float oak_video_bitrate_mbps_float target_fps manual_exposure " +
+                "exposure_time_ns iso focus_mode record_view record_format record_bitrate_mbps_float imu_rate imu_streams camera_source " +
                 "glasses_imu glasses_rectify glasses_manual_exposure glasses_exposure_100us glasses_gain"
             ).split(" ").toSet()
         assertEquals(keys, SettingsSchema.all.map { it.key.name }.toSet())
@@ -93,6 +96,34 @@ class SettingsSchemaTest {
         val compared = stored.asMap().filterKeys { it.name in names }
         assertTrue(compared.size > 50)
         for ((k, v) in compared) assertEquals(k.name, v, again[k])
+    }
+
+    /** Before 0.16.5 bitrates and the color rate were whole numbers, under other keys. */
+    @Test
+    fun wholeNumberBitratesAndColorRateOfEarlierVersionsCarryOver() {
+        val stored = runBlocking { PreferencesSerializer.readFrom(javaClass.getResourceAsStream("/stereo_settings_v0.16.1.preferences_pb")!!.source().buffer()) }
+        val s = SettingsSchema.read(stored)
+        for ((old, value) in listOf(
+            "record_bitrate_mbps" to s.recordBitrateMbps, "glasses_video_bitrate_mbps" to s.glassesVideoBitrateMbps,
+            "oak_video_bitrate_mbps" to s.oakVideoBitrateMbps, "oak_rgb_video_bitrate_mbps" to s.oakRgbVideoBitrateMbps, "oak_rgb_fps" to s.oakRgbFps,
+        )) {
+            val v = stored[intPreferencesKey(old)]
+            if (v != null) assertEquals(old, v.toFloat(), value)
+        }
+        val p = mutablePreferencesOf(intPreferencesKey("record_bitrate_mbps") to 7, intPreferencesKey("oak_rgb_fps") to 5)
+        assertEquals(7f, SettingsSchema.read(p).recordBitrateMbps)
+        assertEquals(5f, SettingsSchema.read(p).oakRgbFps)
+        // Once written, the new key wins over the old one.
+        SettingsSchema.write(p, SettingsSchema.read(p).copy(recordBitrateMbps = 0.25f))
+        assertEquals(0.25f, SettingsSchema.read(p).recordBitrateMbps)
+    }
+
+    @Test
+    fun wholeDecimalsStayIntegersInProfileJson() {
+        val o = SettingsSchema.toProfileJson(StereoSettings(recordBitrateMbps = 40f, oakRgbFps = 0.5f))
+        assertEquals("40", o.get("recordBitrateMbps").toString())
+        assertEquals(0.5, o.getDouble("oakRgbFps"), 1e-9)
+        assertEquals(0.5f, SettingsSchema.fromProfileJson(o).oakRgbFps)
     }
 
     @Test

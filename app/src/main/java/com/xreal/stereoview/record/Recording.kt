@@ -338,7 +338,7 @@ class Recording private constructor(
             } else {
                 Size(streamSize.height, streamSize.width)
             }
-            val bitrate = s.recordBitrateMbps * 1_000_000
+            val bitrate = s.encoderOptions(s.recordBitrateMbps).bitrateBps
 
             val outputs = mutableListOf<Output>()
             try {

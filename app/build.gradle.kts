@@ -76,6 +76,8 @@ android {
         abortOnError = true
         checkTestSources = true
         disable += setOf("GradleDependency", "NewerVersionAvailable", "AndroidGradlePluginVersion", "OldTargetApi")
+        // The UI is English only and builds its text in code (values, units, notes): no translations to break.
+        disable += "SetTextI18n"
     }
 }
 

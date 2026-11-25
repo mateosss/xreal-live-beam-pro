@@ -11,6 +11,7 @@ import com.xreal.stereoview.render.StereoRenderer
 import com.xreal.stereoview.ui.CameraSource
 import com.xreal.stereoview.ui.StereoSettings
 import org.json.JSONObject
+import kotlin.math.ceil
 
 /** A Luxonis OAK over USB (depthai): the mono pair, the color camera and the IMU. */
 class OakSession(host: SessionHost) : DeviceSession(host) {
@@ -146,7 +147,7 @@ class OakSession(host: SessionHost) : DeviceSession(host) {
         /** The camera pipeline for settings [s]. */
         fun configOf(s: StereoSettings) = OakDevice.Config(
             s.oakMonoHeight, s.oakFps, s.oakRgbHeight, s.oakJpegQuality, s.oakImuRateHz, s.oakUsb3, s.oakExposures,
-            linkFrames = (s.buffers.oakLinkS * maxOf(s.oakFps, s.oakRgbFps)).coerceAtLeast(OakDevice.MIN_LINK_FRAMES),
+            linkFrames = ceil(s.buffers.oakLinkS * maxOf(s.oakFps.toFloat(), s.oakRgbFps)).toInt().coerceAtLeast(OakDevice.MIN_LINK_FRAMES),
             imuPackets = (s.buffers.oakImuS * (s.oakImuRateHz + OakDevice.accelRateFor(s.oakImuRateHz))).coerceAtLeast(OakDevice.MIN_IMU_PACKETS),
             rgbFps = s.oakRgbFps,
             rgbRaw = s.oakRgbFormat != OakRgbFormat.JPEG,

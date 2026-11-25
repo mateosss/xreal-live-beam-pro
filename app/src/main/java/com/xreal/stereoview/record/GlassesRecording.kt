@@ -10,6 +10,7 @@ import com.xreal.stereoview.glasses.GlassesDevice
 import com.xreal.stereoview.glasses.GlassesImuCalibration
 import com.xreal.stereoview.glasses.GlassesProtocol
 import com.xreal.stereoview.glasses.Kb4Camera
+import com.xreal.stereoview.ui.BitrateScale
 import com.xreal.stereoview.ui.CameraSource
 import com.xreal.stereoview.ui.StereoSettings
 import com.xreal.stereoview.util.PngGray
@@ -296,7 +297,7 @@ class GlassesRecording private constructor(
                     put("view", "RAW")
                     put("format", when (s.glassesImageFormat) {
                         GrayImageFormat.JPEG -> "JPEG quality ${s.grayJpegQuality} (grayscale as luma, neutral chroma)"
-                        GrayImageFormat.H264 -> "H.264 in Matroska (mav0/camN/data.mkv, crash-safe), ${s.glassesVideoBitrateMbps} Mbit/s per camera; frame i = row i of data.csv"
+                        GrayImageFormat.H264 -> "H.264 in Matroska (mav0/camN/data.mkv, crash-safe), ${BitrateScale.format(s.glassesVideoBitrateMbps)} per camera; frame i = row i of data.csv"
                         GrayImageFormat.PNG -> "PNG (8-bit grayscale, lossless)"
                     })
                     put("size", JSONArray(listOf(IMAGE_W, IMAGE_H)))

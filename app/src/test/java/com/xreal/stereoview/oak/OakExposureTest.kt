@@ -23,7 +23,7 @@ class OakExposureTest {
     @Test
     fun profilesKeepPerCameraExposuresAndOldOnesTakeTheSharedSettings() {
         val e = listOf(OakDevice.Exposure(false, 2000, 200, 0), OakDevice.Exposure(false, 3000, 300, 0), OakDevice.Exposure())
-        val p = Profile("x", StereoSettings().copy(oakExposures = e, oakRgbFormat = OakRgbFormat.H264, oakRgbVideoBitrateMbps = 40))
+        val p = Profile("x", StereoSettings().copy(oakExposures = e, oakRgbFormat = OakRgbFormat.H264, oakRgbVideoBitrateMbps = 40f))
         val back = Profile.fromJson(Profile.toJson(listOf(p)))[0].settings
         assertEquals(e, back.oakExposures)
         assertEquals(StereoSettings().withProfile(p.settings), StereoSettings().withProfile(back))

@@ -19,7 +19,7 @@
         errorLine2="           ~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/java/com/xreal/stereoview/HomeActivity.kt"
-            line="111"
+            line="118"
             column="12"/>
     </issue>
 
@@ -30,7 +30,7 @@
         errorLine2="                                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/java/com/xreal/stereoview/MainActivity.kt"
-            line="836"
+            line="674"
             column="41"/>
     </issue>
 
@@ -41,7 +41,7 @@
         errorLine2="                                                                                                    ~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/java/com/xreal/stereoview/oak/OakDevice.kt"
-            line="389"
+            line="404"
             column="101"/>
     </issue>
 
@@ -52,7 +52,7 @@
         errorLine2="                                                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/java/com/xreal/stereoview/oak/OakDevice.kt"
-            line="402"
+            line="417"
             column="66"/>
     </issue>
 
@@ -213,7 +213,7 @@
         errorLine2="                 ~~~~~~~~~~~">
         <location
             file="src/main/java/com/xreal/stereoview/MainActivity.kt"
-            line="734"
+            line="574"
             column="18"/>
     </issue>
 
@@ -224,7 +224,7 @@
         errorLine2="                                                                                              ~~~~~~~~~~~">
         <location
             file="src/main/java/com/xreal/stereoview/MainActivity.kt"
-            line="735"
+            line="575"
             column="95"/>
     </issue>
 
@@ -235,62 +235,18 @@
         errorLine2="                    ~~~~~~~~~~~">
         <location
             file="src/main/java/com/xreal/stereoview/MainActivity.kt"
-            line="764"
+            line="602"
             column="21"/>
     </issue>
 
     <issue
         id="UsableSpace"
         message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
-        errorLine1="        if (root.usableSpace &lt; MIN_FREE_BYTES) {"
-        errorLine2="                 ~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/MainActivity.kt"
-            line="854"
-            column="18"/>
-    </issue>
-
-    <issue
-        id="UsableSpace"
-        message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
-        errorLine1="            controls.setStatus(&quot;⚠ Not enough free space to record (%.1f GB left)&quot;.format(root.usableSpace / 1e9))"
-        errorLine2="                                                                                              ~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/MainActivity.kt"
-            line="855"
-            column="95"/>
-    </issue>
-
-    <issue
-        id="UsableSpace"
-        message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
-        errorLine1="        if (root.usableSpace &lt; MIN_FREE_BYTES) {"
-        errorLine2="                 ~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/MainActivity.kt"
-            line="1056"
-            column="18"/>
-    </issue>
-
-    <issue
-        id="UsableSpace"
-        message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
-        errorLine1="            controls.setStatus(&quot;⚠ Not enough free space to record (%.1f GB left)&quot;.format(root.usableSpace / 1e9))"
-        errorLine2="                                                                                              ~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/MainActivity.kt"
-            line="1057"
-            column="95"/>
-    </issue>
-
-    <issue
-        id="UsableSpace"
-        message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
         errorLine1="            (if (root.exists()) root.usableSpace else getExternalFilesDir(null)?.usableSpace ?: 0L) / 1e9, root.path,"
         errorLine2="                                     ~~~~~~~~~~~">
         <location
             file="src/main/java/com/xreal/stereoview/ui/RecordingsActivity.kt"
-            line="142"
+            line="143"
             column="38"/>
     </issue>
 
@@ -301,7 +257,7 @@
         errorLine2="                                     ~~~~~~~~~~~">
         <location
             file="src/main/java/com/xreal/stereoview/ui/RecordingsActivity.kt"
-            line="142"
+            line="143"
             column="38"/>
     </issue>
 
@@ -312,7 +268,7 @@
         errorLine2="                                                                                 ~~~~~~~~~~~">
         <location
             file="src/main/java/com/xreal/stereoview/ui/RecordingsActivity.kt"
-            line="142"
+            line="143"
             column="82"/>
     </issue>
 
@@ -323,30 +279,30 @@
         errorLine2="                                                                                 ~~~~~~~~~~~">
         <location
             file="src/main/java/com/xreal/stereoview/ui/RecordingsActivity.kt"
-            line="142"
+            line="143"
             column="82"/>
     </issue>
 
     <issue
         id="UsableSpace"
         message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
-        errorLine1="        return &quot;%d saved · %.1f GB free&quot;.format(count, Recording.root(context).let { if (it.exists()) it.usableSpace else context.getExternalFilesDir(null)?.usableSpace ?: 0L } / 1e9)"
-        errorLine2="                                                                                                         ~~~~~~~~~~~">
+        errorLine1="        return &quot;%d saved · %.1f GB free&quot;.format(count, RecordingStorage.root(context).let { if (it.exists()) it.usableSpace else context.getExternalFilesDir(null)?.usableSpace ?: 0L } / 1e9)"
+        errorLine2="                                                                                                                ~~~~~~~~~~~">
         <location
             file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
-            line="685"
-            column="106"/>
+            line="789"
+            column="113"/>
     </issue>
 
     <issue
         id="UsableSpace"
         message="Consider also using `StorageManager#getAllocatableBytes` and `allocateBytes` which will consider clearable cached data"
-        errorLine1="        return &quot;%d saved · %.1f GB free&quot;.format(count, Recording.root(context).let { if (it.exists()) it.usableSpace else context.getExternalFilesDir(null)?.usableSpace ?: 0L } / 1e9)"
-        errorLine2="                                                                                                                                                             ~~~~~~~~~~~">
+        errorLine1="        return &quot;%d saved · %.1f GB free&quot;.format(count, RecordingStorage.root(context).let { if (it.exists()) it.usableSpace else context.getExternalFilesDir(null)?.usableSpace ?: 0L } / 1e9)"
+        errorLine2="                                                                                                                                                                    ~~~~~~~~~~~">
         <location
             file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
-            line="685"
-            column="158"/>
+            line="789"
+            column="165"/>
     </issue>
 
     <issue
@@ -435,545 +391,6 @@
             file="src/main/java/com/xreal/stereoview/preview/ZoomImageView.kt"
             line="198"
             column="18"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
-        errorLine1="        binding.convergenceLabel.text = context.getString(R.string.convergence) + &quot;  %+.0f px&quot;.format(s.convergencePx)"
-        errorLine2="                                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
-            line="171"
-            column="41"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="        binding.convergenceLabel.text = context.getString(R.string.convergence) + &quot;  %+.0f px&quot;.format(s.convergencePx)"
-        errorLine2="                                                                                   ~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
-            line="171"
-            column="84"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
-        errorLine1="        binding.depthLabel.text = context.getString(R.string.depth) + &quot;  %.2f×&quot;.format(s.depth)"
-        errorLine2="                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
-            line="173"
-            column="35"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="        binding.depthLabel.text = context.getString(R.string.depth) + &quot;  %.2f×&quot;.format(s.depth)"
-        errorLine2="                                                                       ~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
-            line="173"
-            column="72"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
-        errorLine1="        binding.brightnessLabel.text = context.getString(R.string.brightness) + &quot;  %+d&quot;.format(s.exposure)"
-        errorLine2="                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
-            line="199"
-            column="40"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="        binding.shutterLabel.text = &quot;Shutter  1/%d s&quot;.format((1e9 / shutter).roundToInt())"
-        errorLine2="                                     ~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
-            line="203"
-            column="38"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
-        errorLine1="        binding.isoLabel.text = &quot;ISO  $iso&quot;"
-        errorLine2="                                ~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
-            line="207"
-            column="33"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="        binding.isoLabel.text = &quot;ISO  $iso&quot;"
-        errorLine2="                                 ~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
-            line="207"
-            column="34"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
-        errorLine1="        binding.brightnessLabel.text = context.getString(R.string.brightness) + &quot;  %+d&quot;.format(e.compensation)"
-        errorLine2="                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
-            line="223"
-            column="40"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
-        errorLine1="        binding.isoLabel.text = &quot;ISO  ${e.iso}&quot;"
-        errorLine2="                                ~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
-            line="230"
-            column="33"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="        binding.isoLabel.text = &quot;ISO  ${e.iso}&quot;"
-        errorLine2="                                 ~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
-            line="230"
-            column="34"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="            binding.shutterLabel.text = &quot;Exposure  %.1f ms&quot;.format(e / 10.0)"
-        errorLine2="                                         ~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
-            line="261"
-            column="42"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
-        errorLine1="            binding.isoLabel.text = &quot;Gain  $g&quot; + if (s.glassesGain &lt; 0) &quot; (default)&quot; else &quot;&quot;"
-        errorLine2="                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
-            line="269"
-            column="37"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
-        errorLine1="            binding.isoLabel.text = &quot;Gain  $g&quot; + if (s.glassesGain &lt; 0) &quot; (default)&quot; else &quot;&quot;"
-        errorLine2="                                    ~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
-            line="269"
-            column="37"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="            binding.isoLabel.text = &quot;Gain  $g&quot; + if (s.glassesGain &lt; 0) &quot; (default)&quot; else &quot;&quot;"
-        errorLine2="                                     ~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
-            line="269"
-            column="38"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="            button.text = &quot;%d:%02d&quot;.format(elapsedSec / 60, elapsedSec % 60)"
-        errorLine2="                           ~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/ControlsOverlay.kt"
-            line="394"
-            column="28"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
-        errorLine1="                    text = (if (ready) &quot;● &quot; else &quot;○ &quot;) + status"
-        errorLine2="                           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/HomeActivity.kt"
-            line="146"
-            column="28"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="            text = &quot;Recordings&quot;"
-        errorLine2="                    ~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/HomeActivity.kt"
-            line="165"
-            column="21"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="            text = &quot;‹ Devices&quot;"
-        errorLine2="                    ~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/HomeActivity.kt"
-            line="210"
-            column="21"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="            text = &quot;New profile&quot;"
-        errorLine2="                    ~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/HomeActivity.kt"
-            line="222"
-            column="21"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="                    text = &quot;Edit&quot;"
-        errorLine2="                            ~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/HomeActivity.kt"
-            line="260"
-            column="29"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="                    text = &quot;Start&quot;"
-        errorLine2="                            ~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/HomeActivity.kt"
-            line="271"
-            column="29"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="            text = &quot;Restore built-in profiles&quot;"
-        errorLine2="                    ~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/HomeActivity.kt"
-            line="282"
-            column="21"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
-        errorLine1="            binding.messageText.text = &quot;Stereo view is on the glasses.\nAdjust it with the controls below.&quot;"
-        errorLine2="                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/MainActivity.kt"
-            line="277"
-            column="40"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="            binding.messageText.text = &quot;Stereo view is on the glasses.\nAdjust it with the controls below.&quot;"
-        errorLine2="                                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/MainActivity.kt"
-            line="277"
-            column="41"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="            binding.messageText.text = &quot;Stereo view is on the glasses.\nAdjust it with the controls below.&quot;"
-        errorLine2="                                                                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/MainActivity.kt"
-            line="277"
-            column="73"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="                text = &quot;No profiles. Save the current settings as one, or restore the built-in ones.&quot;"
-        errorLine2="                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/ProfilesDialog.kt"
-            line="112"
-            column="25"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="            text = &quot;Trim&quot;"
-        errorLine2="                    ~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/preview/RecordingPreviewActivity.kt"
-            line="243"
-            column="21"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
-        errorLine1="                text = &quot;${seconds}s&quot;"
-        errorLine2="                       ~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/preview/RecordingPreviewActivity.kt"
-            line="335"
-            column="24"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="        timeText?.text = &quot;%.3f s / %.3f s&quot;.format(positionNs / 1e9, d.durationNs / 1e9)"
-        errorLine2="                          ~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/preview/RecordingPreviewActivity.kt"
-            line="545"
-            column="27"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
-        errorLine1="        tiles.getOrNull(camera)?.second?.text = &quot;${c.name}  ${frame + 1}/${c.timestamps.size}  +%.3f s&quot;.format((c.timestamps[frame] - d.startNs) / 1e9)"
-        errorLine2="                                                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/preview/RecordingPreviewActivity.kt"
-            line="556"
-            column="49"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
-        errorLine1="        tiles.getOrNull(camera)?.second?.text = &quot;${c.name}  ${frame + 1}/${c.timestamps.size}  +%.3f s&quot;.format((c.timestamps[frame] - d.startNs) / 1e9)"
-        errorLine2="                                                              ~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/preview/RecordingPreviewActivity.kt"
-            line="556"
-            column="63"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="        tiles.getOrNull(camera)?.second?.text = &quot;${c.name}  ${frame + 1}/${c.timestamps.size}  +%.3f s&quot;.format((c.timestamps[frame] - d.startNs) / 1e9)"
-        errorLine2="                                                                                             ~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/preview/RecordingPreviewActivity.kt"
-            line="556"
-            column="94"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
-        errorLine1="        trimText?.text = &quot;Keep %.2f s → %.2f s  (%.2f s)&quot;.format(trimStart / 1e9, trimEnd / 1e9, (trimEnd - trimStart) / 1e9) +"
-        errorLine2="                         ^">
-        <location
-            file="src/main/java/com/xreal/stereoview/preview/RecordingPreviewActivity.kt"
-            line="656"
-            column="26"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="        trimText?.text = &quot;Keep %.2f s → %.2f s  (%.2f s)&quot;.format(trimStart / 1e9, trimEnd / 1e9, (trimEnd - trimStart) / 1e9) +"
-        errorLine2="                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/preview/RecordingPreviewActivity.kt"
-            line="656"
-            column="27"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="            text = &quot;Recordings&quot;"
-        errorLine2="                    ~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/RecordingsActivity.kt"
-            line="73"
-            column="21"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="            text = &quot;Storage…&quot;"
-        errorLine2="                    ~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/RecordingsActivity.kt"
-            line="77"
-            column="21"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="                    text = &quot;Cancel&quot;"
-        errorLine2="                            ~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/RecordingsActivity.kt"
-            line="244"
-            column="29"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
-        errorLine1="                text = &quot;Edit “${editor.profileName}”&quot;"
-        errorLine2="                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
-            line="126"
-            column="24"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="                text = &quot;Edit “${editor.profileName}”&quot;"
-        errorLine2="                        ~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
-            line="126"
-            column="25"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="                text = &quot;Cancel&quot;"
-        errorLine2="                        ~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
-            line="131"
-            column="25"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="                text = &quot;Save&quot;"
-        errorLine2="                        ~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
-            line="135"
-            column="25"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="                text = &quot;Save to profile&quot;"
-        errorLine2="                        ~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
-            line="575"
-            column="25"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="            text = &quot;Profiles…&quot;"
-        errorLine2="                    ~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
-            line="583"
-            column="21"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
-        errorLine1="            fun show(v: Int) { label.text = &quot;${spec.label}: ${bufferText(spec, v)}&quot; }"
-        errorLine2="                                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
-            line="777"
-            column="45"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
-        errorLine1="            val text = TextView(context).apply { this.text = &quot;$label %+.2f°&quot;.format(value) }"
-        errorLine2="                                                             ~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
-            line="827"
-            column="62"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="            val text = TextView(context).apply { this.text = &quot;$label %+.2f°&quot;.format(value) }"
-        errorLine2="                                                                    ~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
-            line="827"
-            column="69"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders."
-        errorLine1="                    text.text = &quot;$label %+.2f°&quot;.format(v)"
-        errorLine2="                                ~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
-            line="836"
-            column="33"/>
-    </issue>
-
-    <issue
-        id="SetTextI18n"
-        message="String literal in `setText` can not be translated. Use Android resources instead."
-        errorLine1="                    text.text = &quot;$label %+.2f°&quot;.format(v)"
-        errorLine2="                                       ~~~~~~~">
-        <location
-            file="src/main/java/com/xreal/stereoview/ui/SettingsSheet.kt"
-            line="836"
-            column="40"/>
     </issue>
 
     <issue

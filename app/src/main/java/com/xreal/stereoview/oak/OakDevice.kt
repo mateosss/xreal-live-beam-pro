@@ -11,6 +11,8 @@ import android.os.SystemClock
 import android.util.Log
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * A Luxonis OAK camera (e.g. OAK-D Pro W) over USB through depthai-core: the left and right
@@ -49,12 +51,12 @@ class OakDevice(private val context: Context, private val listener: Listener) {
         val linkFrames: Int = MIN_LINK_FRAMES,
         /** IMU packets (one sample or more each) that may wait there. */
         val imuPackets: Int = MIN_IMU_PACKETS,
-        /** Color frame rate, or 0 for [fps]. */
-        val rgbFps: Int = 0,
+        /** Color frame rate (below 1: one frame every few seconds), or 0 for [fps]. */
+        val rgbFps: Float = 0f,
         /** Color frames as raw NV12 (for PNG or the phone's encoder) instead of the camera's JPEGs. */
         val rgbRaw: Boolean = false,
     ) {
-        val fpsPlan: FpsPlan get() = FpsPlan.of(fps, if (rgbHeight > 0 && rgbFps > 0) rgbFps else fps)
+        val fpsPlan: FpsPlan get() = FpsPlan.of(fps, if (rgbHeight > 0) rgbFps else 0f)
     }
 
     /**
@@ -63,22 +65,35 @@ class OakDevice(private val context: Context, private val listener: Listener) {
      * rate is a multiple of the other, every sensor runs at the faster rate ([sensorFps]) and
      * the slower stream keeps every [monoEvery]th / [rgbEvery]th frame, on the camera (by
      * sequence number, so left and right stay paired): the kept frames remain synchronized.
-     * Otherwise ([synchronized] false) the color sensor runs freely at its own rate.
+     * Otherwise ([synchronized] false) the color sensor runs freely at its own rate. Color rates
+     * that a sensor can't run at (below 1 fps, or fractional) always keep 1 in N frames of the
+     * mono rate: [rgbFps] is then the rate that gives (e.g. 0.5 at 30 fps: 1 in 60).
      */
     data class FpsPlan(
-        val monoFps: Int, val rgbFps: Int, val monoSensorFps: Int, val rgbSensorFps: Int,
+        val monoFps: Int, val rgbFps: Float, val monoSensorFps: Int, val rgbSensorFps: Int,
         val monoEvery: Int, val rgbEvery: Int, val synchronized: Boolean,
     ) {
         companion object {
-            fun of(mono: Int, rgb: Int): FpsPlan {
-                val hi = maxOf(mono, rgb)
-                val lo = minOf(mono, rgb).coerceAtLeast(1)
-                return if (hi % lo == 0) {
-                    FpsPlan(mono, rgb, hi, hi, hi / mono.coerceAtLeast(1), hi / rgb.coerceAtLeast(1), true)
-                } else {
-                    FpsPlan(mono, rgb, mono, rgb, 1, 1, false)
+            /** The plan for [mono] fps mono and [rgb] fps color (0: the mono rate). */
+            fun of(mono: Int, rgb: Float): FpsPlan {
+                val m = mono.coerceAtLeast(1)
+                val r = if (rgb > 0f) rgb else m.toFloat()
+                val whole = r >= 1f && r == r.roundToInt().toFloat()
+                if (r <= m) {
+                    val ratio = m / r
+                    val every = ratio.roundToInt().coerceAtLeast(1)
+                    return if (abs(ratio - every) < 1e-3f || !whole) {
+                        FpsPlan(m, m.toFloat() / every, m, m, 1, every, true)
+                    } else {
+                        FpsPlan(m, r, m, r.roundToInt(), 1, 1, false)
+                    }
                 }
+                // Faster color: sensors only run at whole rates.
+                val hi = r.roundToInt()
+                return if (hi % m == 0) FpsPlan(m, hi.toFloat(), hi, hi, hi / m, 1, true) else FpsPlan(m, hi.toFloat(), m, hi, 1, 1, false)
             }
+
+            fun of(mono: Int, rgb: Int) = of(mono, rgb.toFloat())
         }
     }
 

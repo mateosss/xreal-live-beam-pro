@@ -182,7 +182,7 @@ the app releases the cameras as before. Configure it under *Settings → Recordi
 |---|---|
 | Images | **Raw**: each camera's stream as delivered (lens distortion intact, not rotated). **Rectified**: what each eye shows (undistorted, rectified, aligned, with the current zoom, convergence and stabilization; *1:1* scale is recorded as *Fill*) |
 | Format | **H.264 video in MKV** per camera (crash-safe, see below), H.265 in MP4 (smaller, but lost if the recording doesn't end normally), one 8-bit grayscale PNG per frame (as EuRoC), or one JPEG per frame. See *Writing* below |
-| Video options | Rate control (CBR, VBR or constant quality), bitrate per camera (10–100 Mbit/s for the Beam Pro, 2–16 for the glasses, 4–40 for OAK mono), keyframe interval (0.5–5 s) and H.264 profile (Baseline, Main, High). Encoders ignore what they don't support (the emulator's has no CBR); `metadata.json → cameras[].stats.encoder_settings` records what was used |
+| Video options | Rate control (CBR, VBR or constant quality), bitrate per camera (a logarithmic slider from 100 kbit/s to 100 Mbit/s that snaps to 100/250/500 kbit/s and 1/2/4/8/12/20/40 Mbit/s, or type any rate), keyframe interval (0.5–5 s) and H.264 profile (Baseline, Main, High). Encoders ignore what they don't support (the emulator's has no CBR); `metadata.json → cameras[].stats.encoder_settings` records what was used |
 | IMU rate | Fastest the sensors allow, 500/200/100 Hz through a listener, or a shared-memory direct channel (~800 or ~200 Hz) where the sensor supports it |
 | IMU streams | Accelerometer, gyroscope, their uncalibrated versions with bias, magnetometer (calibrated or not), game/rotation vector, gravity, linear acceleration, barometer |
 | Recordings | Opens the Recordings screen (also on the start screen): see *Recordings screen and preview* |
@@ -417,7 +417,9 @@ arm64 (see `third_party/depthai-android/` and `tools/build_depthai_android.sh`).
   camera (All sets every camera to the shown values; it reads "All ≠" when they differ).
 - **Profile settings:** mono resolution (1280×800, 1280×720, 640×400), frame rate (15–60 fps,
   all cameras synchronized), color camera (1280×800 or 1280×720 as JPEG encoded on the
-  camera, or off), OAK IMU rate (100/200/250 Hz or off) and USB speed. Built-in profiles:
+  camera, or off), color frame rate (down to 0.1 fps, one frame every 10 s: below the mono rate
+  the camera keeps 1 in N frames, so color stays synchronized with the mono pair), OAK IMU rate
+  (100/200/250 Hz or off) and USB speed. Built-in profiles:
   *OAK passthrough* (720p mono, no color, no IMU) and *OAK EuRoC dataset* (800p mono, color,
   IMU 200 Hz).
 - **Recording** (EuRoC layout, all on the OAK's clock, mid-exposure):

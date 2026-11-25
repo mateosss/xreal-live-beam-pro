@@ -5,8 +5,13 @@ import android.graphics.Typeface
 import android.hardware.Sensor
 import android.hardware.SensorDirectChannel
 import android.hardware.SensorManager
+import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
@@ -242,7 +247,7 @@ class SettingsSheet(
             val monoVideo = s.oakImageFormat == GrayImageFormat.H264
             grayFormatRows(content, s, recording, s.oakImageFormat, "Mono images") { f -> target.update { it.copy(oakImageFormat = f) } }
             if (monoVideo) {
-                bitrateRow(content, s, recording, "Mono video bitrate", s.oakVideoBitrateMbps, listOf(4, 8, 12, 20, 40)) { v -> target.update { it.copy(oakVideoBitrateMbps = v) } }
+                bitrateRow(content, s, recording, "Mono video bitrate", s.oakVideoBitrateMbps) { v -> target.update { it.copy(oakVideoBitrateMbps = v) } }
             }
             val rgbFormats = OakRgbFormat.entries
             val rgbVideo = s.oakRgbHeight > 0 && s.oakRgbFormat == OakRgbFormat.H264
@@ -257,10 +262,10 @@ class SettingsSheet(
                     }
                 }
                 if (rgbVideo) {
-                    bitrateRow(content, s, recording, "Color video bitrate", s.oakRgbVideoBitrateMbps, listOf(8, 12, 20, 40, 60)) { v -> target.update { it.copy(oakRgbVideoBitrateMbps = v) } }
+                    bitrateRow(content, s, recording, "Color video bitrate", s.oakRgbVideoBitrateMbps) { v -> target.update { it.copy(oakRgbVideoBitrateMbps = v) } }
                 }
             }
-            if (monoVideo || rgbVideo) videoRows(content, s, recording, null, emptyList(), true) {}
+            if (monoVideo || rgbVideo) videoRows(content, s, recording, null, true) {}
             row(
                 content, "Layout",
                 "Mono pair in cam0, cam1" + (if (s.oakRgbHeight > 0) ", color in cam2" else "") +
@@ -269,7 +274,7 @@ class SettingsSheet(
         } else if (glassesSource) {
             grayFormatRows(content, s, recording, s.glassesImageFormat, "Images") { f -> target.update { it.copy(glassesImageFormat = f) } }
             if (s.glassesImageFormat == GrayImageFormat.H264) {
-                videoRows(content, s, recording, s.glassesVideoBitrateMbps, listOf(2, 4, 6, 10, 16), true) { v -> target.update { it.copy(glassesVideoBitrateMbps = v) } }
+                videoRows(content, s, recording, s.glassesVideoBitrateMbps, true) { v -> target.update { it.copy(glassesVideoBitrateMbps = v) } }
             }
             row(content, "Layout", "Raw 480×640 grayscale per camera at 30 fps, EuRoC layout, timestamps on the glasses' clock") {}
         } else {
@@ -284,7 +289,7 @@ class SettingsSheet(
                 }
             }
             if (s.recordFormat.mime != null) {
-                videoRows(content, s, recording, s.recordBitrateMbps, listOf(10, 20, 40, 60, 100), s.recordFormat == RecordFormat.H264) { v ->
+                videoRows(content, s, recording, s.recordBitrateMbps, s.recordFormat == RecordFormat.H264) { v ->
                     target.update { it.copy(recordBitrateMbps = v) }
                 }
             }
@@ -305,13 +310,13 @@ class SettingsSheet(
 
     /** Bitrate, rate control, keyframe interval and (H.264) profile of video recordings. */
     private fun videoRows(
-        content: LinearLayout, s: StereoSettings, recording: Boolean, bitrate: Int?, choices: List<Int>, h264: Boolean, setBitrate: (Int) -> Unit,
+        content: LinearLayout, s: StereoSettings, recording: Boolean, bitrate: Float?, h264: Boolean, setBitrate: (Float) -> Unit,
     ) {
         val modes = BitrateMode.entries
         row(content, "Rate control", s.videoBitrateMode.label.substringBefore(":"), locked = recording) {
             choose("Rate control", modes.map { it.label }, modes.indexOf(s.videoBitrateMode)) { i -> target.update { it.copy(videoBitrateMode = modes[i]) } }
         }
-        if (bitrate != null) bitrateRow(content, s, recording, "Video bitrate", bitrate, choices, setBitrate)
+        if (bitrate != null) bitrateRow(content, s, recording, "Video bitrate", bitrate, setBitrate)
         val intervals = listOf(0.5f, 1f, 2f, 5f)
         row(content, "Keyframe interval", "every %s s".format(s.videoKeyframeIntervalS.toString().removeSuffix(".0")), locked = recording) {
             val labels = listOf("0.5 s (fast seeking, robust)", "1 s", "2 s", "5 s (smallest files)")
@@ -329,14 +334,100 @@ class SettingsSheet(
         }
     }
 
-    /** Bitrate of one video stream (hidden in constant-quality mode, which has none). */
-    private fun bitrateRow(
-        content: LinearLayout, s: StereoSettings, recording: Boolean, title: String, bitrate: Int, choices: List<Int>, set: (Int) -> Unit,
-    ) {
+    /**
+     * Bitrate of one video stream (hidden in constant-quality mode, which has none): a
+     * logarithmic slider from 100 kbit/s that snaps to common rates, and a field for any rate.
+     * Dragging only updates the labels; the rate is set on release (the sheet rebuilds then).
+     */
+    private fun bitrateRow(content: LinearLayout, s: StereoSettings, recording: Boolean, title: String, bitrate: Float, set: (Float) -> Unit) {
         if (s.videoBitrateMode == BitrateMode.CQ) return
-        row(content, title, "$bitrate Mbit/s per camera" + if (s.videoBitrateMode == BitrateMode.VBR) " (average)" else "", locked = recording) {
-            choose("$title per camera", choices.map { "$it Mbit/s" }, choices.indexOf(bitrate)) { i -> set(choices[i]) }
+        val note = " per camera" + if (s.videoBitrateMode == BitrateMode.VBR) " (average)" else ""
+        val box = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(6), dp(16), 0)
+            alpha = if (recording) 0.45f else 1f
         }
+        val header = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(TextView(context).apply {
+            text = title
+            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyLarge)
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val caption = TextView(context).apply {
+            text = BitrateScale.format(bitrate) + note
+            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodySmall)
+            setTextColor(ContextCompat.getColor(context, R.color.panel_text_secondary))
+        }
+        val field = EditText(context).apply {
+            setText(BitrateScale.number(bitrate))
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            isSingleLine = true
+            gravity = Gravity.END
+            isEnabled = !recording
+            contentDescription = "$title in Mbit/s"
+            var committed = false
+            fun commit() {
+                if (committed) return
+                val v = BitrateScale.parse(text.toString())
+                if (v == null) {
+                    setText(BitrateScale.number(bitrate))
+                    return
+                }
+                context.getSystemService(InputMethodManager::class.java)?.hideSoftInputFromWindow(windowToken, 0)
+                if (v == bitrate) return
+                // Setting it rebuilds the sheet, this field included: not from inside its own key or focus event.
+                committed = true
+                post { set(v) }
+            }
+            setOnEditorActionListener { _, action, _ ->
+                if (action == EditorInfo.IME_ACTION_DONE) commit()
+                false
+            }
+            setOnFocusChangeListener { _, focused -> if (!focused) commit() }
+        }
+        header.addView(field, LinearLayout.LayoutParams(dp(80), LinearLayout.LayoutParams.WRAP_CONTENT))
+        header.addView(TextView(context).apply {
+            text = "Mbit/s"
+            setPadding(dp(4), 0, 0, 0)
+            setTextColor(ContextCompat.getColor(context, R.color.panel_text_secondary))
+        })
+        var shown = bitrate
+        val slider = MarkedSlider(context).apply {
+            valueFrom = 0f
+            valueTo = 1f
+            value = BitrateScale.toPosition(bitrate)
+            marks = BitrateScale.POINTS.map(BitrateScale::toPosition)
+            labelBehavior = com.google.android.material.slider.LabelFormatter.LABEL_GONE
+            isTickVisible = false
+            isEnabled = !recording
+            contentDescription = title
+            addOnChangeListener { slider, position, fromUser ->
+                if (!fromUser) return@addOnChangeListener
+                val magnet = BitrateScale.magnet(position)
+                if (magnet != null) {
+                    // Magnetic: the thumb sits on the point while the finger is near it.
+                    if (magnet != shown) slider.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                    slider.value = BitrateScale.toPosition(magnet)
+                }
+                shown = BitrateScale.atPosition(position)
+                field.setText(BitrateScale.number(shown))
+                caption.text = BitrateScale.format(shown) + note
+            }
+            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
+                override fun onStartTrackingTouch(slider: Slider) = Unit
+
+                override fun onStopTrackingTouch(slider: Slider) {
+                    if (shown != bitrate) set(shown)
+                }
+            })
+        }
+        box.addView(header)
+        box.addView(slider)
+        box.addView(caption)
+        content.addView(box)
     }
 
     /** Format of recorded grayscale images, and the JPEG quality when it applies. */
@@ -447,13 +538,15 @@ class SettingsSheet(
             }
         }
         if (s.oakRgbHeight > 0) {
-            val rgb = if (s.oakRgbFps > 0) s.oakRgbFps else s.oakFps
-            row(content, "Color frame rate", "$rgb fps · ${rgbFpsNote(s.oakFps, rgb)}", locked = recording) {
-                val values = listOf(5, 10, 15, 20, 30, 45, 60).filter { it == s.oakFps || maxOf(it, s.oakFps) <= 60 }
+            val rgb = if (s.oakRgbFps > 0) s.oakRgbFps else s.oakFps.toFloat()
+            row(content, "Color frame rate", "${fpsText(rgb)} · ${rgbFpsNote(s.oakFps, rgb)}", locked = recording) {
+                // Below 1 fps: one color frame every few seconds (e.g. for photogrammetry or textures).
+                val values = (listOf(0.1f, 0.2f, 0.5f, 1f, 2f) + listOf(5, 10, 15, 20, 30, 45, 60).map { it.toFloat() })
+                    .filter { it == s.oakFps.toFloat() || maxOf(it, s.oakFps.toFloat()) <= 60f }
                 choose(
                     "Color frame rate (mono at ${s.oakFps} fps)",
-                    values.map { "$it fps · ${rgbFpsNote(s.oakFps, it)}" }, values.indexOf(rgb),
-                ) { i -> target.update { it.copy(oakRgbFps = if (values[i] == it.oakFps) 0 else values[i]) } }
+                    values.map { "${fpsText(it)} · ${rgbFpsNote(s.oakFps, it)}" }, values.indexOf(rgb),
+                ) { i -> target.update { it.copy(oakRgbFps = if (values[i] == it.oakFps.toFloat()) 0f else values[i]) } }
             }
         }
         val maxGyro = OakDevice.MAX_GYRO_HZ
@@ -482,14 +575,18 @@ class SettingsSheet(
             OakDevice.Exposure.summary(s.oakExposures, s.oakRgbHeight > 0)) {}
     }
 
+    /** "30 fps", or below 1 fps "0.5 fps (1 every 2 s)". */
+    private fun fpsText(fps: Float): String =
+        if (fps >= 1f) "${BitrateScale.number(fps)} fps" else "${BitrateScale.number(fps)} fps (1 every ${BitrateScale.number(1f / fps)} s)"
+
     /** How a color rate [rgb] combines with the mono rate [mono] (see OakDevice.FpsPlan). */
-    private fun rgbFpsNote(mono: Int, rgb: Int): String {
+    private fun rgbFpsNote(mono: Int, rgb: Float): String {
         val plan = OakDevice.FpsPlan.of(mono, rgb)
         return when {
-            mono == rgb -> "same as mono, synchronized"
+            mono.toFloat() == rgb -> "same as mono, synchronized"
             !plan.synchronized -> "not a multiple of $mono: free-running, not synchronized"
             rgb < mono -> "synchronized: 1 in ${plan.rgbEvery} frames, aligned with a mono pair"
-            else -> "synchronized: sensors run at $rgb fps, 1 in ${plan.monoEvery} mono pairs kept (max mono exposure 1/$rgb s)"
+            else -> "synchronized: sensors run at ${plan.rgbSensorFps} fps, 1 in ${plan.monoEvery} mono pairs kept (max mono exposure 1/${plan.rgbSensorFps} s)"
         }
     }
 

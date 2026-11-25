@@ -5,6 +5,7 @@ import android.hardware.SensorManager
 import android.os.SystemClock
 import android.util.Log
 import com.xreal.stereoview.oak.OakDevice
+import com.xreal.stereoview.ui.BitrateScale
 import com.xreal.stereoview.ui.CameraSource
 import com.xreal.stereoview.ui.StereoSettings
 import com.xreal.stereoview.util.Nv12
@@ -21,6 +22,7 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.ceil
 
 /**
  * A dataset from an OAK camera, in the EuRoC layout (see [Euroc]): the left and right mono
@@ -215,19 +217,20 @@ class OakRecording private constructor(
             val name = dir.name
             val mav = Euroc.mav(dir)
             val calibration = info.optJSONObject("calibration")
-            val rgbFps = if (s.oakRgbFps > 0) s.oakRgbFps else s.oakFps
-            val plan = OakDevice.FpsPlan.of(s.oakFps, rgbFps)
+            val plan = OakDevice.FpsPlan.of(s.oakFps, s.oakRgbFps)
+            // Below 1 fps (one frame every few seconds) the camera keeps 1 in N frames: plan.rgbFps is what that gives.
+            val rgbFps = plan.rgbFps
             val monoW = if (s.oakMonoHeight == 400) 640 else 1280
             val rgbRaw = s.oakRgbHeight > 0 && s.oakRgbFormat != OakRgbFormat.JPEG
             // Raw color frames (1.5 bytes per pixel) share the memory cap with the mono pair;
             // the camera's JPEGs are small next to the mono frames.
             val streams = if (rgbRaw) 3 else 2
             val monoBacklog = RecordingBuffers.frames(s.buffers.oakCameraS, s.oakFps, monoW.toLong() * s.oakMonoHeight, streams, min = VideoEncoder.MIN_PENDING)
-            val rgbBacklog = if (rgbRaw) RecordingBuffers.frames(s.buffers.oakCameraS, rgbFps, RGB_WIDTH.toLong() * s.oakRgbHeight * 3 / 2, streams, min = VideoEncoder.MIN_PENDING) else monoBacklog
-            class Spec(val name: String, val key: String, val ext: String, val width: Int, val height: Int, val fps: Int, val bitrateMbps: Int, val backlog: Int)
+            val rgbBacklog = if (rgbRaw) RecordingBuffers.frames(s.buffers.oakCameraS, ceil(rgbFps).toInt(), RGB_WIDTH.toLong() * s.oakRgbHeight * 3 / 2, streams, min = VideoEncoder.MIN_PENDING) else monoBacklog
+            class Spec(val name: String, val key: String, val ext: String, val width: Int, val height: Int, val fps: Float, val bitrateMbps: Float, val backlog: Int)
             val specs = listOfNotNull(
-                Spec("cam0", "left", s.oakImageFormat.extension, monoW, s.oakMonoHeight, s.oakFps, s.oakVideoBitrateMbps, monoBacklog),
-                Spec("cam1", "right", s.oakImageFormat.extension, monoW, s.oakMonoHeight, s.oakFps, s.oakVideoBitrateMbps, monoBacklog),
+                Spec("cam0", "left", s.oakImageFormat.extension, monoW, s.oakMonoHeight, s.oakFps.toFloat(), s.oakVideoBitrateMbps, monoBacklog),
+                Spec("cam1", "right", s.oakImageFormat.extension, monoW, s.oakMonoHeight, s.oakFps.toFloat(), s.oakVideoBitrateMbps, monoBacklog),
                 if (s.oakRgbHeight > 0) Spec("cam2", "rgb", s.oakRgbFormat.extension, RGB_WIDTH, s.oakRgbHeight, rgbFps, s.oakRgbVideoBitrateMbps, rgbBacklog) else null,
             )
             val cams = specs.map { spec ->
@@ -236,7 +239,8 @@ class OakRecording private constructor(
                 CameraStream(spec.name, camDir, spec.ext, FRAMES_HEADER).apply {
                     if (spec.ext == GrayImageFormat.H264.extension) {
                         video = VideoEncoder(
-                            File(camDir, "data.mkv"), "video/avc", spec.width, spec.height, spec.fps, s.encoderOptions(spec.bitrateMbps),
+                            // The encoder's frame rate is a whole number: at least 1 (it only sizes rate control).
+                            File(camDir, "data.mkv"), "video/avc", spec.width, spec.height, ceil(spec.fps).toInt().coerceAtLeast(1), s.encoderOptions(spec.bitrateMbps),
                             grayInput = true, onWritten = ::videoFrameWritten, grayBacklogFrames = spec.backlog,
                         )
                     }
@@ -278,20 +282,21 @@ class OakRecording private constructor(
                 put("recording", JSONObject().apply {
                     put("mono", when (s.oakImageFormat) {
                         GrayImageFormat.JPEG -> "JPEG quality ${s.grayJpegQuality} grayscale"
-                        GrayImageFormat.H264 -> "H.264 in Matroska (data.mkv, crash-safe), ${s.oakVideoBitrateMbps} Mbit/s per camera"
+                        GrayImageFormat.H264 -> "H.264 in Matroska (data.mkv, crash-safe), ${BitrateScale.format(s.oakVideoBitrateMbps)} per camera"
                         GrayImageFormat.PNG -> "PNG 8-bit grayscale"
                     } + ", ${if (s.oakMonoHeight == 400) "640×400" else "1280×${s.oakMonoHeight}"}")
                     put("color", if (s.oakRgbHeight > 0) {
                         when (s.oakRgbFormat) {
                             OakRgbFormat.JPEG -> "JPEG quality ${s.oakJpegQuality}, encoded on the camera"
                             OakRgbFormat.PNG -> "PNG 8-bit RGB, from the camera's raw NV12 frames (full-range BT.601)"
-                            OakRgbFormat.H264 -> "H.264 in Matroska (data.mkv, crash-safe), ${s.oakRgbVideoBitrateMbps} Mbit/s, encoded on the phone from the camera's raw NV12 frames"
+                            OakRgbFormat.H264 -> "H.264 in Matroska (data.mkv, crash-safe), ${BitrateScale.format(s.oakRgbVideoBitrateMbps)}, encoded on the phone from the camera's raw NV12 frames"
                         } + ", $RGB_WIDTH×${s.oakRgbHeight}"
                     } else "off")
                     put("exposure", JSONArray(s.oakExposures.take(cams.size).mapIndexed { i, e -> e.toJson().put("camera", "cam$i") }))
                     put("fps", s.oakFps)
                     if (s.oakRgbHeight > 0) {
-                        put("color_fps", rgbFps)
+                        put("color_fps", rgbFps.toDouble())
+                        if (plan.rgbEvery > 1) put("color_keep_every", plan.rgbEvery)
                         put("color_synchronized", plan.synchronized)
                         put("frame_rates", when {
                             !plan.synchronized -> "color at its own rate (not a multiple of the mono rate): not synchronized with the mono pair"
@@ -398,7 +403,7 @@ class OakRecording private constructor(
          * Fisheye calibrations map to "equidistant"; perspective ones to "radial-tangential"
          * with k1, k2, p1, p2 only (depthai's full 14-coefficient model is in metadata.json).
          */
-        private fun cameraYaml(name: String, key: String, c: JSONObject, fps: Int): String {
+        private fun cameraYaml(name: String, key: String, c: JSONObject, fps: Float): String {
             val k = c.getJSONArray("intrinsics")
             val fx = k.getJSONArray(0).getDouble(0)
             val fy = k.getJSONArray(1).getDouble(1)

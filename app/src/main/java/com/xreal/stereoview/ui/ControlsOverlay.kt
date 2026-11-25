@@ -419,7 +419,7 @@ class ControlsOverlay(
         val min = maxOf(range?.lower ?: 50_000L, 50_000L)
         // OAK: the sensors' own rate (higher than the mono rate when the color camera runs faster).
         val fps = if (s.cameraSource == CameraSource.OAK) {
-            val plan = OakDevice.FpsPlan.of(s.oakFps, if (s.oakRgbHeight > 0 && s.oakRgbFps > 0) s.oakRgbFps else s.oakFps)
+            val plan = OakDevice.FpsPlan.of(s.oakFps, if (s.oakRgbHeight > 0) s.oakRgbFps else 0f)
             if (oakColor) plan.rgbSensorFps else plan.monoSensorFps
         } else {
             s.targetFps

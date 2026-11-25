@@ -26,9 +26,12 @@ class Setting<T : Any, S : Any> internal constructor(
     private val codec: Codec<T, S>,
     private val get: (StereoSettings) -> T,
     private val set: (StereoSettings, T) -> StereoSettings,
+    /** Reads the value an earlier version stored under another key or type, if [key] has none. */
+    private val legacy: ((Preferences) -> T?)? = null,
 ) {
-    /** [into] with this setting as stored in [p], if it is there and readable. */
-    fun read(p: Preferences, into: StereoSettings): StereoSettings = p[key]?.let(codec.fromStore)?.let { set(into, it) } ?: into
+    /** [into] with this setting as stored in [p] (or by an earlier version), if it is there and readable. */
+    fun read(p: Preferences, into: StereoSettings): StereoSettings =
+        (p[key]?.let(codec.fromStore) ?: legacy?.invoke(p))?.let { set(into, it) } ?: into
 
     fun write(p: MutablePreferences, from: StereoSettings) {
         p[key] = codec.toStore(get(from))
@@ -69,6 +72,11 @@ class Codec<T : Any, S : Any>(
  */
 object SettingsSchema {
     private val FLOAT = Codec<Float, Float>(::floatPreferencesKey, { it }, { it }, { it.toDouble() }, { o, k -> o.getDouble(k).toFloat() })
+
+    /** Decimal, but whole values in profile JSON stay integers (as versions before 0.16.5 wrote and read them). */
+    private val WHOLE_OR_FLOAT = Codec<Float, Float>(
+        ::floatPreferencesKey, { it }, { it }, { if (it == Math.round(it).toFloat()) Math.round(it) else it.toDouble() }, { o, k -> o.getDouble(k).toFloat() },
+    )
     private val INT = Codec<Int, Int>(::intPreferencesKey, { it }, { it }, { it }, { o, k -> o.getInt(k) })
     private val LONG = Codec<Long, Long>(::longPreferencesKey, { it }, { it }, { it }, { o, k -> o.getLong(k) })
     private val BOOLEAN = Codec<Boolean, Boolean>(::booleanPreferencesKey, { it }, { it }, { it }, { o, k -> o.getBoolean(k) })
@@ -86,6 +94,13 @@ object SettingsSchema {
 
     private fun <T : Any, S : Any> profile(name: String, key: String, codec: Codec<T, S>, get: (StereoSettings) -> T, set: (StereoSettings, T) -> StereoSettings) =
         Setting(name, codec.key(key), true, codec, get, set)
+
+    /**
+     * A profile setting that was a whole number before 0.16.5 (under [oldKey]) and is now
+     * decimal: profile JSON reads either; the store reads the old key while the new one is missing.
+     */
+    private fun profileFloat(name: String, key: String, oldKey: String, get: (StereoSettings) -> Float, set: (StereoSettings, Float) -> StereoSettings) =
+        Setting(name, floatPreferencesKey(key), true, WHOLE_OR_FLOAT, get, set, legacy = { p -> p[intPreferencesKey(oldKey)]?.toFloat() })
 
     private fun <T : Any, S : Any> device(name: String, key: String, codec: Codec<T, S>, get: (StereoSettings) -> T, set: (StereoSettings, T) -> StereoSettings) =
         Setting(name, codec.key(key), false, codec, get, set)
@@ -112,7 +127,7 @@ object SettingsSchema {
         profile("focusMode", "focus_mode", enum<FocusMode>(), { it.focusMode }, { s, v -> s.copy(focusMode = v) }),
         profile("recordView", "record_view", enum<RecordView>(), { it.recordView }, { s, v -> s.copy(recordView = v) }),
         profile("recordFormat", "record_format", enum<RecordFormat>(), { it.recordFormat }, { s, v -> s.copy(recordFormat = v) }),
-        profile("recordBitrateMbps", "record_bitrate_mbps", INT, { it.recordBitrateMbps }, { s, v -> s.copy(recordBitrateMbps = v) }),
+        profileFloat("recordBitrateMbps", "record_bitrate_mbps_float", "record_bitrate_mbps", { it.recordBitrateMbps }, { s, v -> s.copy(recordBitrateMbps = v) }),
         profile("imuRate", "imu_rate", enum<ImuRate>(), { it.imuRate }, { s, v -> s.copy(imuRate = v) }),
         profile("imuStreams", "imu_streams", STRING, { it.imuStreams }, { s, v -> s.copy(imuStreams = v) }),
         profile("cameraSource", "camera_source", enum<CameraSource>(), { it.cameraSource }, { s, v -> s.copy(cameraSource = v) }),
@@ -122,19 +137,19 @@ object SettingsSchema {
         profile("glassesExposure100us", "glasses_exposure_100us", INT, { it.glassesExposure100us }, { s, v -> s.copy(glassesExposure100us = v) }),
         profile("glassesGain", "glasses_gain", INT, { it.glassesGain }, { s, v -> s.copy(glassesGain = v) }),
         profile("glassesImageFormat", "glasses_image_format", enum<GrayImageFormat>(), { it.glassesImageFormat }, { s, v -> s.copy(glassesImageFormat = v) }),
-        profile("glassesVideoBitrateMbps", "glasses_video_bitrate_mbps", INT, { it.glassesVideoBitrateMbps }, { s, v -> s.copy(glassesVideoBitrateMbps = v) }),
+        profileFloat("glassesVideoBitrateMbps", "glasses_video_bitrate_mbps_float", "glasses_video_bitrate_mbps", { it.glassesVideoBitrateMbps }, { s, v -> s.copy(glassesVideoBitrateMbps = v) }),
         profile("oakMonoHeight", "oak_mono_height", INT, { it.oakMonoHeight }, { s, v -> s.copy(oakMonoHeight = v) }),
         profile("oakFps", "oak_fps", INT, { it.oakFps }, { s, v -> s.copy(oakFps = v) }),
-        profile("oakRgbFps", "oak_rgb_fps", INT, { it.oakRgbFps }, { s, v -> s.copy(oakRgbFps = v) }),
+        profileFloat("oakRgbFps", "oak_rgb_fps_float", "oak_rgb_fps", { it.oakRgbFps }, { s, v -> s.copy(oakRgbFps = v) }),
         profile("oakRgbHeight", "oak_rgb_height", INT, { it.oakRgbHeight }, { s, v -> s.copy(oakRgbHeight = v) }),
         profile("oakJpegQuality", "oak_jpeg_quality", INT, { it.oakJpegQuality }, { s, v -> s.copy(oakJpegQuality = v) }),
         profile("oakImuRateHz", "oak_imu_rate_hz", INT, { it.oakImuRateHz }, { s, v -> s.copy(oakImuRateHz = v) }),
         profile("oakUsb3", "oak_usb3", BOOLEAN, { it.oakUsb3 }, { s, v -> s.copy(oakUsb3 = v) }),
         profile("oakRgbFormat", "oak_rgb_format", enum<OakRgbFormat>(), { it.oakRgbFormat }, { s, v -> s.copy(oakRgbFormat = v) }),
-        profile("oakRgbVideoBitrateMbps", "oak_rgb_video_bitrate_mbps", INT, { it.oakRgbVideoBitrateMbps }, { s, v -> s.copy(oakRgbVideoBitrateMbps = v) }),
+        profileFloat("oakRgbVideoBitrateMbps", "oak_rgb_video_bitrate_mbps_float", "oak_rgb_video_bitrate_mbps", { it.oakRgbVideoBitrateMbps }, { s, v -> s.copy(oakRgbVideoBitrateMbps = v) }),
         oakExposures,
         profile("oakImageFormat", "oak_image_format", enum<GrayImageFormat>(), { it.oakImageFormat }, { s, v -> s.copy(oakImageFormat = v) }),
-        profile("oakVideoBitrateMbps", "oak_video_bitrate_mbps", INT, { it.oakVideoBitrateMbps }, { s, v -> s.copy(oakVideoBitrateMbps = v) }),
+        profileFloat("oakVideoBitrateMbps", "oak_video_bitrate_mbps_float", "oak_video_bitrate_mbps", { it.oakVideoBitrateMbps }, { s, v -> s.copy(oakVideoBitrateMbps = v) }),
         profile("grayJpegQuality", "gray_jpeg_quality", INT, { it.grayJpegQuality }, { s, v -> s.copy(grayJpegQuality = v) }),
         profile("videoBitrateMode", "video_bitrate_mode", enum<BitrateMode>(), { it.videoBitrateMode }, { s, v -> s.copy(videoBitrateMode = v) }),
         profile("videoKeyframeIntervalS", "video_keyframe_interval_s", FLOAT, { it.videoKeyframeIntervalS }, { s, v -> s.copy(videoKeyframeIntervalS = v) }),

@@ -20,7 +20,7 @@ class RestartRulesTest {
     @Test
     fun oakPipelineChangesRestart() {
         for (changed in listOf(
-            s.copy(oakFps = 15), s.copy(oakMonoHeight = 800), s.copy(oakRgbHeight = 0), s.copy(oakRgbFps = 5),
+            s.copy(oakFps = 15), s.copy(oakMonoHeight = 800), s.copy(oakRgbHeight = 0), s.copy(oakRgbFps = 5f),
             s.copy(oakImuRateHz = 0), s.copy(oakUsb3 = false), s.copy(oakJpegQuality = 50),
             s.copy(oakRgbFormat = OakRgbFormat.PNG), s.copy(buffers = s.buffers.copy(oakLinkS = 4)),
         )) {
@@ -32,10 +32,10 @@ class RestartRulesTest {
 
     @Test
     fun recordingOnlySettingsNeverRestart() {
-        val recordingOnly = s.copy(oakImageFormat = com.xreal.stereoview.record.GrayImageFormat.H264, grayJpegQuality = 50, oakVideoBitrateMbps = 30)
+        val recordingOnly = s.copy(oakImageFormat = com.xreal.stereoview.record.GrayImageFormat.H264, grayJpegQuality = 50, oakVideoBitrateMbps = 30f)
         assertFalse(OakSession.needsRestart(recordingOnly, s))
         assertFalse(GlassesSession.needsRestart(recordingOnly, s))
-        assertFalse(PhoneSession.needsRestart(recordingOnly.copy(recordBitrateMbps = 80), s))
+        assertFalse(PhoneSession.needsRestart(recordingOnly.copy(recordBitrateMbps = 80f), s))
     }
 
     @Test

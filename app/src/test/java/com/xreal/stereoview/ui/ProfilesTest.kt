@@ -14,7 +14,7 @@ class ProfilesTest {
             StereoSettings().copy(
                 convergencePx = 12f, depth = 1.5f, manualExposure = true, exposureTimeNs = 1_000_000, iso = 1600,
                 targetFps = 60, maxResolution = 480, stabilization = Stabilization.HIGH, focusMode = FocusMode.INFINITY,
-                recordView = RecordView.RECTIFIED, recordFormat = RecordFormat.JPEG, recordBitrateMbps = 100,
+                recordView = RecordView.RECTIFIED, recordFormat = RecordFormat.JPEG, recordBitrateMbps = 100f,
                 imuRate = ImuRate.HZ_200, imuStreams = "GYROSCOPE",
             ),
         )

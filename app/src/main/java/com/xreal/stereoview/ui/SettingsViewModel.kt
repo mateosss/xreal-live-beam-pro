@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /** How each camera image is fitted into its half of the SBS frame. */
 enum class ScaleMode(val label: String) {
@@ -195,7 +196,8 @@ data class StereoSettings(
     val focusMode: FocusMode = FocusMode.AUTO,
     val recordView: RecordView = RecordView.RAW,
     val recordFormat: RecordFormat = RecordFormat.H264,
-    val recordBitrateMbps: Int = 40,
+    /** Bitrate of phone video recordings, Mbit/s (decimal: down to 0.1). */
+    val recordBitrateMbps: Float = 40f,
     val imuRate: ImuRate = ImuRate.FASTEST,
     /** Comma-separated [ImuStream] names to record. */
     val imuStreams: String = "ACCELEROMETER,GYROSCOPE,ACCELEROMETER_UNCALIBRATED,GYROSCOPE_UNCALIBRATED,GAME_ROTATION_VECTOR",
@@ -223,14 +225,14 @@ data class StereoSettings(
     /** Use Android's software encoder instead of the device's hardware one. */
     val videoSoftwareEncoder: Boolean = false,
     /** Bitrate per camera of H.264 recordings of the glasses and OAK mono cameras, Mbit/s. */
-    val glassesVideoBitrateMbps: Int = 4,
-    val oakVideoBitrateMbps: Int = 12,
+    val glassesVideoBitrateMbps: Float = 4f,
+    val oakVideoBitrateMbps: Float = 12f,
     /** OAK: mono camera height (400, 720 or 800 rows; 1280 wide except 400p, 640). */
     val oakMonoHeight: Int = 400,
     /** OAK: frame rate of the mono cameras (and of the color camera unless [oakRgbFps] is set). */
     val oakFps: Int = 30,
-    /** OAK: frame rate of the color camera, or 0 for [oakFps]; see [OakDevice.FpsPlan]. */
-    val oakRgbFps: Int = 0,
+    /** OAK: frame rate of the color camera (below 1 for one frame every few seconds), or 0 for [oakFps]; see [OakDevice.FpsPlan]. */
+    val oakRgbFps: Float = 0f,
     /** OAK: color camera height (800 or 720), or 0 to leave it off. */
     val oakRgbHeight: Int = 800,
     /** OAK: JPEG quality of the color images (encoded on the camera). */
@@ -238,7 +240,7 @@ data class StereoSettings(
     /** OAK color camera: how recorded images are stored (JPEG from the camera, or raw frames as PNG or video). */
     val oakRgbFormat: OakRgbFormat = OakRgbFormat.JPEG,
     /** Bitrate of H.264 recordings of the OAK color camera, Mbit/s. */
-    val oakRgbVideoBitrateMbps: Int = 20,
+    val oakRgbVideoBitrateMbps: Float = 20f,
     /**
      * OAK exposure per camera: cam0 (left), cam1 (right), cam2 (color). Each camera runs its
      * own auto exposure or its own manual shutter and ISO.
@@ -255,8 +257,8 @@ data class StereoSettings(
     val buffers: BufferSettings = BufferSettings(),
 ) {
     /** H.264/H.265 options for a stream at [bitrateMbps]. */
-    fun encoderOptions(bitrateMbps: Int) =
-        EncoderOptions(bitrateMbps * 1_000_000, videoBitrateMode, videoKeyframeIntervalS, videoProfile, videoSoftwareEncoder)
+    fun encoderOptions(bitrateMbps: Float) =
+        EncoderOptions((bitrateMbps * 1_000_000).roundToInt(), videoBitrateMode, videoKeyframeIntervalS, videoProfile, videoSoftwareEncoder)
 
     /** Eye alignment of the current camera source. */
     val alignPitchDeg: Float get() = when (cameraSource) {

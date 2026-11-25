@@ -35,7 +35,7 @@ data class Profile(val name: String, val settings: StereoSettings) {
                     Fact(R.drawable.ic_image, oakImageFormat.name, "Mono images recorded as ${oakImageFormat.label}"),
                     if (oakRgbHeight > 0) {
                         val format = if (oakRgbFormat == OakRgbFormat.JPEG) "JPEG $oakJpegQuality" else oakRgbFormat.name
-                        val fps = if (oakRgbFps > 0 && oakRgbFps != oakFps) " $oakRgbFps fps" else ""
+                        val fps = if (oakRgbFps > 0f && oakRgbFps != oakFps.toFloat()) " ${BitrateScale.number(oakRgbFps)} fps" else ""
                         Fact(R.drawable.ic_palette, "${oakRgbHeight}p $format$fps", "Color camera at ${oakRgbHeight}p, $format$fps")
                     } else {
                         Fact(R.drawable.ic_palette, "off", "No color camera", on = false)
@@ -101,7 +101,7 @@ data class Profile(val name: String, val settings: StereoSettings) {
                             targetFps = 30,
                             recordView = RecordView.RAW,
                             recordFormat = RecordFormat.H264,
-                            recordBitrateMbps = 60,
+                            recordBitrateMbps = 60f,
                             imuRate = ImuRate.DIRECT_VERY_FAST,
                             imuStreams = listOf(
                                 "ACCELEROMETER", "GYROSCOPE", "ACCELEROMETER_UNCALIBRATED",
