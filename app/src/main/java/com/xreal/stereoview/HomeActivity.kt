@@ -12,6 +12,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -34,12 +35,16 @@ import com.xreal.stereoview.oak.OakNative
 import com.xreal.stereoview.ui.CameraSource
 import com.xreal.stereoview.ui.Dialogs
 import com.xreal.stereoview.ui.DraftSettings
+import com.xreal.stereoview.ui.Fact
 import com.xreal.stereoview.ui.FilePicker
+import com.xreal.stereoview.ui.FlowRow
+import com.xreal.stereoview.ui.ListItems
 import com.xreal.stereoview.ui.Profile
 import com.xreal.stereoview.ui.RecordingsActivity
 import com.xreal.stereoview.ui.SettingsSheet
 import com.xreal.stereoview.ui.SettingsViewModel
 import com.xreal.stereoview.ui.StereoSettings
+import com.xreal.stereoview.ui.icon
 import com.xreal.stereoview.ui.withProfile
 import com.xreal.stereoview.util.CrashReporter
 import kotlinx.coroutines.launch
@@ -133,25 +138,49 @@ class HomeActivity : AppCompatActivity() {
         // Cards side by side in landscape, stacked in portrait.
         val row = LinearLayout(this).apply {
             orientation = if (portrait) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
-            setPadding(0, dp(16), 0, dp(8))
+            setPadding(0, dp(12), 0, dp(4))
         }
         for (source in CameraSource.entries) {
             val (status, ready) = status(source)
             val count = viewModel.profiles.value.profiles.count { it.settings.cameraSource == source }
             row.addView(card(weight = if (portrait) 0f else 1f) { card ->
-                card.addView(TextView(this).apply {
-                    text = source.homeTitle
-                    setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleLarge)
+                val line = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+                line.addView(ImageView(this).apply {
+                    setImageResource(source.icon)
+                    setColorFilter(ContextCompat.getColor(this@HomeActivity, if (ready) R.color.accent else R.color.panel_text_secondary))
+                }, LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(14) })
+                val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                texts.addView(FlowRow(this, dp(8), dp(2)).apply {
+                    addView(TextView(this@HomeActivity).apply {
+                        text = source.homeTitle
+                        setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium)
+                    })
+                    addView(ListItems.pill(this@HomeActivity, "$count profile${if (count == 1) "" else "s"}", R.color.panel_text_secondary))
                 })
-                card.addView(secondary(source.homeDescription).apply { setPadding(0, dp(4), 0, dp(10)) })
-                card.addView(TextView(this).apply {
+                texts.addView(TextView(this).apply {
                     text = (if (ready) "● " else "○ ") + status
                     setTextColor(ContextCompat.getColor(this@HomeActivity, if (ready) R.color.accent else R.color.panel_text_secondary))
-                    setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
+                    setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodySmall)
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
                 })
-                card.addView(secondary("$count profile${if (count == 1) "" else "s"}").apply { setPadding(0, dp(4), 0, 0) })
+                line.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                line.addView(ListItems.iconButton(this, R.drawable.ic_info, "Details", tint = R.color.panel_text_secondary) {
+                    ListItems.showDetails(
+                        this, source.homeTitle,
+                        listOf(
+                            Fact(source.icon, source.shortLabel, source.homeDescription),
+                            Fact(R.drawable.ic_usb, status, status, on = ready),
+                            Fact(R.drawable.ic_profile, "$count", "$count profile${if (count == 1) "" else "s"}"),
+                        ),
+                    )
+                })
+                card.addView(line)
             }.apply {
-                if (portrait) (layoutParams as LinearLayout.LayoutParams).bottomMargin = dp(12)
+                (layoutParams as LinearLayout.LayoutParams).bottomMargin = dp(if (portrait) 8 else 0)
                 setOnClickListener {
                     device = source
                     render()
@@ -159,15 +188,11 @@ class HomeActivity : AppCompatActivity() {
             })
         }
         page.addView(row)
-        val tools = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(8), 0, 0)
-        }
-        tools.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+        page.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
             text = "Recordings"
+            setIconResource(R.drawable.ic_folder)
             setOnClickListener { RecordingsActivity.open(this@HomeActivity, null) }
-        })
-        page.addView(tools)
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
     }
 
     /** One line on whether [source] can stream now, and whether it can. */
@@ -208,25 +233,30 @@ class HomeActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        header.addView(MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
-            text = "‹ Devices"
-            isAllCaps = false
-            setOnClickListener {
-                device = null
-                render()
-            }
+        header.addView(ListItems.iconButton(this, R.drawable.ic_back, "Devices") {
+            device = null
+            render()
         })
+        header.addView(ImageView(this).apply {
+            setImageResource(source.icon)
+            setColorFilter(ContextCompat.getColor(this@HomeActivity, R.color.accent))
+        }, LinearLayout.LayoutParams(dp(24), dp(24)).apply { marginStart = dp(4) })
         header.addView(title(source.homeTitle).apply {
-            setPadding(dp(8), 0, 0, 0)
+            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleLarge)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(dp(12), 0, 0, 0)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
         header.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-            text = "New profile"
+            text = "New"
+            setIconResource(R.drawable.ic_add)
+            contentDescription = "New profile"
             setOnClickListener { newProfile(source) }
         })
         page.addView(header)
         val (status, _) = status(source)
-        page.addView(caption("$status · tap a profile to start").apply { setPadding(dp(16), 0, 0, dp(12)) })
+        page.addView(caption("$status · tap a profile to start").apply { setPadding(dp(8), 0, 0, dp(10)) })
 
         val state = viewModel.profiles.value
         val profiles = state.profiles.filter { it.settings.cameraSource == source }
@@ -236,45 +266,43 @@ class HomeActivity : AppCompatActivity() {
             })
         }
         for (p in profiles) {
-            page.addView(card(weight = 0f) { card ->
+            val builtIn = p.builtIn != null
+            val modified = p.isModifiedBuiltIn
+            page.addView(card(weight = 0f, background = if (builtIn) R.color.home_card_builtin else R.color.home_card, compact = true) { card ->
                 val line = LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
                 }
-                val texts = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                }
-                texts.addView(TextView(this).apply {
-                    text = if (p.name == state.active) "${p.name}  ·  last used" else p.name
+                val name = FlowRow(this, dp(8), dp(2))
+                name.addView(TextView(this).apply {
+                    text = p.name
                     setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium)
                     if (p.name == state.active) setTypeface(typeface, Typeface.BOLD)
                 })
-                texts.addView(secondary(p.summary))
-                // Portrait: name and summary on top, buttons below at the end.
-                if (portrait) {
-                    card.addView(texts, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-                    line.gravity = Gravity.END or Gravity.CENTER_VERTICAL
-                } else {
-                    line.addView(texts)
+                if (builtIn) name.addView(ListItems.pill(this, if (modified) "built-in · modified" else "built-in", if (modified) R.color.modified else R.color.builtin))
+                if (p.name == state.active) name.addView(ListItems.pill(this, "last used", R.color.accent))
+                line.addView(name, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                if (modified) {
+                    line.addView(ListItems.iconButton(this, R.drawable.ic_restore, "Reset to built-in settings", tint = R.color.modified) { confirmReset(p) })
                 }
-                line.addView(MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
-                    text = "Edit"
-                    setOnClickListener { editProfile(p) }
-                })
-                line.addView(MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
-                    setIconResource(R.drawable.ic_more_vert)
-                    iconPadding = 0
-                    minWidth = 0
-                    contentDescription = "Profile actions"
-                    setOnClickListener { menu(this, p) }
-                })
+                line.addView(ListItems.iconButton(this, R.drawable.ic_edit, "Edit", tint = R.color.panel_text) { editProfile(p) })
+                line.addView(ListItems.iconButton(this, R.drawable.ic_more_vert, "Profile actions", tint = R.color.panel_text_secondary) { menu(it, p) })
                 line.addView(MaterialButton(this).apply {
-                    text = "Start"
                     setIconResource(R.drawable.ic_play)
+                    if (portrait) {
+                        iconPadding = 0
+                        iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
+                        minWidth = 0
+                        minimumWidth = 0
+                        setPadding(dp(14), paddingTop, dp(14), paddingBottom)
+                        contentDescription = "Start"
+                    } else {
+                        text = "Start"
+                    }
                     setOnClickListener { start(p) }
                 })
                 card.addView(line)
+                card.addView(ListItems.facts(this, p.facts))
             }.apply {
                 setOnClickListener { start(p) }
                 (layoutParams as LinearLayout.LayoutParams).bottomMargin = dp(8)
@@ -282,15 +310,32 @@ class HomeActivity : AppCompatActivity() {
         }
         page.addView(MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
             text = "Restore built-in profiles"
+            setIconResource(R.drawable.ic_restore)
             setOnClickListener {
                 Dialogs.confirm(
                     this@HomeActivity,
                     "Reset the built-in profiles (" + Profile.defaults.joinToString { "“${it.name}”" } +
-                        ") to their original settings? Your own profiles are kept.",
+                        ") to their original settings, re-adding deleted ones? Your own profiles are kept.",
                     "Restore",
                 ) { viewModel.restoreDefaultProfiles() }
             }
-        })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    }
+
+    private fun confirmReset(p: Profile) {
+        Dialogs.confirm(this, "Reset “${p.name}” to its built-in settings? Your changes to it are lost.", "Reset") {
+            viewModel.resetProfile(p.name)
+            toast("Reset ${p.name}")
+        }
+    }
+
+    private fun details(p: Profile) {
+        val kind = when {
+            p.isModifiedBuiltIn -> "Built-in profile, modified"
+            p.builtIn != null -> "Built-in profile"
+            else -> "Your profile"
+        }
+        ListItems.showDetails(this, p.name, p.facts, kind)
     }
 
     private fun start(p: Profile) {
@@ -330,6 +375,16 @@ class HomeActivity : AppCompatActivity() {
 
     private fun menu(anchor: View, p: Profile) {
         PopupMenu(this, anchor).apply {
+            menu.add("Details").setOnMenuItemClickListener {
+                details(p)
+                true
+            }
+            if (p.builtIn != null) {
+                menu.add("Reset to built-in settings").setEnabled(p.isModifiedBuiltIn).setOnMenuItemClickListener {
+                    confirmReset(p)
+                    true
+                }
+            }
             menu.add("Rename…").setOnMenuItemClickListener {
                 Dialogs.askText(this@HomeActivity, "Rename profile", p.name, "Rename") { name ->
                     if (viewModel.profiles.value.find(name) != null) toast("A profile named $name exists") else viewModel.renameProfile(p.name, name)
@@ -387,7 +442,7 @@ class HomeActivity : AppCompatActivity() {
         setTextColor(ContextCompat.getColor(this@HomeActivity, R.color.panel_text_secondary))
     }
 
-    private fun card(weight: Float, fill: (LinearLayout) -> Unit) = MaterialCardView(this).apply {
+    private fun card(weight: Float, background: Int = R.color.home_card, compact: Boolean = false, fill: (LinearLayout) -> Unit) = MaterialCardView(this).apply {
         layoutParams = if (weight > 0) {
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, weight).apply { marginEnd = dp(12) }
         } else {
@@ -396,11 +451,11 @@ class HomeActivity : AppCompatActivity() {
         radius = dp(16).toFloat()
         isClickable = true
         isFocusable = true
-        setCardBackgroundColor(ContextCompat.getColor(this@HomeActivity, R.color.home_card))
+        setCardBackgroundColor(ContextCompat.getColor(this@HomeActivity, background))
         strokeWidth = 0
         addView(LinearLayout(this@HomeActivity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(16), dp(16), dp(16))
+            if (compact) setPadding(dp(16), dp(4), dp(8), dp(12)) else setPadding(dp(16), dp(12), dp(8), dp(12))
             fill(this)
         })
     }

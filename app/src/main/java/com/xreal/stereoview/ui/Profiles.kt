@@ -1,5 +1,6 @@
 package com.xreal.stereoview.ui
 
+import com.xreal.stereoview.R
 import com.xreal.stereoview.oak.OakDevice
 import com.xreal.stereoview.record.OakRgbFormat
 import org.json.JSONArray
@@ -14,40 +15,74 @@ data class Profile(val name: String, val settings: StereoSettings) {
     /** Whether [current] differs from this profile in any profile setting. */
     fun differsFrom(current: StereoSettings): Boolean = current.withProfile(settings) != current
 
-    /** One line describing the profile, for lists. */
-    val summary: String
-        get() = with(settings) {
-            if (cameraSource == CameraSource.OAK) {
-                return@with listOf(
-                    "mono ${oakMonoHeight}p ${oakImageFormat.name}",
-                    "$oakFps fps",
-                    if (oakRgbHeight > 0) {
-                        "color ${oakRgbHeight}p " + (if (oakRgbFormat == OakRgbFormat.JPEG) "JPEG $oakJpegQuality" else oakRgbFormat.name) +
-                            (if (oakRgbFps > 0 && oakRgbFps != oakFps) " $oakRgbFps fps" else "")
-                    } else {
-                        "no color"
-                    },
-                    if (oakImuRateHz >= OakDevice.MAX_GYRO_HZ) "OAK IMU max" else if (oakImuRateHz > 0) "OAK IMU $oakImuRateHz Hz" else "no OAK IMU",
-                    OakDevice.Exposure.summary(oakExposures, oakRgbHeight > 0),
-                ).joinToString(" · ")
-            }
-            if (cameraSource == CameraSource.GLASSES) {
-                return@with listOf(
-                    "glasses cameras 30 fps per eye, ${glassesImageFormat.name}",
-                    if (glassesManualExposure) "exposure %.1f ms".format(glassesExposure100us / 10.0) else "auto exposure",
-                    if (glassesRectify) "rectified stereo view" else "raw stereo view",
-                    if (glassesImu) "glasses IMU taken over" else "glasses IMU left to the system",
-                ).joinToString(" · ")
-            }
-            listOf(
-                if (manualExposure) "manual exposure 1/${(1e9 / exposureTimeNs).toInt()} s ISO $iso" else "auto exposure",
-                "$targetFps fps ≤${maxResolution}p",
-                "stabilization ${stabilization.label.lowercase()}",
-                if (focusMode == FocusMode.INFINITY) "focus ∞" else "autofocus",
-                "records ${recordView.name.lowercase()} ${recordFormat.name}",
-                "IMU " + imuRate.label.substringBefore(" (").replaceFirstChar { it.lowercase() },
-            ).joinToString(" · ")
+    /** The built-in profile of this name, if this is one (by name: renaming makes it a custom profile). */
+    val builtIn: Profile? get() = defaults.firstOrNull { it.name == name }
+
+    /** A built-in profile whose settings (those its device uses) differ from the original. */
+    val isModifiedBuiltIn: Boolean
+        get() {
+            val original = builtIn ?: return false
+            return SettingsSchema.profileSettingsFor(settings.cameraSource).any { it.valueIn(settings) != it.valueIn(original.settings) }
         }
+
+    /** What the profile does, for lists (short, with icons) and its details (long). */
+    val facts: List<Fact>
+        get() = with(settings) {
+            when (cameraSource) {
+                CameraSource.OAK -> listOf(
+                    Fact(R.drawable.ic_resolution, "${oakMonoHeight}p", "Mono cameras at ${oakMonoHeight}p"),
+                    Fact(R.drawable.ic_speed, "$oakFps fps", "$oakFps fps"),
+                    Fact(R.drawable.ic_image, oakImageFormat.name, "Mono images recorded as ${oakImageFormat.label}"),
+                    if (oakRgbHeight > 0) {
+                        val format = if (oakRgbFormat == OakRgbFormat.JPEG) "JPEG $oakJpegQuality" else oakRgbFormat.name
+                        val fps = if (oakRgbFps > 0 && oakRgbFps != oakFps) " $oakRgbFps fps" else ""
+                        Fact(R.drawable.ic_palette, "${oakRgbHeight}p $format$fps", "Color camera at ${oakRgbHeight}p, $format$fps")
+                    } else {
+                        Fact(R.drawable.ic_palette, "off", "No color camera", on = false)
+                    },
+                    when {
+                        oakImuRateHz >= OakDevice.MAX_GYRO_HZ -> Fact(R.drawable.ic_imu, "max", "OAK IMU at its maximum rate")
+                        oakImuRateHz > 0 -> Fact(R.drawable.ic_imu, "$oakImuRateHz Hz", "OAK IMU at $oakImuRateHz Hz")
+                        else -> Fact(R.drawable.ic_imu, "off", "No OAK IMU", on = false)
+                    },
+                    Fact(R.drawable.ic_exposure, oakExposureShort(), OakDevice.Exposure.summary(oakExposures, oakRgbHeight > 0).replaceFirstChar { it.uppercase() }),
+                )
+                CameraSource.GLASSES -> listOf(
+                    Fact(R.drawable.ic_speed, "30 fps", "Glasses cameras at 30 fps per eye"),
+                    Fact(R.drawable.ic_image, glassesImageFormat.name, "Recorded as ${glassesImageFormat.label}"),
+                    if (glassesManualExposure) {
+                        Fact(R.drawable.ic_exposure, "%.1f ms".format(glassesExposure100us / 10.0), "Manual exposure %.1f ms, gain $glassesGain".format(glassesExposure100us / 10.0))
+                    } else {
+                        Fact(R.drawable.ic_exposure, "auto", "Auto exposure")
+                    },
+                    Fact(R.drawable.ic_grid, if (glassesRectify) "rectified" else "raw", if (glassesRectify) "Rectified stereo view" else "Raw stereo view"),
+                    if (glassesImu) Fact(R.drawable.ic_imu, "IMU", "Glasses IMU taken over and recorded") else Fact(R.drawable.ic_imu, "off", "Glasses IMU left to the system", on = false),
+                )
+                CameraSource.BEAM_PRO -> listOf(
+                    Fact(R.drawable.ic_resolution, "≤${maxResolution}p", "Stream up to ${maxResolution}p"),
+                    Fact(R.drawable.ic_speed, "$targetFps fps", "$targetFps fps"),
+                    if (manualExposure) {
+                        Fact(R.drawable.ic_exposure, "1/${(1e9 / exposureTimeNs).toInt()} ISO $iso", "Manual exposure 1/${(1e9 / exposureTimeNs).toInt()} s, ISO $iso")
+                    } else {
+                        Fact(R.drawable.ic_exposure, "auto", "Auto exposure")
+                    },
+                    Fact(R.drawable.ic_focus, if (focusMode == FocusMode.INFINITY) "∞" else "AF", focusMode.label),
+                    Fact(R.drawable.ic_stabilization, stabilization.label.lowercase(), "Stabilization ${stabilization.label.lowercase()}", on = stabilization != Stabilization.OFF),
+                    Fact(R.drawable.ic_videocam, "${recordView.name.lowercase()} ${recordFormat.name}", "Records ${recordView.label.substringBefore(":").lowercase()} views as ${recordFormat.label}"),
+                    Fact(R.drawable.ic_imu, imuRateShort(), "Phone IMU: ${imuRate.label}"),
+                )
+            }
+        }
+
+    private fun StereoSettings.oakExposureShort(): String {
+        val used = if (oakRgbHeight > 0) oakExposures else oakExposures.take(2)
+        if (used.distinct().size > 1) return "per camera"
+        val e = used[0]
+        return if (e.auto) "auto" + (if (e.compensation != 0) " %+d".format(e.compensation) else "") else "${e.exposureUs} µs"
+    }
+
+    private fun StereoSettings.imuRateShort(): String =
+        if (imuRate == ImuRate.FASTEST) "max" else imuRate.label.substringBefore(" (").substringAfter(", ")
 
     companion object {
         /** The built-in profiles, also restored by "Restore defaults". */

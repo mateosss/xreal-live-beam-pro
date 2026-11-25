@@ -90,4 +90,41 @@ class ProfileMigrationTest {
     private companion object {
         const val FOUR = "ACCELEROMETER,GYROSCOPE,ACCELEROMETER_UNCALIBRATED,GYROSCOPE_UNCALIBRATED"
     }
+
+    @Test
+    fun builtInsAreRecognizedByNameAndStartUnmodified() {
+        for (d in Profile.defaults) {
+            assertEquals(d.name, d.builtIn?.name)
+            assertFalse(d.name, d.isModifiedBuiltIn)
+        }
+        assertEquals(null, Profile("Mine", StereoSettings()).builtIn)
+        assertFalse(Profile("Mine", StereoSettings()).isModifiedBuiltIn)
+    }
+
+    @Test
+    fun aBuiltInIsModifiedOnlyBySettingsItsDeviceUses() {
+        val oak = Profile.defaults.first { it.name == Profile.OAK_EUROC }
+        val phone = Profile.defaults.first { it.name == Profile.EUROC }
+        // Another device's values (stale in profiles stored by older versions) don't count.
+        assertFalse(phone.copy(settings = phone.settings.copy(oakMonoHeight = 800, glassesImu = !phone.settings.glassesImu)).isModifiedBuiltIn)
+        assertFalse(oak.copy(settings = oak.settings.copy(imuRate = ImuRate.HZ_100, maxResolution = 480)).isModifiedBuiltIn)
+        // Its own, and shared ones, do.
+        assertTrue(phone.copy(settings = phone.settings.copy(maxResolution = 480)).isModifiedBuiltIn)
+        assertTrue(oak.copy(settings = oak.settings.copy(oakMonoHeight = 800)).isModifiedBuiltIn)
+        assertTrue(oak.copy(settings = oak.settings.copy(convergencePx = 5f)).isModifiedBuiltIn)
+    }
+
+    @Test
+    fun everyProfileSettingAppliesToSomeDevice() {
+        val used = CameraSource.entries.flatMap { SettingsSchema.profileSettingsFor(it) }.toSet()
+        assertEquals(SettingsSchema.profileSettings.toSet(), used)
+    }
+
+    @Test
+    fun everyProfileHasFactsWithText() {
+        for (p in Profile.defaults + Profile("Mine", StereoSettings())) {
+            assertTrue(p.name, p.facts.size >= 4)
+            for (f in p.facts) assertTrue(p.name, f.short.isNotBlank() && f.long.isNotBlank())
+        }
+    }
 }

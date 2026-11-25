@@ -9,4 +9,7 @@
     <color name="record">#FF5252</color>
     <color name="home_background">#0E1215</color>
     <color name="home_card">#1B2328</color>
+    <color name="home_card_builtin">#14262C</color>
+    <color name="builtin">#80CBC4</color>
+    <color name="modified">#FFB74D</color>
 </resources>

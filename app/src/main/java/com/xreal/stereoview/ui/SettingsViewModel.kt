@@ -423,6 +423,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         setProfiles(ProfileState(state.profiles.filter { it.name != name }, if (state.active == name) "" else state.active))
     }
 
+    /** Resets built-in profile [name] to its original settings; the active one is applied again. */
+    fun resetProfile(name: String) {
+        val original = Profile.defaults.firstOrNull { it.name == name } ?: return
+        putProfile(original)
+        if (_profiles.value.active == name) selectProfile(name)
+    }
+
     /** Resets the built-in profiles (re-adding deleted ones) and keeps custom ones. */
     fun restoreDefaultProfiles() {
         val state = _profiles.value

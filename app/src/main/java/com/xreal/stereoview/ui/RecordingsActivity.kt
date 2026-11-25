@@ -15,7 +15,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.HorizontalScrollView
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -144,89 +144,111 @@ class RecordingsActivity : AppCompatActivity(), RecordingQueue.Listener {
         )
         val items = entries()
         if (items.isEmpty()) list.addView(secondary("No recordings yet. Start a device and press Rec."))
-        val details = HashMap<File, TextView>()
+        val details = HashMap<File, FrameLayout>()
         items.forEach { list.addView(card(it, details)) }
         thread(name = "RecordingSizes") {
             // Sizes walk thousands of files: fill them in afterwards.
             val sizes = items.associateWith { RecordingFiles.size(it) }
-            main.post { if (!isDestroyed) details.forEach { (f, v) -> v.text = describe(f, sizes[f]) } }
+            main.post {
+                if (isDestroyed) return@post
+                this.sizes.putAll(sizes)
+                details.forEach { (f, v) -> showFacts(v, f) }
+            }
         }
     }
 
-    private fun describe(f: File, size: Long?): String {
-        val meta = if (f.isDirectory) runCatching { JSONObject(File(f, "metadata.json").readText()) }.getOrNull() else null
-        val sizeText = size?.let { if (it > 1e9) "%.2f GB".format(it / 1e9) else "%.0f MB".format(it / 1e6) } ?: "…"
-        return listOfNotNull(
-            if (f.isDirectory) "folder" else "zip",
-            sizeText,
-            meta?.optString("source")?.ifEmpty { null }?.replace('_', ' '),
-            meta?.optDouble("duration_s")?.takeIf { !it.isNaN() }?.let { "%.1f s".format(it) },
-            meta?.optJSONObject("trimmed_from")?.let { "trimmed" },
-            meta?.optString("status")?.ifEmpty { null }?.takeIf { it != "complete" },
-        ).joinToString(" · ")
+    /** Folder sizes found so far (they take a while), for the details dialog. */
+    private val sizes = HashMap<File, Long>()
+
+    private fun showFacts(into: FrameLayout, f: File) {
+        into.removeAllViews()
+        into.addView(ListItems.facts(this, facts(f, sizes[f])))
     }
 
-    private fun card(f: File, details: MutableMap<File, TextView>): View {
+    private fun facts(f: File, size: Long?): List<Fact> {
+        val meta = if (f.isDirectory) runCatching { JSONObject(File(f, "metadata.json").readText()) }.getOrNull() else null
+        val sizeText = size?.let { if (it > 1e9) "%.2f GB".format(it / 1e9) else "%.0f MB".format(it / 1e6) } ?: "…"
+        val source = meta?.optString("source")?.ifEmpty { null }?.let { name -> CameraSource.entries.firstOrNull { it.name == name } }
+        val status = meta?.optString("status")?.ifEmpty { null }?.takeIf { it != "complete" }
+        return listOfNotNull(
+            // Folders are the usual case: only zips are marked.
+            if (f.isDirectory) null else Fact(R.drawable.ic_archive, "zip", "Zip: ${f.path}"),
+            Fact(R.drawable.ic_storage, sizeText, "Size $sizeText"),
+            source?.let { Fact(it.icon, it.shortLabel, "Recorded from ${it.label}") },
+            meta?.optDouble("duration_s")?.takeIf { !it.isNaN() }?.let { Fact(R.drawable.ic_timer, formatDuration(it), "Duration %.1f s".format(it)) },
+            meta?.optJSONObject("trimmed_from")?.let { Fact(R.drawable.ic_cut, "trimmed", "Trimmed from ${it.optString("recording").ifEmpty { "a longer recording" }}") },
+            status?.let { Fact(R.drawable.ic_warning, if (it == "recording") "unfinished" else "error", "Status: $it") },
+        )
+    }
+
+    private fun formatDuration(s: Double): String {
+        val t = s.toLong()
+        return if (t >= 3600) "%d:%02d:%02d".format(t / 3600, t / 60 % 60, t % 60) else if (t >= 60) "%d:%02d".format(t / 60, t % 60) else "%.1f s".format(s)
+    }
+
+    private fun card(f: File, details: MutableMap<File, FrameLayout>): View {
         val active = activeDir?.canonicalPath == f.canonicalPath
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(12), dp(8), dp(6))
+            setPadding(dp(16), dp(6), dp(8), dp(4))
         }
-        content.addView(TextView(this).apply {
-            text = if (active) "${f.name}  •  recording" else f.name
-            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium)
-            setTypeface(typeface, Typeface.BOLD)
+        // Name, then the round preview button; below, the facts beside the other actions.
+        content.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(this@RecordingsActivity).apply {
+                text = if (active) "${f.name}  •  recording" else f.name
+                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium)
+                setTypeface(typeface, Typeface.BOLD)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(MaterialButton(this@RecordingsActivity).apply {
+                setIconResource(R.drawable.ic_play)
+                iconPadding = 0
+                iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
+                minWidth = 0
+                minimumWidth = 0
+                setPadding(dp(14), paddingTop, dp(14), paddingBottom)
+                contentDescription = "Preview"
+                androidx.appcompat.widget.TooltipCompat.setTooltipText(this, "Preview")
+                isEnabled = !active
+                setOnClickListener { preview(f) }
+            })
         })
-        content.addView(secondary(describe(f, null)).also { details[f] = it })
+        val facts = FrameLayout(this).also {
+            showFacts(it, f)
+            details[f] = it
+        }
         val buttons = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(4), 0, 0)
         }
-        fun button(label: String, filled: Boolean = false, action: () -> Unit) = buttons.addView(MaterialButton(
-            this, null, if (filled) com.google.android.material.R.attr.materialButtonStyle else com.google.android.material.R.attr.borderlessButtonStyle,
-        ).apply {
-            text = label
-            isAllCaps = false
-            minWidth = 0
-            minimumWidth = 0
-            // Compact: Material's default 24 dp side padding spreads the row too wide.
-            setPaddingRelative(dp(if (filled) 14 else 8), paddingTop, dp(if (filled) 14 else 8), paddingBottom)
-            isEnabled = !active
-            setOnClickListener { action() }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(1) })
-        button("Preview", filled = true) { preview(f) }
-        button("Rename") { rename(f) }
-        if (f.isDirectory) button("Zip") { zip(f) } else button("Unzip") { unzip(f) }
-        button("Downloads") { toDownloads(f) } // copies to Download/XREAL Stereo
-        // ⋮ stays pinned at the right; the other buttons scroll if they don't fit.
-        val more = (MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
-            setIconResource(R.drawable.ic_more_vert)
-            iconPadding = 0
-            minWidth = 0
-            contentDescription = "More"
-            isEnabled = !active
-            setOnClickListener { v ->
-                PopupMenu(this@RecordingsActivity, v).apply {
-                    fun item(label: String, action: () -> Unit) = menu.add(label).setOnMenuItemClickListener {
-                        action()
-                        true
-                    }
-                    item("Copy path") { copyPath(f) }
-                    item("Share") { share(f) }
-                    menu.add("Delete").setOnMenuItemClickListener {
-                        val note = if (RecordingQueue.isBusy(f)) " It is deleted after the operations already queued for it." else ""
-                        Dialogs.confirm(this@RecordingsActivity, "Delete ${f.name}?$note", "Delete") {
-                            run("Deleting ${f.name}", f) { _ ->
-                                if (!f.deleteRecursively()) throw java.io.IOException("could not delete every file")
-                                "Deleted ${f.name}"
-                            }
+        fun button(icon: Int, label: String, action: () -> Unit) = buttons.addView(
+            ListItems.iconButton(this, icon, label, tint = R.color.panel_text) { action() }.apply { isEnabled = !active },
+        )
+        button(R.drawable.ic_edit, "Rename") { rename(f) }
+        if (f.isDirectory) button(R.drawable.ic_archive, "Zip") { zip(f) } else button(R.drawable.ic_unarchive, "Unzip") { unzip(f) }
+        button(R.drawable.ic_download, "Copy to Downloads") { toDownloads(f) } // copies to Download/XREAL Stereo
+        val more = ListItems.iconButton(this, R.drawable.ic_more_vert, "More", tint = R.color.panel_text_secondary) { v ->
+            PopupMenu(this@RecordingsActivity, v).apply {
+                fun item(label: String, action: () -> Unit) = menu.add(label).setOnMenuItemClickListener {
+                    action()
+                    true
+                }
+                item("Details") { ListItems.showDetails(this@RecordingsActivity, f.name, facts(f, sizes[f])) }
+                item("Copy path") { copyPath(f) }
+                item("Share") { share(f) }
+                menu.add("Delete").setOnMenuItemClickListener {
+                    val note = if (RecordingQueue.isBusy(f)) " It is deleted after the operations already queued for it." else ""
+                    Dialogs.confirm(this@RecordingsActivity, "Delete ${f.name}?$note", "Delete") {
+                        run("Deleting ${f.name}", f) { _ ->
+                            if (!f.deleteRecursively()) throw java.io.IOException("could not delete every file")
+                            "Deleted ${f.name}"
                         }
-                        true
                     }
-                }.show()
-            }
-        })
+                    true
+                }
+            }.show()
+        }.apply { isEnabled = !active }
         if (RecordingQueue.current?.file?.canonicalPath == f.canonicalPath) {
             content.addView(LinearProgressIndicator(this).apply {
                 isIndeterminate = RecordingQueue.fraction < 0
@@ -258,12 +280,10 @@ class RecordingsActivity : AppCompatActivity(), RecordingQueue.Listener {
         content.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            addView(HorizontalScrollView(this@RecordingsActivity).apply {
-                isHorizontalScrollBarEnabled = false
-                addView(buttons)
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(facts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(buttons)
             addView(more)
-        })
+        }, 1)
         return MaterialCardView(this).apply {
             radius = dp(14).toFloat()
             strokeWidth = 0

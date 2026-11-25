@@ -167,6 +167,25 @@ object SettingsSchema {
 
     val profileSettings: List<Setting<*, *>> = all.filter { it.inProfile }
 
+    /** Profile settings only the phone's own cameras use (the glasses' and OAK's are named for them). */
+    private val phoneOnly = setOf(
+        "exposure", "manualExposure", "exposureTimeNs", "iso", "targetFps", "maxResolution", "syncThresholdMs",
+        "focusMode", "recordView", "recordFormat", "recordBitrateMbps", "imuRate", "imuStreams",
+    )
+
+    /**
+     * The profile settings that matter for [source]'s profiles. A profile stores them all, but
+     * another device's values in it are never used (and may be stale defaults of older versions).
+     */
+    fun profileSettingsFor(source: CameraSource): List<Setting<*, *>> = profileSettings.filter {
+        when {
+            it.name.startsWith("glasses") -> source == CameraSource.GLASSES
+            it.name.startsWith("oak") -> source == CameraSource.OAK
+            it.name in phoneOnly -> source == CameraSource.BEAM_PRO
+            else -> true
+        }
+    }
+
     /** The settings stored in [p]; missing or unreadable ones take their defaults. */
     fun read(p: Preferences): StereoSettings {
         val s = all.fold(StereoSettings()) { s, f -> f.read(p, s) }

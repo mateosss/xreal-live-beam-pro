@@ -87,17 +87,23 @@ class ProfilesDialog(
                 orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             }
-            texts.addView(TextView(context).apply {
-                text = if (edited) "${profile.name}  •  edited" else profile.name
+            val name = FlowRow(context, dp(8), dp(2))
+            name.addView(TextView(context).apply {
+                text = profile.name
                 setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium)
                 if (active) setTypeface(typeface, Typeface.BOLD)
             })
-            texts.addView(TextView(context).apply {
-                text = profile.summary
-                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodySmall)
-                setTextColor(ContextCompat.getColor(context, R.color.panel_text_secondary))
-            })
+            if (profile.builtIn != null) {
+                val modified = profile.isModifiedBuiltIn
+                name.addView(ListItems.pill(context, if (modified) "built-in · modified" else "built-in", if (modified) R.color.modified else R.color.builtin))
+            }
+            if (edited) name.addView(ListItems.pill(context, "unsaved changes", R.color.accent))
+            texts.addView(name)
+            texts.addView(ListItems.facts(context, profile.facts).apply { setPadding(0, dp(2), 0, 0) })
             row.addView(texts)
+            if (profile.isModifiedBuiltIn) {
+                row.addView(ListItems.iconButton(context, R.drawable.ic_restore, "Reset to built-in settings", tint = R.color.modified) { reset(profile, active) })
+            }
             row.addView(MaterialButton(context, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
                 setIconResource(R.drawable.ic_more_vert)
                 iconPadding = 0
@@ -137,6 +143,17 @@ class ProfilesDialog(
 
     private fun menu(anchor: MaterialButton, profile: Profile, active: Boolean) {
         PopupMenu(context, anchor).apply {
+            menu.add("Details").setOnMenuItemClickListener {
+                val kind = if (profile.isModifiedBuiltIn) "Built-in profile, modified" else if (profile.builtIn != null) "Built-in profile" else "Your profile"
+                ListItems.showDetails(context, profile.name, profile.facts, kind)
+                true
+            }
+            if (profile.builtIn != null) {
+                menu.add("Reset to built-in settings").setEnabled(profile.isModifiedBuiltIn).setOnMenuItemClickListener {
+                    reset(profile, active)
+                    true
+                }
+            }
             menu.add(if (active) "Save current settings" else "Overwrite with current settings").setOnMenuItemClickListener {
                 viewModel.saveProfile(profile.name)
                 setStatus("Saved profile ${profile.name}")
@@ -162,6 +179,18 @@ class ProfilesDialog(
                 true
             }
         }.show()
+    }
+
+    private fun reset(profile: Profile, active: Boolean) {
+        if (active && isRecording()) {
+            setStatus("Stop the recording to reset the profile in use")
+            return
+        }
+        val note = if (active) " The current settings change to them too." else ""
+        Dialogs.confirm(context, "Reset “${profile.name}” to its built-in settings?$note", "Reset") {
+            viewModel.resetProfile(profile.name)
+            setStatus("Reset profile ${profile.name}")
+        }
     }
 
     private fun newProfile() {

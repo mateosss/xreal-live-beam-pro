@@ -163,8 +163,11 @@ glasses cameras need different corrections). Six profiles are built in:
 To edit a profile, switch to it and change settings: the panel shows *Name •* while they
 differ, and *Save to profile* in Settings (or the profile's ⋮ menu) stores them. The profiles
 dialog also creates profiles from the current settings, and renames, duplicates and deletes
-them. *Restore built-ins* resets the two default profiles. A recording's `metadata.json`
-names the profile it used.
+them. Built-in profiles are marked *built-in* (on a tinted card on the start screen), and
+*built-in · modified* once changed: the ↺ button (or *Reset to built-in settings* in the ⋮ menu)
+puts back that one profile's original settings, and *Restore built-ins* resets all of them,
+re-adding deleted ones. Lists show each profile's main settings as icons; ⋮ → *Details*
+spells them out. A recording's `metadata.json` names the profile it used.
 
 ## Recording datasets (stereo + IMU, for SLAM)
 
